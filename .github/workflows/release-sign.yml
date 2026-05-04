@@ -17,6 +17,7 @@ jobs:
   sign-source:
     name: Sign source archive and attach to release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write   # upload assets to release
       id-token: write   # OIDC for cosign keyless signing
@@ -62,7 +63,14 @@ jobs:
           git archive --format=tar.gz \
             --prefix="${REPO}-${TAG}/" \
             -o "${ARCHIVE}" "${TAG}"
+          if [ ! -s "${ARCHIVE}" ]; then
+            echo "Source archive is empty: ${ARCHIVE}" >&2
+            exit 1
+          fi
           sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          # Roundtrip-verify the checksum file so a silent write failure
+          # (disk full, partial write) cannot ship a bogus .sha256 asset.
+          sha256sum -c "${ARCHIVE}.sha256"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
@@ -95,3 +103,14 @@ jobs:
             "${ARCHIVE}.sha256" \
             --clobber \
             --repo "${REPO_FULL}"
+
+          # Verify all four expected assets actually landed on the release.
+          # gh upload returning 0 per asset doesn't guarantee every asset is
+          # visible after the call (rare partial-failure mode).
+          ASSETS_JSON="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name')"
+          for f in "${ARCHIVE}" "${ARCHIVE}.sig" "${ARCHIVE}.pem" "${ARCHIVE}.sha256"; do
+            if ! printf '%s\n' "${ASSETS_JSON}" | grep -Fxq "$f"; then
+              echo "Missing release asset after upload: $f" >&2
+              exit 1
+            fi
+          done

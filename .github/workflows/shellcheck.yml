@@ -13,6 +13,12 @@ jobs:
   shellcheck:
     name: differential-shellcheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Skip on PRs from forks: GitHub strips security-events / pull-requests
+    # write permissions, which would make SARIF upload + PR-comment posting fail.
+    if: |
+      (github.event_name != 'pull_request') ||
+      (github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       security-events: write
@@ -26,5 +32,8 @@ jobs:
 
       - name: Differential ShellCheck
         uses: redhat-plumbers-in-action/differential-shellcheck@d965e66ec0b3b2f821f75c8eff9b12442d9a7d1e # v5.5.6
+        with:
+          severity: warning
+          strict-check-on-push: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

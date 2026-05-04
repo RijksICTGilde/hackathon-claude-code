@@ -10,8 +10,6 @@ on:
     - cron: '24 12 * * 0'
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
 # Declare default permissions as read only.
 permissions: read-all
@@ -20,12 +18,7 @@ jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
-    # Skip on PRs from forks: GitHub strips id-token/security-events permissions
-    # from forked-PR runs, which would make this job fail with confusing 403s.
-    # Same-repo PRs and the default branch get the full permission set below.
-    if: |
-      (github.event_name != 'pull_request') ||
-      (github.event.pull_request.head.repo.full_name == github.repository)
+    timeout-minutes: 15
     permissions:
       # Needed to upload the results to code-scanning dashboard.
       security-events: write
@@ -43,9 +36,17 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # publish_results only takes effect on the default branch; the action
-          # silently downgrades to false on PRs and other branches.
+          # Only takes effect on the default branch on push/schedule; the
+          # action skips publishing otherwise.
           publish_results: true
+
+      - name: "Validate SARIF output is non-empty"
+        run: |
+          set -euo pipefail
+          if [ ! -s results.sarif ]; then
+            echo "results.sarif is missing or empty" >&2
+            exit 1
+          fi
 
       - name: "Upload artifact"
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

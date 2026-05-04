@@ -11,8 +11,8 @@ on:
       - main
   workflow_dispatch:
 
-# Globaal readonly. De build-job overruled lokaal naar packages: write om de
-# image naar GHCR te pushen.
+# Globaal read-only. De build-job zet lokaal packages: write om de image
+# naar GHCR te pushen.
 permissions:
   contents: read
 
@@ -31,6 +31,7 @@ jobs:
   build:
     name: build-and-push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -64,6 +65,9 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # PR builds zijn amd64-only om CI-tijd te besparen; arm64-regressies
+      # komen pas op main aan het licht. provenance/sbom zijn no-ops bij
+      # push: false (buildx hangt attestations alleen aan een registry-push).
       - name: Build and push image
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
@@ -89,4 +93,10 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "Empty digest from build step; refusing to sign." >&2
+            exit 1
+          fi
+          cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"

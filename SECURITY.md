@@ -14,8 +14,10 @@ Vermeld in je melding **beide** referenties zodat de melding via MinBZK CIO-offi
 
 Conform het MinBZK-beleid (gebaseerd op NCSC) streven we naar:
 
-- inhoudelijke reactie binnen **1 werkdag**
+- inhoudelijke reactie binnen enkele werkdagen
 - coördinatie van publicatie binnen **60 dagen** na de melding
+
+> Vulnerability disclosure follows a coordinated 60-day timeline. Please report vulnerabilities via the NCSC link above.
 
 ## Niet doen
 
