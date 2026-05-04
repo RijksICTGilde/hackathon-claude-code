@@ -1,0 +1,82 @@
+name: release-sign
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to sign (existing release)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sign-source:
+    name: Sign source archive and attach to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # upload assets to release
+      id-token: write   # OIDC for cosign keyless signing
+    steps:
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ]; then
+            echo "name=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          persist-credentials: false
+
+      - name: Create source archive
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="${REPO}-${TAG}/" \
+            -o "${ARCHIVE}" "${TAG}"
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign archive with cosign keyless
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          cosign sign-blob --yes \
+            --output-signature "${ARCHIVE}.sig" \
+            --output-certificate "${ARCHIVE}.pem" \
+            "${ARCHIVE}"
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          gh release upload "${TAG}" \
+            "${ARCHIVE}" \
+            "${ARCHIVE}.sig" \
+            "${ARCHIVE}.pem" \
+            "${ARCHIVE}.sha256" \
+            --clobber \
+            --repo "${REPO_FULL}"
