@@ -17,10 +17,11 @@ permissions:
   contents: read
 
 # Voorkom dat twee snelle pushes parallelle multi-arch builds triggeren.
-# cancel-in-progress: false zodat tag-builds niet door een main-push worden afgebroken.
+# Op PR branches mag een nieuwe push de lopende run cancellen (CI-minutes besparen).
+# Op main en tags niet, zodat tag-builds niet door een main-push worden afgebroken.
 concurrency:
   group: build-image-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io

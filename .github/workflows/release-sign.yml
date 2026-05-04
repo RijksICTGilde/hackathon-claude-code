@@ -28,11 +28,23 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "$EVENT_NAME" = "release" ]; then
-            echo "name=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release)        RESOLVED="$RELEASE_TAG" ;;
+            workflow_dispatch) RESOLVED="$INPUT_TAG" ;;
+            *) echo "Unsupported event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
+          if [ -z "$RESOLVED" ]; then
+            echo "Resolved tag is empty (event=$EVENT_NAME)" >&2
+            exit 1
           fi
+          # Restrict to safe semver-ish tags so downstream filenames and
+          # --prefix paths cannot contain slashes, spaces, or shell metachars.
+          if ! printf '%s' "$RESOLVED" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Tag '$RESOLVED' does not match expected semver pattern" >&2
+            exit 1
+          fi
+          echo "name=$RESOLVED" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -45,6 +57,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.name }}
           REPO: ${{ github.event.repository.name }}
         run: |
+          set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
           git archive --format=tar.gz \
             --prefix="${REPO}-${TAG}/" \
@@ -59,6 +72,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.name }}
           REPO: ${{ github.event.repository.name }}
         run: |
+          set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
           cosign sign-blob --yes \
             --output-signature "${ARCHIVE}.sig" \
@@ -72,6 +86,7 @@ jobs:
           REPO: ${{ github.event.repository.name }}
           REPO_FULL: ${{ github.repository }}
         run: |
+          set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
           gh release upload "${TAG}" \
             "${ARCHIVE}" \
