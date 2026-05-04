@@ -6,7 +6,7 @@
 version: 2
 updates:
   - package-ecosystem: "docker" # See documentation for possible values
-    directory: "/" # Location of package manifests
+    directory: "/claude-sandbox" # Dockerfile lives here, not at repo root
     schedule:
       interval: "weekly"
   - package-ecosystem: "github-actions"
