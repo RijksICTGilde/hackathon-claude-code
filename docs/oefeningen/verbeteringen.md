@@ -14,6 +14,9 @@ Geen volledige catalogus, maar een handvol startpunten waar je je eigen pad in v
 - [Geoffrey Huntley's blog](https://ghuntley.com/) — Ralph-loop en aanverwante ideeën.
 - [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official) — beschikbare plugins om mee te experimenteren.
 - [`developer-overheid-nl/skills-marketplace`](https://github.com/developer-overheid-nl/skills-marketplace) — overheid-skills die in deze container zitten.
+- [Custom slash-commands](https://code.claude.com/docs/en/slash-commands) — eigen herhaalbare prompts in `.claude/commands/<naam>.md` of `~/.claude/commands/`. Laagdrempelig: één markdown-bestand is genoeg.
+- [Hooks](https://code.claude.com/docs/en/hooks) — deterministisch werk vastleggen op events als `PostToolUse` of `SessionStart` (bv. altijd `gofmt` na een Go-edit). `rtk` en `caveman` werken zelf via hooks; bekijk `~/.claude/settings.json` om te zien hoe.
+- [MCP-servers](https://code.claude.com/docs/en/mcp) — Claude Code koppelen aan externe systemen (database, issue-tracker, eigen API). `filesystem` of `fetch` zijn laagdrempelige eerste experimenten.
 
 ---
 

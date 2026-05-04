@@ -67,6 +67,8 @@ Volgende: voeg key-expiration toe met TTL-ondersteuning.
 
 **Probeer zelf:** Werk een challenge een half uur verder, sluit de sessie af en hervat hem op twee manieren: één keer zonder context-zin (alleen de challenge-naam), één keer met een expliciete status-regel en de volgende stap. Meet hoe lang het duurt voor je weer productief aan het werk bent bij elke variant.
 
+> Als alternatief op een handmatige status-regel: `claude --resume` (of `/resume` binnen een sessie) laadt je vorige sessie opnieuw in. Handig als je dezelfde dag verder wil; minder geschikt na langere onderbrekingen waarbij je liever bewust kiest welke context relevant blijft.
+
 **Wat je leert:** Je merkt hoeveel tijd je bespaart door bij hervatting één gerichte statusregel mee te geven.
 
 ---
