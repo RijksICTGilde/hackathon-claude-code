@@ -6,10 +6,10 @@ Deze categorie gaat over de skills, plugins en CLI-tools die in de container zit
 
 Iedere oefening hieronder bevat een "probeer zelf"-stap waarin je het verschil ervaart tussen *met* en *zonder* een plugin. Dat kan op twee manieren:
 
-- **Snel (per plugin, runtime, omkeerbaar):** `claude plugin disable <naam>` schakelt één plugin uit zonder rebuild. Je commando's en skill-discovery werken meteen alsof de plugin er niet is. Terugzetten met `claude plugin enable <naam>`. Vanuit een lopende Claude-sessie kan dit ook via het slash-commando `/plugin` (opent een interactief menu met tabs voor Discover, Installed, Marketplaces en Errors waar je plugins in- en uitschakelt). Dit is in vrijwel alle gevallen afdoende.
+- **Snel (per plugin, runtime, omkeerbaar):** `claude plugin disable <naam>` schakelt één plugin uit zonder rebuild. Je commando's en skill-discovery werken meteen alsof de plugin er niet is. Terugzetten met `claude plugin enable <naam>`. Vanuit een lopende Claude-sessie kan dit ook via het slash-commando `/plugin` (opent een interactief menu waar je plugins in- en uitschakelt). Dit is in vrijwel alle gevallen afdoende.
 - **Diep (per groep, build-time):** een `INSTALL_*`-toggle op `false` in `.env` plus image-rebuild en volume-recreate (zie [README claude-sandbox](../../claude-sandbox/README.md#optionele-componenten)). Pas nodig als je écht wil zien hoe de container draait zonder dat de plugin ooit geïnstalleerd is — bijvoorbeeld om autoload-effecten of disk-footprint te onderzoeken.
 
-> **Granulariteit:** de build-time toggles zijn grof. `INSTALL_OVERHEID_PLUGINS=false` haalt alle 6 DON-plugins ineens weg, `INSTALL_ANTHROPIC_PLUGINS=false` alle 11 Anthropic-plugins. De runtime-disable lost dat op: je kunt één enkele plugin uitzetten zonder de rest te raken.
+> **Granulariteit:** de build-time toggles zijn grof. `INSTALL_OVERHEID_PLUGINS=false` haalt alle DON-plugins ineens weg, `INSTALL_ANTHROPIC_PLUGINS=false` alle Anthropic-plugins. De runtime-disable lost dat op: je kunt één enkele plugin uitzetten zonder de rest te raken.
 
 De oefeningen hieronder gebruiken standaard de snelle variant en noemen de diepe waar die extra inzicht oplevert.
 
@@ -30,7 +30,7 @@ De oefeningen hieronder gebruiken standaard de snelle variant en noemen de diepe
 
 Welke skills bij welk werk passen: REST API → `standaarden:ls-api` (ADR/linting/problem+json); koppelvlak/auth → `standaarden:ls-iam`, `standaarden:ls-fsc`; basisregistratie → `standaarden:ls-dk` (Digikoppeling); notificatie/event → `standaarden:ls-notif` (CloudEvents); kaart/geo → `geo:*` skills.
 
-> **Diepe variant:** zet `INSTALL_OVERHEID_PLUGINS=false` in `.env` en herbouw de image (rebuild + volume-recreate). Hiermee verdwijnen alle 6 DON-plugins ineens — handig als je wil zien hoe de container draait zonder enige NL-overheidskennis.
+> **Diepe variant:** zet `INSTALL_OVERHEID_PLUGINS=false` in `.env` en herbouw de image (rebuild + volume-recreate). Hiermee verdwijnen alle DON-plugins ineens — handig als je wil zien hoe de container draait zonder enige NL-overheidskennis.
 
 **Wat je leert:** Je ziet concreet welke NL-overheidsspecifieke kennis de marketplace toevoegt ten opzichte van generieke Claude-kennis.
 
@@ -71,7 +71,7 @@ Welke skills bij welk werk passen: REST API → `standaarden:ls-api` (ADR/lintin
 
 Wat verandert aan tempo en kwaliteit?
 
-> **Diepe variant:** zet `INSTALL_ANTHROPIC_PLUGINS=false` in `.env` en herbouw — let op dat dit alle 11 Anthropic-plugins ineens weghaalt (ook github, code-review, etc.). De per-plugin runtime-disable hierboven is in de meeste gevallen genoeg.
+> **Diepe variant:** zet `INSTALL_ANTHROPIC_PLUGINS=false` in `.env` en herbouw — let op dat dit alle Anthropic-plugins ineens weghaalt (ook github, code-review, etc.). De per-plugin runtime-disable hierboven is in de meeste gevallen genoeg.
 
 **Wat je leert:** Je herkent welke process-skill bij welke fase hoort en wanneer een skill meer oplevert dan een simpele instructie in de prompt.
 
@@ -87,7 +87,7 @@ Wat verandert aan tempo en kwaliteit?
 
 **Probeer zelf:** Draai `/ralph-loop` op een challenge met heldere tests, bijvoorbeeld de wc-challenge van [codingchallenges.fyi](https://codingchallenges.fyi/). Geef altijd `--max-iterations` mee als veiligheidsnet en formuleer een duidelijk completion-criterium in je prompt. Vergelijk hoe ver Claude komt zonder tussenkomst — let bij het meekijken op of de iteraties écht vooruitgang boeken of dat hij in cirkels gaat.
 
-> **Diepe variant:** `INSTALL_ANTHROPIC_PLUGINS=false` in `.env` plus rebuild — alle 11 Anthropic-plugins ineens weg. Voor een snelle uit-test gebruik je `claude plugin disable ralph-loop`.
+> **Diepe variant:** `INSTALL_ANTHROPIC_PLUGINS=false` in `.env` plus rebuild — alle Anthropic-plugins ineens weg. Voor een snelle uit-test gebruik je `claude plugin disable ralph-loop`.
 
 **Wat je leert:** Je ervaart wanneer volledig autonoom itereren sneller gaat dan zelf de loop bewaken, en welke randvoorwaarden (heldere completion-criteria, harde iteratielimiet, afgebakende taak) noodzakelijk zijn om productief te itereren in plaats van tokens te verbranden.
 
@@ -116,7 +116,7 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 
 ### Wat verandert `claude-md-management` aan je `CLAUDE.md`-onderhoud?
 
-**Achtergrond:** `CLAUDE.md` is het per-project bestand met projectspecifieke instructies voor Claude (zie de [opbouw-oefening in claude-code.md](claude-code.md) voor hoe je een goede start maakt). Het groeit mee met het project maar wordt zelden opgeschoond — verouderde instructies, tegenstrijdige regels en overbodige context hopen zich op en sturen Claude de verkeerde kant op. De `claude-md-improver`-skill uit `claude-md-management` auditeert het bestand en stelt verbeteringen voor.
+**Achtergrond:** Een `CLAUDE.md` die goed begint (zie de [opbouw-oefening](claude-code.md)) groeit mee met het project, maar wordt zelden opgeschoond — verouderde instructies, tegenstrijdige regels en overbodige context hopen zich op en sturen Claude de verkeerde kant op. De `claude-md-improver`-skill uit `claude-md-management` auditeert het bestand en stelt verbeteringen voor.
 
 **Vergelijk:**
 - *Bad practice:* `CLAUDE.md` eenmalig opstellen en nooit meer terugkijken — oude instructies blijven actief, spreken nieuwere regels tegen en leiden Claude af op momenten dat je dat niet wilt.
@@ -127,7 +127,7 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 1. Plugin uit: `claude plugin disable claude-md-management`. Vraag Claude "kijk eens kritisch naar mijn CLAUDE.md" — generieke review zonder de skill.
 2. Plugin aan: `claude plugin enable claude-md-management`. Draai `claude-md-improver` op hetzelfde bestand. Vergelijk wat hij signaleert en hoe gestructureerd het voorstel is.
 
-> **Diepe variant:** zelfde als hierboven (`INSTALL_ANTHROPIC_PLUGINS=false`) — alle 11 Anthropic-plugins ineens weg.
+> **Diepe variant:** zelfde als hierboven (`INSTALL_ANTHROPIC_PLUGINS=false`) — alle Anthropic-plugins ineens weg.
 
 **Wat je leert:** Je ziet hoe `CLAUDE.md`-kwaliteit de uitkomst van je sessies beïnvloedt en leert wanneer het de moeite waard is om het bestand actief te onderhouden.
 
@@ -144,7 +144,7 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 **Probeer zelf:** Doe één sessie in twee helften:
 
 1. Caveman aan: start met `/caveman full`. Werk 10–15 minuten aan een iteratieve taak (bv. een bug stap voor stap pinpointen, of een functie tot tests groen krijgen). Let op tempo en token-verbruik.
-2. Caveman uit: typ `stop caveman`. Doe daarna een uitleg- of review-taak (bv. "leg uit waarom deze test faalde" of "review deze diff"). Vergelijk leesbaarheid en informatiedichtheid.
+2. Caveman uit: vraag Claude in chat "stop caveman" (chat-instructie, geen shell-commando). Doe daarna een uitleg- of review-taak (bv. "leg uit waarom deze test faalde" of "review deze diff"). Vergelijk leesbaarheid en informatiedichtheid.
 
 Voor een zuiverder vergelijking (zonder de skill-discovery hook): `claude plugin disable caveman` en herstart Claude — dan is de plugin volledig stil.
 

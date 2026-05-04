@@ -15,7 +15,7 @@ Geen volledige catalogus, maar een handvol startpunten waar je je eigen pad in v
 - [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official) — beschikbare plugins om mee te experimenteren.
 - [`developer-overheid-nl/skills-marketplace`](https://github.com/developer-overheid-nl/skills-marketplace) — overheid-skills die in deze container zitten.
 - [Custom slash-commands](https://code.claude.com/docs/en/slash-commands) — eigen herhaalbare prompts in `.claude/commands/<naam>.md` of `~/.claude/commands/`. Laagdrempelig: één markdown-bestand is genoeg.
-- [Hooks](https://code.claude.com/docs/en/hooks) — deterministisch werk vastleggen op events als `PostToolUse` of `SessionStart` (bv. altijd `gofmt` na een Go-edit). `rtk` en `caveman` werken zelf via hooks; bekijk `~/.claude/settings.json` om te zien hoe.
+- [Hooks](https://code.claude.com/docs/en/hooks) — deterministisch werk vastleggen op events als `PostToolUse` of `SessionStart` (bv. altijd `gofmt` na een Go-edit). `rtk` werkt via een hook in `~/.claude/settings.json`; `caveman` bundelt zijn hooks ín de plugin zelf — twee verschillende patronen om te bestuderen.
 - [MCP-servers](https://code.claude.com/docs/en/mcp) — Claude Code koppelen aan externe systemen (database, issue-tracker, eigen API). `filesystem` of `fetch` zijn laagdrempelige eerste experimenten.
 
 ---
