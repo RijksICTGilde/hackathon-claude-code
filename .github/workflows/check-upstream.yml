@@ -1,0 +1,334 @@
+name: check-upstream-dependencies
+
+# Wekelijkse out-of-band check op SHA-pinned scripts en versie-pinned binaries.
+# Doel: voorkomen dat builds onverwacht falen door een upstream-update door
+# proactief PR's aan te maken zodra een upstream-versie of -SHA wijzigt.
+# De Dockerfile blijft hard pinnen — dit is alleen detectie + auto-PR.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # maandag 06:00 UTC
+  workflow_dispatch:
+
+# Globaal readonly. Jobs die een PR moeten openen overrulen lokaal naar write.
+permissions:
+  contents: read
+
+# Bestanden waar deze workflow naar verwijst (Dockerfile, install-docker.sh,
+# vendor/install-scripts/*) leven onder claude-sandbox/. Dit geldt alleen voor
+# `run:`-steps; `uses:`-steps (checkout, peter-evans/create-pull-request) draaien
+# vanaf de repo-root en zien dus de hele tree.
+defaults:
+  run:
+    working-directory: claude-sandbox
+
+jobs:
+  # Job 1: vendored install-scripts (claude, sdkman, rtk).
+  # De Dockerfile gebruikt vendor/install-scripts/<name>.sh, niet upstream.
+  # Deze job detecteert wanneer upstream is gewijzigd en opent een PR die het
+  # vendored bestand vervangt — de PR-diff toont meteen de echte wijziging in
+  # het script (wat ook nodig is voor review).
+  vendored-scripts:
+    name: "vendored-scripts (${{ matrix.name }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: claude
+            url: https://claude.ai/install.sh
+            file: vendor/install-scripts/claude.sh
+          - name: sdkman
+            url: https://get.sdkman.io
+            file: vendor/install-scripts/sdkman.sh
+          - name: rtk
+            url: https://raw.githubusercontent.com/rtk-ai/rtk/v0.35.0/install.sh
+            file: vendor/install-scripts/rtk.sh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Compare upstream script with vendored copy
+        id: compare
+        env:
+          URL: ${{ matrix.url }}
+          FILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "$URL" -o /tmp/upstream.sh
+          upstream_sha=$(sha256sum /tmp/upstream.sh | awk '{print $1}')
+          if [ ! -f "$FILE" ]; then
+            echo "FOUT: vendored bestand '$FILE' bestaat niet" >&2
+            exit 1
+          fi
+          current_sha=$(sha256sum "$FILE" | awk '{print $1}')
+          {
+            echo "current=$current_sha"
+            echo "upstream=$upstream_sha"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$upstream_sha" != "$current_sha" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            cp /tmp/upstream.sh "$FILE"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          rm -f /tmp/upstream.sh
+
+      - name: Open auto-PR if upstream changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          branch: deps/script-${{ matrix.name }}
+          delete-branch: true
+          commit-message: "chore(deps): update vendored ${{ matrix.name }} install-script"
+          title: "chore(deps): update vendored ${{ matrix.name }} install-script"
+          labels: dependencies
+          body: |
+            Wekelijkse upstream-check heeft gedetecteerd dat het install-script voor
+            **${{ matrix.name }}** upstream is gewijzigd. Het vendored bestand in
+            `${{ matrix.file }}` is bijgewerkt zodat de build zonder onderbreking blijft draaien.
+
+            - **URL:** ${{ matrix.url }}
+            - **Oude SHA:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe SHA:** `${{ steps.compare.outputs.upstream }}`
+
+            Bekijk de PR-diff voor de daadwerkelijke wijziging in het script en verifieer
+            lokaal met `docker compose build --no-cache` voor je merget.
+
+  # Job 2a: Node.js LTS — vergelijkt zowel de versie als beide architectuur-SHAs.
+  # Bron: nodejs.org/dist/index.json (officiële versie-feed met LTS-veld).
+  node-version:
+    name: node-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Determine latest Node.js LTS and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          latest=$(curl -fsSL https://nodejs.org/dist/index.json \
+            | jq -r '[.[] | select(.lts != false)] | first | .version')
+          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+            echo "FOUT: kon laatste Node.js LTS-versie niet bepalen" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'NODE_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Nieuwe versie: haal beide SHAs uit de officiële SHASUMS256.txt.
+          shasums=$(curl -fsSL "https://nodejs.org/dist/${latest}/SHASUMS256.txt")
+          sha_amd64=$(echo "$shasums" | awk -v f="node-${latest}-linux-x64.tar.xz"   '$2==f {print $1}')
+          sha_arm64=$(echo "$shasums" | awk -v f="node-${latest}-linux-arm64.tar.xz" '$2==f {print $1}')
+          if [ -z "$sha_amd64" ] || [ -z "$sha_arm64" ]; then
+            echo "FOUT: kon SHAs voor ${latest} niet uit SHASUMS256.txt halen" >&2
+            exit 1
+          fi
+          # Huidige SHAs uit Dockerfile lezen (regel met case amd64/arm64).
+          current_amd64=$(grep -oP '(?<=amd64\) NODE_ARCH=x64;   SHA=)[a-f0-9]{64}' Dockerfile)
+          current_arm64=$(grep -oP '(?<=arm64\) NODE_ARCH=arm64; SHA=)[a-f0-9]{64}' Dockerfile)
+          # Vervang versie en beide SHAs.
+          sed -i "s|NODE_VERSION=${current}|NODE_VERSION=${latest}|" Dockerfile
+          sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
+          sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
+          # README tools-tabel verwijst naar 'Node.js 22 LTS' — als de major-versie
+          # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
+          old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
+          new_major=$(echo "$latest"  | sed -E 's/^v([0-9]+)\..*$/\1/')
+          {
+            echo "changed=true"
+            echo "amd64=$sha_amd64"
+            echo "arm64=$sha_arm64"
+            echo "major_change=$([ "$old_major" != "$new_major" ] && echo true || echo false)"
+            echo "old_major=$old_major"
+            echo "new_major=$new_major"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if Node.js LTS changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          branch: deps/node
+          delete-branch: true
+          commit-message: "chore(deps): bump Node.js to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump Node.js to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe Node.js LTS-release gedetecteerd op nodejs.org/dist.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+
+            ${{ steps.compare.outputs.major_change == 'true' && format('**Let op:** major-versie wijzigt van {0} naar {1}. Werk de README tools-tabel bij (`Node.js {0} LTS` → `Node.js {1} LTS`).', steps.compare.outputs.old_major, steps.compare.outputs.new_major) || '' }}
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+
+  # Job 2b: git-delta — GitHub release-tracking + per-arch SHAs (zelf berekenen,
+  # geen officiële SHA-feed beschikbaar).
+  delta-version:
+    name: delta-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Determine latest delta release and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api repos/dandavison/delta/releases/latest --jq .tag_name)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste delta-versie niet bepalen via GitHub API" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'DELTA_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Download beide assets en bereken SHAs zelf.
+          tmpdir=$(mktemp -d)
+          curl -fsSL -o "$tmpdir/amd64.deb" \
+            "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_amd64.deb"
+          curl -fsSL -o "$tmpdir/arm64.deb" \
+            "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_arm64.deb"
+          sha_amd64=$(sha256sum "$tmpdir/amd64.deb" | awk '{print $1}')
+          sha_arm64=$(sha256sum "$tmpdir/arm64.deb" | awk '{print $1}')
+          rm -rf "$tmpdir"
+          # Huidige SHAs uit Dockerfile lezen.
+          current_amd64=$(grep -oP '(?<=amd64\) SHA=)[a-f0-9]{64}' Dockerfile)
+          current_arm64=$(grep -oP '(?<=arm64\) SHA=)[a-f0-9]{64}' Dockerfile)
+          sed -i "s|DELTA_VERSION=${current}|DELTA_VERSION=${latest}|" Dockerfile
+          sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
+          sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
+          {
+            echo "changed=true"
+            echo "amd64=$sha_amd64"
+            echo "arm64=$sha_arm64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if delta changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          branch: deps/delta
+          delete-branch: true
+          commit-message: "chore(deps): bump git-delta to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump git-delta to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe git-delta-release gedetecteerd op GitHub.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://github.com/dandavison/delta/releases/tag/${{ steps.compare.outputs.latest }}
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+
+  # Job 3: Docker apt-pakketten in install-docker.sh.
+  # Draait een Debian 13 (trixie) container om dezelfde apt-suite te krijgen
+  # als de Dockerfile. Debian 13-versies hebben suffix '~debian.13~trixie' en
+  # zijn alleen zichtbaar vanuit een trixie-machine.
+  docker-apt:
+    name: docker-apt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Query latest Docker apt versions in Debian 13 container
+        run: |
+          set -euo pipefail
+          # Run dezelfde repo-setup als install-docker.sh in een wegwerp-container
+          # en lever een 'pkg=version' lijst terug op stdout.
+          docker run --rm debian:13.4-slim bash -c '
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y --no-install-recommends ca-certificates curl gnupg >/dev/null
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+              chmod a+r /etc/apt/keyrings/docker.asc
+              cat > /etc/apt/sources.list.d/docker.sources <<EOF
+          Types: deb
+          URIs: https://download.docker.com/linux/debian
+          Suites: trixie
+          Components: stable
+          Architectures: amd64
+          Signed-By: /etc/apt/keyrings/docker.asc
+          EOF
+              apt-get update -qq
+              for pkg in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
+                ver=$(apt-cache madison "$pkg" | head -1 | awk -F"|" "{gsub(/ /, \"\", \$2); print \$2}")
+                echo "${pkg}=${ver}"
+              done
+            ' > /tmp/latest-versions.txt
+          cat /tmp/latest-versions.txt
+
+      - name: Compare with install-docker.sh and rewrite if needed
+        id: compare
+        run: |
+          set -euo pipefail
+          changed=false
+          changes=""
+          while IFS='=' read -r pkg latest; do
+            [ -z "$pkg" ] && continue
+            current=$(grep -oE "${pkg}=[^ \\\\]+" install-docker.sh | head -1 | cut -d= -f2-)
+            if [ -z "$current" ]; then
+              echo "WAARSCHUWING: pakket '$pkg' niet gevonden in install-docker.sh" >&2
+              continue
+            fi
+            if [ "$current" != "$latest" ]; then
+              esc_current=$(printf '%s' "$current" | sed 's|[.[\*^$/]|\\&|g')
+              esc_latest=$(printf '%s'  "$latest"  | sed 's|[\&/]|\\&|g')
+              sed -i "s|${pkg}=${esc_current}|${pkg}=${esc_latest}|" install-docker.sh
+              changes+="- \`${pkg}\`: \`${current}\` → \`${latest}\`"$'\n'
+              changed=true
+            fi
+          done < /tmp/latest-versions.txt
+          {
+            echo "changed=$changed"
+            echo "changes<<EOF"
+            echo "$changes"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if any apt-package changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          branch: deps/docker-apt
+          delete-branch: true
+          commit-message: "chore(deps): bump docker apt packages"
+          title: "chore(deps): bump docker apt packages"
+          labels: dependencies
+          body: |
+            Nieuwste Docker apt-pakket-versies in Debian 13 (trixie) gedetecteerd.
+
+            ${{ steps.compare.outputs.changes }}
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.

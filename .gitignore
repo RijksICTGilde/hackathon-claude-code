@@ -1,0 +1,13 @@
+.env
+.worktrees/
+**/.claude/settings.local.json
+
+# Editor / IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
