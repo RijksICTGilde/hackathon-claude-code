@@ -41,7 +41,7 @@ Deze categorie gaat over Claude Code zelf — niet over wat je bouwt, maar over 
 
 Heb je werk dat over álle projecten gaat (bv. "antwoord altijd in het Nederlands" of "schrijf geen overbodige comments")? Zet dat in `~/.claude/CLAUDE.md` in plaats van per-project.
 
-Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signaleren — is de `claude-md-improver`-skill nuttig. Zie de [bijbehorende oefening](plugins-skills-tools.md) in de plugins-categorie.
+Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signaleren — is de `claude-md-improver`-skill nuttig. Zie de [bijbehorende oefening](plugins-skills-tools.md#wat-verandert-claude-md-management-aan-je-claudemd-onderhoud) in de plugins-categorie.
 
 **Wat je leert:** Je herkent welk soort instructies waarde toevoegen en welke alleen maar context kosten, en je ontwikkelt een gevoel voor de juiste lengte van een `CLAUDE.md`.
 
@@ -49,7 +49,7 @@ Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signal
 
 ### Wat onthoudt Claude tussen sessies via memory?
 
-**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code een automatisch geheugen: tijdens je werk noteert hij dingen die volgens hem in een volgende sessie nuttig zijn — een corrigerende aanwijzing die je gaf, een conventie die uit een bug bleek, een voorkeur die je herhaaldelijk uitsprak. Het verschil met `CLAUDE.md` is dat `CLAUDE.md` door jou geschreven en bewust onderhouden is, terwijl memory door Claude wordt opgebouwd zonder dat je elke regel zelf typt. Per project bestaat een eigen memory-directory (gekoppeld aan de git-repo, gedeeld tussen worktrees). Met `/memory` bekijk en bewerk je wat er staat; auto-memory kun je via dezelfde plek aan- en uitzetten.
+**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code een automatisch geheugen: tijdens je werk noteert hij dingen die volgens hem in een volgende sessie nuttig zijn — een corrigerende aanwijzing die je gaf, een conventie die uit een bug bleek, een voorkeur die je herhaaldelijk uitsprak. Het verschil met `CLAUDE.md` is dat `CLAUDE.md` door jou geschreven en bewust onderhouden is, terwijl memory door Claude wordt opgebouwd zonder dat je elke regel zelf typt. Per project bestaat een eigen memory-directory, gekoppeld aan de absolute werkmap (een worktree op een ander pad krijgt dus zijn eigen memory, niet die van de hoofdcheckout). Met `/memory` bekijk en bewerk je wat er staat.
 
 **Vergelijk:**
 - *Bad practice:* dezelfde correctie meerdere sessies achter elkaar geven ("nee, gebruik `pnpm` niet `npm`", "antwoord in het Nederlands") — zonder memory blijft Claude die fout maken.
@@ -160,4 +160,4 @@ Doe daarna een vervolgstap (bijvoorbeeld een refactor van X) en kijk in welke va
 
 **Wat je leert:** Je herkent welke taken zich lenen voor delegatie — typisch breed-zoeken, samenvatten, of werk waarvan alleen de conclusie telt — en welke je beter in je hoofdsessie houdt omdat je elke tussenstap zelf wil zien.
 
-> Voor volledig autonoom itereren tot een taak af is, zie de [`ralph-loop`-oefening](plugins-skills-tools.md) in de plugins-categorie.
+> Voor volledig autonoom itereren tot een taak af is, zie de [`ralph-loop`-oefening](plugins-skills-tools.md#wat-doet-de-ralph-loop-voor-je-en-wanneer-gebruik-je-hem) in de plugins-categorie.

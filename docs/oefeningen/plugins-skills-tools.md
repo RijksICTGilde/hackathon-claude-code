@@ -38,17 +38,17 @@ Welke skills bij welk werk passen: REST API → `standaarden:ls-api` (ADR/lintin
 
 ### Wanneer voegt rtk (token reduction) merkbaar waarde toe?
 
-**Achtergrond:** `rtk` knipt overbodige tokens uit — witruimte, comments, herhalende structuren — voordat input naar Claude gaat. Het werkt via een hook die bepaalde commando's automatisch herschrijft (bv. `git status` → `rtk git status`). Dat helpt bij grote codebases of lange bestanden waarbij je context snel vol raakt, maar je nog niet precies weet welk deel je nodig hebt. Bij kleine, gerichte vragen levert het weinig extra op.
+**Achtergrond:** `rtk` verkort verbose CLI-output — witruimte, comments, herhalende structuren — voordat die output in Claude's context belandt. Het werkt via een hook die bepaalde commando's automatisch herschrijft (bv. `git status` → `rtk git status`). Dat helpt bij grote codebases of lange bestanden waarbij je context snel vol raakt door tool-output. Bij kleine, gerichte vragen levert het weinig extra op.
 
 **Vergelijk:**
 - *Bad practice:* een groot project automatisch laden in context terwijl je maar 5% van de bestanden nodig hebt — context raakt vol, Claude verliest het overzicht en de antwoordkwaliteit daalt.
 - *Good practice:* rtk inzetten op grote bestanden of mappen waar je het exacte relevante deel nog niet weet; zo maak je ruimte voor wat echt telt.
 
-**Probeer zelf:** Pak een lange context (bv. een groot README plus meerdere source-bestanden), stuur dezelfde vraag eenmaal met en eenmaal zonder rtk. Vergelijk de antwoordkwaliteit en het tokenverbruik — gebruik `/cost` om het verschil meetbaar te maken (zie de [oefening over runtime-instellingen](claude-code.md)). Probeer dit bij [codingchallenges.fyi](https://codingchallenges.fyi/) met een challenge waarvan de codebase al flink gegroeid is.
+**Probeer zelf:** Pak een lange context (bv. een groot README plus meerdere source-bestanden), stuur dezelfde vraag eenmaal met en eenmaal zonder rtk. Vergelijk de antwoordkwaliteit en het tokenverbruik — gebruik `/cost` om het verschil meetbaar te maken (zie de [oefening over runtime-instellingen](claude-code.md#hoe-stuur-je-per-sessie-het-model-de-denkdiepte-en-de-kosten)). Probeer dit bij [codingchallenges.fyi](https://codingchallenges.fyi/) met een challenge waarvan de codebase al flink gegroeid is.
 
 `rtk` is geen plugin maar een CLI met hook, dus `claude plugin disable` werkt hier niet. Bypass-opties:
 - **Per commando:** `rtk proxy <cmd>` draait het commando zónder rtk-filtering, terwijl de hook actief blijft voor andere calls.
-- **Hele sessie:** verwijder de rtk-hook tijdelijk uit `~/.claude/settings.json` (knip het hook-blok uit en bewaar het lokaal) en herstart Claude.
+- **Hele sessie:** kopieer het rtk-hook-blok uit `~/.claude/settings.json` naar een back-upbestand (bv. `~/rtk-hook.bak.json`), verwijder het uit `settings.json` en herstart Claude. Plak het terug om rtk weer aan te zetten.
 
 > **Diepe variant:** zet `INSTALL_RTK=false` in `.env` en herbouw. Hiermee is rtk volledig afwezig — geen binary, geen hook. Nodig als je wil meten of de hook zelf overhead toevoegt.
 
@@ -79,7 +79,7 @@ Wat verandert aan tempo en kwaliteit?
 
 ### Wat doet de Ralph-loop voor je en wanneer gebruik je hem?
 
-**Achtergrond:** De Ralph-loop, oorspronkelijk beschreven door [Geoffrey Huntley](https://ghuntley.com/ralph/), zet Claude in een loop met dezelfde prompt zodat hij vanzelf blijft itereren tot een taak af is. Perfect voor challenges waar je gewoon wilt dat het eindresultaat er komt zonder dat je zelf elke iteratie hoeft te starten. In deze container zit Anthropic's officiële [`ralph-wiggum`](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) plugin standaard mee (in de marketplace ook bekend als [`ralph-loop`](https://claude.com/plugins/ralph-loop)). Hij levert de slash-commands `/ralph-loop` en `/cancel-ralph`, een Stop-hook die sessie-exits onderschept, en `--max-iterations` als veiligheidsnet. De [zelf-review-oefening](claude-code.md) is een natuurlijke bouwsteen: een sterke review-prompt geeft de loop iets concreets om elke iteratie aan af te meten.
+**Achtergrond:** De Ralph-loop, oorspronkelijk beschreven door [Geoffrey Huntley](https://ghuntley.com/ralph/), zet Claude in een loop met dezelfde prompt zodat hij vanzelf blijft itereren tot een taak af is. Perfect voor challenges waar je gewoon wilt dat het eindresultaat er komt zonder dat je zelf elke iteratie hoeft te starten. In deze container zit Anthropic's officiële [`ralph-loop`](https://claude.com/plugins/ralph-loop)-plugin standaard mee (de broncode op GitHub staat onder de naam [`ralph-wiggum`](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)). Hij levert de slash-commands `/ralph-loop` en `/cancel-ralph`, een Stop-hook die sessie-exits onderschept, en `--max-iterations` als veiligheidsnet. De [zelf-review-oefening](claude-code.md#wat-verandert-er-als-je-claude-zijn-eigen-werk-laat-reviewen) is een natuurlijke bouwsteen: een sterke review-prompt geeft de loop iets concreets om elke iteratie aan af te meten.
 
 **Vergelijk:**
 - *Bad practice:* een vage prompt loslaten zonder iteratielimiet — Claude itereert eindeloos zonder richting, verbrandt tokens en convergeert niet.
@@ -116,7 +116,7 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 
 ### Wat verandert `claude-md-management` aan je `CLAUDE.md`-onderhoud?
 
-**Achtergrond:** Een `CLAUDE.md` die goed begint (zie de [opbouw-oefening](claude-code.md)) groeit mee met het project, maar wordt zelden opgeschoond — verouderde instructies, tegenstrijdige regels en overbodige context hopen zich op en sturen Claude de verkeerde kant op. De `claude-md-improver`-skill uit `claude-md-management` auditeert het bestand en stelt verbeteringen voor.
+**Achtergrond:** Een `CLAUDE.md` die goed begint (zie de [opbouw-oefening](claude-code.md#hoe-bouw-je-een-goede-claudemd-op)) groeit mee met het project, maar wordt zelden opgeschoond — verouderde instructies, tegenstrijdige regels en overbodige context hopen zich op en sturen Claude de verkeerde kant op. De `claude-md-improver`-skill uit `claude-md-management` auditeert het bestand en stelt verbeteringen voor.
 
 **Vergelijk:**
 - *Bad practice:* `CLAUDE.md` eenmalig opstellen en nooit meer terugkijken — oude instructies blijven actief, spreken nieuwere regels tegen en leiden Claude af op momenten dat je dat niet wilt.
