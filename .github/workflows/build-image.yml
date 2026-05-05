@@ -98,10 +98,10 @@ jobs:
       # Alle tags die naar dezelfde digest wijzen erven daarmee de signature.
       # De volgende stap verifieert direct dat de signature retrievable is
       # via Rekor — niet weghalen zonder verify-stap te vervangen.
-      # Ref-guard zodat workflow_dispatch op een feature-branch niet kan
-      # leiden tot een gepushte+ondertekende image waar de verify-stap
-      # daarna op faalt (workflow_dispatch op die branches blokkeert nu
-      # vóór de push, niet na de sign).
+      # Ref-guard: push, sign en verify worden gezamenlijk overgeslagen op
+      # workflow_dispatch vanaf een feature-branch — de build draait wel
+      # groen door, maar er wordt niets naar GHCR gepusht of getekend.
+      # Zo komen we nooit in de toestand "gepusht maar onverifieerbaar".
       - name: Sign image with cosign
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:
@@ -125,9 +125,11 @@ jobs:
       # NB: de retry behandelt elke non-zero als transient. Een echte
       # signature-mismatch faalt nog steeds na het budget, maar verbruikt
       # eerst de retry-tijd; bewuste trade-off vs. parsing van cosign-output.
-      # `if:` ref-guard zelfde reden als Sign-step: workflow_dispatch op
-      # een feature-branch heeft niets gepushed/getekend dus is verifyen
-      # zinloos én zou falen op de gepinde IDENTITY_REGEX.
+      # `if:` ref-guard zelfde reden als Sign-step: zonder push+sign is
+      # er geen handtekening om te verifiëren — verify zou anders falen
+      # met "no matching signatures". Beide guards moeten synchroon
+      # blijven; als één van beide afwijkt krijg je óf een unverified
+      # image óf een gegarandeerde verify-failure.
       - name: Verify image signature
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:

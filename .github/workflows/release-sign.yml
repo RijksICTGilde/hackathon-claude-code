@@ -74,7 +74,7 @@ jobs:
           # IDENTITY_REGEXP in build-image.yml + SECURITY.md (anders zou
           # `1.2.3` ondertekend worden maar consumer-verify falen).
           if ! printf '%s' "$RESOLVED" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-            echo "Tag '$RESOLVED' does not match expected semver pattern (v-prefix required)" >&2
+            echo "Tag '$RESOLVED' does not match expected strict semver (vMAJOR.MINOR.PATCH[-prerelease][+build])" >&2
             exit 1
           fi
           echo "name=$RESOLVED" >> "$GITHUB_OUTPUT"
@@ -93,11 +93,12 @@ jobs:
           # bewaard zodat netwerk-/auth-/rate-limit-fouten niet verward
           # worden met "release bestaat niet".
           # gh CLI standaard error-formaat begint met "gh: <msg> (HTTP <code>)".
-          # Anchor de grep op die prefix zodat een rate-limit/5xx-bericht
-          # waarin toevallig "Not Found" voorkomt niet als "tag bestaat
-          # niet" wordt geclassificeerd.
+          # Anchor de grep zodat een rate-limit/5xx-bericht waarin toevallig
+          # "Not Found" voorkomt niet als "tag bestaat niet" wordt
+          # geclassificeerd. Beide alternatieven anchoren via groepering
+          # zodat ERE-precedence ook de HTTP-code clausule begrenst.
           if ! tag_err="$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --silent 2>&1)"; then
-            if printf '%s' "$tag_err" | grep -Eq '^gh: Not Found( |$)|HTTP 404'; then
+            if printf '%s' "$tag_err" | grep -Eq '^gh: (Not Found|.*\(HTTP 404\))'; then
               echo "Tag '${TAG}' does not exist on origin" >&2
             else
               echo "gh api git/ref/tags failed for '${TAG}': ${tag_err}" >&2
@@ -105,7 +106,7 @@ jobs:
             exit 1
           fi
           if ! rel_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" 2>&1 >/dev/null)"; then
-            if printf '%s' "$rel_err" | grep -Eq '^release not found|HTTP 404'; then
+            if printf '%s' "$rel_err" | grep -Eq '^(release not found|gh: .*\(HTTP 404\))'; then
               echo "Tag '${TAG}' has no corresponding published release" >&2
             else
               echo "gh release view failed for '${TAG}': ${rel_err}" >&2
@@ -203,8 +204,10 @@ jobs:
           # Redirect-trick: `2>&1 1>/tmp/file` stuurt stdout naar bestand en
           # houdt stderr in $existing_err — anders kunnen we auth-fouten
           # niet onderscheiden van een succesvolle-maar-lege asset-lijst.
-          # Pas op bij refactoren: `2>&1 > /tmp/file` zou stdout én stderr
-          # samenvoegen en zo de classificatie breken.
+          # Volgorde matters: dup eerst (`2>&1`), dan stdout omleiden
+          # (`1>/tmp/file`). De omgekeerde volgorde (`>/tmp/file 2>&1`)
+          # stuurt zowel stdout als stderr naar het bestand en breekt
+          # de classificatie.
           if ! existing_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/existing-assets)"; then
             echo "pre-upload asset listing failed for '${TAG}': ${existing_err}" >&2
             exit 1
@@ -221,10 +224,17 @@ jobs:
           # willen we zien welke assets wel/niet aankwamen voordat we
           # exit'en, anders ziet operator alleen "upload failed" zonder
           # asset-state om vanuit te ruimen.
-          if ! gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}"; then
-            upload_rc=$?
+          # Belangrijk: vang de exit-code in dezelfde regel met `|| rc=$?`.
+          # Een `if ! cmd` constructie kan dat NIET — daarbinnen zou `$?`
+          # de waarde van het hele negatie-test (0) terugzien, niet de
+          # exit-code van cmd, en zou de step met exit 0 stilletjes
+          # kunnen slagen na een echte upload-fout.
+          upload_rc=0
+          gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}" || upload_rc=$?
+          if [ "$upload_rc" -ne 0 ]; then
             echo "gh release upload exited ${upload_rc}; partial-asset state:" >&2
-            gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' >&2 || true
+            gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' >&2 \
+              || echo "(asset listing failed; manual investigation required)" >&2
             exit "$upload_rc"
           fi
 

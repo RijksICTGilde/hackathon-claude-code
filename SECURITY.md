@@ -38,7 +38,7 @@ Bij elke gepubliceerde release tekent de `release-sign` workflow zowel het bron-
 
 **Belangrijk:** verifieer alleen het `<repo>-<tag>.tar.gz` asset uit de release. GitHub's automatisch gegenereerde "Source code (tar.gz)" download is een ander archief en heeft een andere checksum — die handtekening werkt daar niet op.
 
-> De certificate-identity-regexp hieronder (en in `build-image.yml`) is gebonden aan de bestandsnaam `release-sign.yml`. Bij hernoemen van de workflow moet ook deze SECURITY.md geüpdatet worden, anders breken consumer-verifies zonder duidelijke foutmelding.
+> De regex hieronder is gebonden aan de bestandsnaam `release-sign.yml`. Een vergelijkbare zelf-referentie zit in `build-image.yml` (gebonden aan dat bestand zelf). Bij hernoemen van een van beide workflows breken consumer-verifies zonder duidelijke foutmelding — update zowel deze SECURITY.md als het verify-blok in de andere workflow mee.
 
 ```bash
 TAG=v1.2.3
