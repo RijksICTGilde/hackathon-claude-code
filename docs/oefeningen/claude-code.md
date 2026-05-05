@@ -1,6 +1,6 @@
 # Oefeningen: werken met Claude Code
 
-Deze categorie gaat over Claude Code zelf — niet over wat je bouwt, maar over hoe je werkt. Je onderzoekt slash-commands zoals `/clear`, plan mode, `--dangerously-skip-permissions`, zelf-review en de Ralph-loop. Wie ze bewust inzet, wint tempo en krijgt betere output. Als startpunt voor nog meer ideeën is de [cc.storyfox.cz cheat sheet](https://cc.storyfox.cz/) een handig naslagwerk dat je naast deze oefeningen kunt houden.
+Deze categorie gaat over Claude Code zelf — niet over wat je bouwt, maar over hoe je werkt. Je onderzoekt slash-commands zoals `/clear`, plan mode, `--dangerously-skip-permissions`, subagents en zelf-review. Wie ze bewust inzet, wint tempo en krijgt betere output. Als startpunt voor nog meer ideeën is de [cc.storyfox.cz cheat sheet](https://cc.storyfox.cz/) een handig naslagwerk dat je naast deze oefeningen kunt houden.
 
 ---
 
@@ -49,7 +49,7 @@ Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signal
 
 ### Wat onthoudt Claude tussen sessies via memory?
 
-**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code een automatisch geheugen: tijdens je werk noteert hij dingen die volgens hem in een volgende sessie nuttig zijn — een corrigerende aanwijzing die je gaf, een conventie die uit een bug bleek, een voorkeur die je herhaaldelijk uitsprak. Het verschil met `CLAUDE.md` is dat `CLAUDE.md` door jou geschreven en bewust onderhouden is, terwijl memory door Claude wordt opgebouwd zonder dat je elke regel zelf typt. Per project bestaat een eigen memory-directory, gekoppeld aan de absolute werkmap (een worktree op een ander pad krijgt dus zijn eigen memory, niet die van de hoofdcheckout). Met `/memory` bekijk en bewerk je wat er staat.
+**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code een automatisch geheugen: tijdens je werk noteert hij dingen die volgens hem in een volgende sessie nuttig zijn — een corrigerende aanwijzing die je gaf, een conventie die uit een bug bleek, een voorkeur die je herhaaldelijk uitsprak. Het verschil met `CLAUDE.md` is dat `CLAUDE.md` door jou geschreven en bewust onderhouden is, terwijl memory door Claude wordt opgebouwd zonder dat je elke regel zelf typt. Memory wordt opgeslagen in `~/.claude/projects/<project>/memory/`, waarbij `<project>` afgeleid is van de git-repository — alle worktrees en subdirectories binnen dezelfde repo delen dus één memory-directory ([Anthropic docs: Storage location](https://code.claude.com/docs/en/memory#storage-location)). Met `/memory` bekijk en bewerk je wat er staat.
 
 **Vergelijk:**
 - *Bad practice:* dezelfde correctie meerdere sessies achter elkaar geven ("nee, gebruik `pnpm` niet `npm`", "antwoord in het Nederlands") — zonder memory blijft Claude die fout maken.
@@ -66,19 +66,19 @@ Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signal
 **Achtergrond:** Drie commando's geven runtime-controle over hoe Claude werkt:
 
 - `/model` — kies tussen modellen (Opus voor complex redeneren, Sonnet voor de meeste taken, Haiku voor licht/snel werk).
-- `/effort` — stel reasoning-diepte in (`low`, `medium`, `high`, `xhigh`, `max`). Hoger = dieper nadenken per stap, langzamer en duurder. `auto` zet hem terug op de default van het model.
+- `/effort` — stel reasoning-diepte in. Beschikbaar op Opus 4.7, Opus 4.6 en Sonnet 4.6 (niet op Haiku). Levels: `low`, `medium`, `high`, `max` op alle drie; `xhigh` alleen op Opus 4.7. Hoger = dieper nadenken per stap, langzamer en duurder. `/effort auto` zet hem terug op de default van het model. Zie [model-config: effort levels](https://code.claude.com/docs/en/model-config#adjust-effort-level).
 - `/cost` — toont je verbruik in de huidige sessie (tokens, kosten, modelverdeling).
 
-Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemmen — een 10-regelige helper hoeft geen Opus + max, een architectuurschets verdient geen Haiku + low. Voor andere instellingen, zie `/help` of de [model configuration docs](https://code.claude.com/docs/en/model-config).
+Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemmen — een 10-regelige helper hoeft geen Opus + max, een architectuurschets verdient geen Haiku. Voor andere instellingen, zie `/help` of de [model configuration docs](https://code.claude.com/docs/en/model-config).
 
 **Vergelijk:**
-- *Bad practice:* default-instellingen voor alles gebruiken — Opus + xhigh op een rename-taak verbrandt budget; Haiku + low op een complexe refactor mist de diepte en levert iets oppervlakkigs op.
-- *Good practice:* per taak bewust kiezen — model + effort omhoog voor planning, ontwerp en complex debuggen; omlaag voor mechanische edits, kleine fixes, eenvoudige scripts. `/cost` af en toe checken om je inschatting te toetsen.
+- *Bad practice:* default-instellingen voor alles gebruiken — Opus + xhigh op een rename-taak verbrandt budget; Haiku op een complexe refactor mist de diepte en levert iets oppervlakkigs op.
+- *Good practice:* per taak bewust kiezen — zwaarder model en/of hogere effort voor planning, ontwerp en complex debuggen; lichter model of lagere effort voor mechanische edits, kleine fixes, eenvoudige scripts. `/cost` af en toe checken om je inschatting te toetsen.
 
 **Probeer zelf:** Pak een challenge en voer dezelfde substantiële taak (bv. een feature met meerdere stappen) drie keer uit:
 
 1. Default model en effort. Noteer doorlooptijd en `/cost`-resultaat.
-2. Model omlaag (Sonnet of Haiku) en/of `/effort low`. Noteer hetzelfde.
+2. Lichter model (Sonnet of Haiku), of bij Opus/Sonnet 4.6 een lager `/effort`-level. Noteer hetzelfde. (Effort werkt niet op Haiku — daar telt alleen de modelkeuze.)
 3. Een lichte taak (bv. typo-fix of rename) op default én op omlaag-gezet — zie je verschil?
 
 **Wat je leert:** Je krijgt een gevoel voor welke combinatie bij welk soort werk past, en voor de prijs/kwaliteit-curve van het model+effort-paar.
@@ -117,7 +117,7 @@ Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemme
 
 ### Wat verandert er als je Claude zijn eigen werk laat reviewen?
 
-**Achtergrond:** Na een implementatie kun je Claude een aparte review-prompt geven: vraag hem naar edge cases, error handling of performance. Claude kijkt dan met andere ogen naar zijn eigen code en vindt regelmatig issues die hij in de eerste pass heeft overgeslagen — niet omdat hij het vergeten was, maar omdat een gerichte review-prompt een ander deel van zijn redenering activeert. Dit is ook een belangrijke bouwsteen voor de Ralph-loop hieronder: een goede zelf-review-prompt is precies wat een autonome iteratie productief houdt.
+**Achtergrond:** Na een implementatie kun je Claude een aparte review-prompt geven: vraag hem naar edge cases, error handling of performance. Claude kijkt dan met andere ogen naar zijn eigen code en vindt regelmatig issues die hij in de eerste pass heeft overgeslagen — niet omdat hij het vergeten was, maar omdat een gerichte review-prompt een ander deel van zijn redenering activeert. Dit is ook een belangrijke bouwsteen voor de [Ralph-loop-oefening](plugins-skills-tools.md#wat-doet-de-ralph-loop-voor-je-en-wanneer-gebruik-je-hem) in de plugins-categorie: een goede zelf-review-prompt is precies wat een autonome iteratie productief houdt.
 
 **Vergelijk:**
 - *Bad practice:* één pass schrijven en direct als af beschouwen; de code werkt voor de happy path, maar edge cases en foutafhandeling zijn onbehandeld.
