@@ -66,8 +66,9 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       # PR builds zijn amd64-only om CI-tijd te besparen; arm64-regressies
-      # komen pas op main aan het licht. provenance/sbom zijn no-ops bij
-      # push: false (buildx hangt attestations alleen aan een registry-push).
+      # komen pas op main aan het licht. provenance/sbom blijven aan staan;
+      # buildx negeert ze stilzwijgend bij push: false en hangt ze alleen
+      # aan de registry-push op main/tag — laat ze hier dus niet weg.
       - name: Build and push image
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
@@ -100,3 +101,18 @@ jobs:
             exit 1
           fi
           cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      # Verify the signature we just wrote is actually retrievable from
+      # Rekor. Catches transient Fulcio/Rekor write failures that cosign
+      # sign itself didn't propagate (rare, but ships an unsigned image).
+      - name: Verify image signature
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${REPO_FULL}/.github/workflows/build-image.yml@.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"

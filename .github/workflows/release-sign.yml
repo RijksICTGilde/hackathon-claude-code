@@ -39,13 +39,33 @@ jobs:
             echo "Resolved tag is empty (event=$EVENT_NAME)" >&2
             exit 1
           fi
-          # Restrict to safe semver-ish tags so downstream filenames and
+          # Restrict to strict semver tags so downstream filenames and
           # --prefix paths cannot contain slashes, spaces, or shell metachars.
-          if ! printf '%s' "$RESOLVED" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+          # Prerelease starts with `-`, build-metadata with `+`; reject the
+          # `v1.2.3.foo` shape that an alternation `[.-]` would let through.
+          if ! printf '%s' "$RESOLVED" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
             echo "Tag '$RESOLVED' does not match expected semver pattern" >&2
             exit 1
           fi
           echo "name=$RESOLVED" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag refers to a published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch can target arbitrary tags (incl. moved or typo'd
+          # ones). Refuse to sign anything that isn't a published release.
+          if ! git ls-remote --exit-code --tags "https://github.com/${REPO_FULL}.git" "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag '${TAG}' does not exist on origin" >&2
+            exit 1
+          fi
+          if ! gh release view "${TAG}" --repo "${REPO_FULL}" >/dev/null 2>&1; then
+            echo "Tag '${TAG}' has no corresponding published release" >&2
+            exit 1
+          fi
 
       - name: Checkout tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -86,6 +106,14 @@ jobs:
             --output-signature "${ARCHIVE}.sig" \
             --output-certificate "${ARCHIVE}.pem" \
             "${ARCHIVE}"
+          # cosign exits 0 even if a partial write produced a zero-byte
+          # signature or certificate; verify both before we ship them.
+          for f in "${ARCHIVE}.sig" "${ARCHIVE}.pem"; do
+            if [ ! -s "$f" ]; then
+              echo "Empty signing output: $f" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload assets to release
         env:
@@ -96,12 +124,22 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
+          # Refuse to overwrite signed assets silently. A re-run for the same
+          # tag should fail loudly so an operator decides whether to delete
+          # the existing assets first (and document why).
+          EXISTING="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name')"
+          for f in "${ARCHIVE}" "${ARCHIVE}.sig" "${ARCHIVE}.pem" "${ARCHIVE}.sha256"; do
+            if printf '%s\n' "${EXISTING}" | grep -Fxq "$f"; then
+              echo "Refusing to clobber existing release asset: $f" >&2
+              echo "Delete it manually with: gh release delete-asset ${TAG} $f --repo ${REPO_FULL}" >&2
+              exit 1
+            fi
+          done
           gh release upload "${TAG}" \
             "${ARCHIVE}" \
             "${ARCHIVE}.sig" \
             "${ARCHIVE}.pem" \
             "${ARCHIVE}.sha256" \
-            --clobber \
             --repo "${REPO_FULL}"
 
           # Verify all four expected assets actually landed on the release.

@@ -14,8 +14,7 @@ jobs:
     name: differential-shellcheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Skip on PRs from forks: GitHub strips security-events / pull-requests
-    # write permissions, which would make SARIF upload + PR-comment posting fail.
+    # Same-repo PRs, push: full differential run with SARIF upload + PR comment.
     if: |
       (github.event_name != 'pull_request') ||
       (github.event.pull_request.head.repo.full_name == github.repository)
@@ -37,3 +36,31 @@ jobs:
           strict-check-on-push: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  shellcheck-fork-pr:
+    name: shellcheck (fork PR fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Fork PRs cannot upload SARIF or post PR comments. Run a plain
+    # shellcheck across all tracked shell scripts so external contributions
+    # still get gated on shell warnings/errors.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run shellcheck on tracked shell scripts
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found; nothing to check."
+            exit 0
+          fi
+          shellcheck --severity=warning "${files[@]}"

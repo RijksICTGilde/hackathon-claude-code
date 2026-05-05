@@ -16,8 +16,7 @@ jobs:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Skip on PRs from forks: GitHub strips security-events permissions
-    # from forked-PR runs, which would make the SARIF upload fail.
+    # Same-repo PRs, push, schedule: full SARIF run with code-scanning upload.
     if: |
       (github.event_name != 'pull_request') ||
       (github.event.pull_request.head.repo.full_name == github.repository)
@@ -53,9 +52,49 @@ jobs:
           ignore-unfixed: true
           scanners: vuln,secret,misconfig
 
+      # Fail loudly if the scanner crashed and produced no SARIF; otherwise
+      # the upload step would silently no-op and the dashboard would show
+      # stale results without anyone noticing.
+      - name: Verify SARIF output exists
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s trivy-results.sarif ]; then
+            echo "trivy-results.sarif is missing or empty" >&2
+            exit 1
+          fi
+
       - name: Upload to code-scanning
-        if: always() && hashFiles('trivy-results.sarif') != ''
+        if: always()
         uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
         with:
           sarif_file: trivy-results.sarif
           category: trivy
+
+  scan-fork-pr:
+    name: Trivy filesystem scan (fork PR fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fork PRs cannot upload SARIF (GitHub strips security-events from
+    # the read-only token). Run trivy with exit-code only so PR-time
+    # secret/vuln/misconfig gating still applies to external contributors.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Trivy fail-on-findings (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: '1'
