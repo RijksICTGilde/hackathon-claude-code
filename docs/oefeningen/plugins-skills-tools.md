@@ -135,7 +135,7 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 
 ### Wanneer helpt `caveman` en wanneer hindert het?
 
-**Achtergrond:** De `caveman`-plugin (third-party) drukt Claude's antwoordstijl in een ultra-compacte vorm: lidwoorden weg, fragmenten oké, geen beleefdheidsfrasen. Doel is ~75% token-reductie in de output. Dat helpt bij snelle iteratieve debug-loops waar je veel korte beurten doet, maar werkt tegen je bij uitlegtaken, code review of onboarding waar volledige zinnen de leesbaarheid bepalen. De plugin heeft drie niveaus (`lite`, `full`, `ultra`) en kun je mid-sessie aan- en uitzetten.
+**Achtergrond:** De `caveman`-plugin (third-party) drukt Claude's antwoordstijl in een ultra-compacte vorm: lidwoorden weg, fragmenten oké, geen beleefdheidsfrasen. Doel is ~75% token-reductie in de output. Dat helpt bij snelle iteratieve debug-loops waar je veel korte beurten doet, maar werkt tegen je bij uitlegtaken, code review of onboarding waar volledige zinnen de leesbaarheid bepalen. De plugin heeft verschillende niveaus (van licht tot chinese tekens) en kun je mid-sessie aan- en uitzetten.
 
 **Vergelijk:**
 - *Bad practice:* caveman aan laten staan tijdens een lange architectuur-uitleg of code review — antwoorden worden moeilijk te lezen voor collega's en details over *waarom* iets zo is verdwijnen tussen de fragmenten.

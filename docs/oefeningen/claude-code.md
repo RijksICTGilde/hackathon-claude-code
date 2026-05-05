@@ -66,7 +66,7 @@ Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signal
 **Achtergrond:** Drie commando's geven runtime-controle over hoe Claude werkt:
 
 - `/model` — kies tussen modellen (Opus voor complex redeneren, Sonnet voor de meeste taken, Haiku voor licht/snel werk).
-- `/effort` — stel reasoning-diepte in. Beschikbaar op Opus 4.7, Opus 4.6 en Sonnet 4.6 (niet op Haiku). Levels: `low`, `medium`, `high`, `max` op alle drie; `xhigh` alleen op Opus 4.7. Hoger = dieper nadenken per stap, langzamer en duurder. `/effort auto` zet hem terug op de default van het model. Zie [model-config: effort levels](https://code.claude.com/docs/en/model-config#adjust-effort-level).
+- `/effort` — stel reasoning-diepte in. Zie [model-config: effort levels](https://code.claude.com/docs/en/model-config#adjust-effort-level).
 - `/cost` — toont je verbruik in de huidige sessie (tokens, kosten, modelverdeling).
 
 Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemmen — een 10-regelige helper hoeft geen Opus + max, een architectuurschets verdient geen Haiku. Voor andere instellingen, zie `/help` of de [model configuration docs](https://code.claude.com/docs/en/model-config).
