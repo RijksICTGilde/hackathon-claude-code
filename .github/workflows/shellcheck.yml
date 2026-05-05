@@ -37,6 +37,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # differential-shellcheck levert SARIF + PR-comment, maar faalt PRs
+      # niet automatisch op warnings (strict-check-on-push geldt alleen
+      # voor push-events). Een tweede full-pass shellcheck zorgt dat een
+      # PR rood wordt zodra een tracked script een warning bevat.
+      - name: Fail PR on shellcheck warnings
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found; nothing to check."
+            exit 0
+          fi
+          shellcheck --severity=warning "${files[@]}"
+
   shellcheck-fork-pr:
     name: shellcheck (fork PR fallback)
     runs-on: ubuntu-latest

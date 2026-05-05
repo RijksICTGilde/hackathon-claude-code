@@ -41,8 +41,9 @@ jobs:
           fi
           # Restrict to strict semver tags so downstream filenames and
           # --prefix paths cannot contain slashes, spaces, or shell metachars.
-          # Prerelease starts with `-`, build-metadata with `+`; reject the
-          # `v1.2.3.foo` shape that an alternation `[.-]` would let through.
+          # Prerelease begint met `-`, build-metadata met `+`. Geen losse `.`
+          # toestaan na patch — anders zou `v1.2.3.foo` doorgelaten worden
+          # en daarmee shell-onveilige tekens via filenames smokkelen.
           if ! printf '%s' "$RESOLVED" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
             echo "Tag '$RESOLVED' does not match expected semver pattern" >&2
             exit 1
@@ -58,12 +59,24 @@ jobs:
           set -euo pipefail
           # workflow_dispatch can target arbitrary tags (incl. moved or typo'd
           # ones). Refuse to sign anything that isn't a published release.
-          if ! git ls-remote --exit-code --tags "https://github.com/${REPO_FULL}.git" "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag '${TAG}' does not exist on origin" >&2
+          # Beide checks via geauthenticeerde gh API zodat private-repo
+          # refactor niet stilletjes als "tag missing" faalt; stderr wordt
+          # bewaard zodat netwerk-/auth-/rate-limit-fouten niet verward
+          # worden met "release bestaat niet".
+          if ! tag_err="$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --silent 2>&1)"; then
+            if printf '%s' "$tag_err" | grep -q "Not Found"; then
+              echo "Tag '${TAG}' does not exist on origin" >&2
+            else
+              echo "gh api git/ref/tags failed for '${TAG}': ${tag_err}" >&2
+            fi
             exit 1
           fi
-          if ! gh release view "${TAG}" --repo "${REPO_FULL}" >/dev/null 2>&1; then
-            echo "Tag '${TAG}' has no corresponding published release" >&2
+          if ! rel_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" 2>&1 >/dev/null)"; then
+            if printf '%s' "$rel_err" | grep -q "release not found"; then
+              echo "Tag '${TAG}' has no corresponding published release" >&2
+            else
+              echo "gh release view failed for '${TAG}': ${rel_err}" >&2
+            fi
             exit 1
           fi
 
@@ -106,9 +119,25 @@ jobs:
             --output-signature "${ARCHIVE}.sig" \
             --output-certificate "${ARCHIVE}.pem" \
             "${ARCHIVE}"
-          # cosign exits 0 even if a partial write produced a zero-byte
-          # signature or certificate; verify both before we ship them.
+          # Defensief: controleer dat sig en pem niet leeg zijn voordat we
+          # ze uploaden (zero-byte uitvoer door partial write zou anders
+          # ongezien als asset eindigen).
           for f in "${ARCHIVE}.sig" "${ARCHIVE}.pem"; do
+            if [ ! -s "$f" ]; then
+              echo "Empty signing output: $f" >&2
+              exit 1
+            fi
+          done
+
+          # Onderteken ook de .sha256 zodat consumers één authoritatieve
+          # cosign-keten hebben. Een ongetekende .sha256 weert alleen
+          # accidentele bit-rot in transit, geen aanvaller met
+          # release-write rights die archief + checksum samen vervangt.
+          cosign sign-blob --yes \
+            --output-signature "${ARCHIVE}.sha256.sig" \
+            --output-certificate "${ARCHIVE}.sha256.pem" \
+            "${ARCHIVE}.sha256"
+          for f in "${ARCHIVE}.sha256.sig" "${ARCHIVE}.sha256.pem"; do
             if [ ! -s "$f" ]; then
               echo "Empty signing output: $f" >&2
               exit 1
@@ -124,29 +153,43 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
+          # Houd deze lijst gelijk met de asset-opsomming in SECURITY.md —
+          # anders raken consumer-instructies stuk.
+          ASSETS=(
+            "${ARCHIVE}"
+            "${ARCHIVE}.sig"
+            "${ARCHIVE}.pem"
+            "${ARCHIVE}.sha256"
+            "${ARCHIVE}.sha256.sig"
+            "${ARCHIVE}.sha256.pem"
+          )
           # Refuse to overwrite signed assets silently. A re-run for the same
           # tag should fail loudly so an operator decides whether to delete
-          # the existing assets first (and document why).
-          EXISTING="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name')"
-          for f in "${ARCHIVE}" "${ARCHIVE}.sig" "${ARCHIVE}.pem" "${ARCHIVE}.sha256"; do
+          # the existing assets first (and document why). Geldt ook voor
+          # workflow_dispatch re-runs tijdens incident response.
+          if ! existing_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/existing-assets)"; then
+            echo "pre-upload asset listing failed for '${TAG}': ${existing_err}" >&2
+            exit 1
+          fi
+          EXISTING="$(cat /tmp/existing-assets)"
+          for f in "${ASSETS[@]}"; do
             if printf '%s\n' "${EXISTING}" | grep -Fxq "$f"; then
               echo "Refusing to clobber existing release asset: $f" >&2
               echo "Delete it manually with: gh release delete-asset ${TAG} $f --repo ${REPO_FULL}" >&2
               exit 1
             fi
           done
-          gh release upload "${TAG}" \
-            "${ARCHIVE}" \
-            "${ARCHIVE}.sig" \
-            "${ARCHIVE}.pem" \
-            "${ARCHIVE}.sha256" \
-            --repo "${REPO_FULL}"
+          gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}"
 
-          # Verify all four expected assets actually landed on the release.
+          # Verify all expected assets actually landed on the release.
           # gh upload returning 0 per asset doesn't guarantee every asset is
           # visible after the call (rare partial-failure mode).
-          ASSETS_JSON="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name')"
-          for f in "${ARCHIVE}" "${ARCHIVE}.sig" "${ARCHIVE}.pem" "${ARCHIVE}.sha256"; do
+          if ! verify_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/post-assets)"; then
+            echo "post-upload asset listing failed for '${TAG}': ${verify_err}" >&2
+            exit 1
+          fi
+          ASSETS_JSON="$(cat /tmp/post-assets)"
+          for f in "${ASSETS[@]}"; do
             if ! printf '%s\n' "${ASSETS_JSON}" | grep -Fxq "$f"; then
               echo "Missing release asset after upload: $f" >&2
               exit 1

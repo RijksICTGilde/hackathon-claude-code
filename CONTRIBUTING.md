@@ -9,7 +9,7 @@ We volgen de bijdragerichtlijnen van het Ministerie van Binnenlandse Zaken en Ko
 1. Open een issue of reageer op een bestaand issue voordat je begint.
 2. Fork de repository en maak een feature-branch.
 3. Open een pull request naar `main` met een duidelijke beschrijving.
-4. CI is verwacht groen en review-comments verwacht opgelost voor merge (afdwinging via branch protection wordt later toegevoegd).
+4. CI moet groen zijn en review-opmerkingen moeten zijn opgelost vóór merge (afdwinging via branch protection wordt later toegevoegd).
 
 ## Gedragscode
 
