@@ -125,6 +125,9 @@ jobs:
       # NB: de retry behandelt elke non-zero als transient. Een echte
       # signature-mismatch faalt nog steeds na het budget, maar verbruikt
       # eerst de retry-tijd; bewuste trade-off vs. parsing van cosign-output.
+      # `if:` ref-guard zelfde reden als Sign-step: workflow_dispatch op
+      # een feature-branch heeft niets gepushed/getekend dus is verifyen
+      # zinloos én zou falen op de gepinde IDENTITY_REGEX.
       - name: Verify image signature
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:

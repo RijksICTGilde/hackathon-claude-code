@@ -43,11 +43,11 @@ Bij elke gepubliceerde release tekent de `release-sign` workflow zowel het bron-
 ```bash
 TAG=v1.2.3
 REPO=hackathon-claude-code
-# Regexp omdat de workflow zowel op `release: published` (ref: tag) als
-# op `workflow_dispatch` (ref: meestal main) gedraaid kan zijn — beide
-# resulteren in een geldige Sigstore-handtekening. Anchored (^...$) en
-# beperkt tot `refs/heads/main` of `refs/tags/v*` zodat een handtekening
-# uit een andere workflow-ref niet als geldig wordt geaccepteerd.
+# De regex accepteert alleen handtekeningen die voortkomen uit een run
+# op `refs/heads/main` of een `refs/tags/v*`-tag. De `release-sign`
+# workflow weigert workflow_dispatch op andere refs, dus dit is in lijn
+# met wat maintainers daadwerkelijk publiceren. Anchored (^...$) zodat
+# substring-matches geen sluiproute zijn.
 IDENTITY_REGEXP="^https://github\.com/RijksICTGilde/$REPO/\.github/workflows/release-sign\.yml@refs/(heads/main|tags/v[0-9A-Za-z._+-]+)$"
 ISSUER="https://token.actions.githubusercontent.com"
 

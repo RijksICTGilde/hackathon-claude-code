@@ -121,10 +121,12 @@ jobs:
           scanners: vuln,secret,misconfig
           exit-code: '0'
 
-      # Mirror van de same-repo job: faal loud als trivy crashte en geen
-      # JSON produceerde, anders zou upload-artifact stilletjes overslaan
-      # en zou de fork-PR groen zijn met "geen artifact" — reviewers
-      # kunnen dat verwarren met "scan was schoon".
+      # Symmetrie met de same-repo job's "Verify SARIF output exists":
+      # bij een trivy-crash krijgen we een eerder en duidelijker
+      # foutbericht ("trivy-fork-pr.json is missing or empty") dan de
+      # generieke no-files-found van upload-artifact, en het scheelt
+      # bovendien een upload-poging die we toch al failen via
+      # `if-no-files-found: error` op de upload-stap hieronder.
       - name: Verify JSON output exists
         id: validate
         if: always()

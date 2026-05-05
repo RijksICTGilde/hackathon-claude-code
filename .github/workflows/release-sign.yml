@@ -22,6 +22,32 @@ jobs:
       contents: write   # upload assets to release
       id-token: write   # OIDC for cosign keyless signing
     steps:
+      # Workflow-ref guard: weiger workflow_dispatch op een non-main /
+      # non-v* branch. Anders zou de OIDC-handtekening een ref-claim
+      # bevatten (bv. refs/heads/feature) die buiten de IDENTITY_REGEXP
+      # in SECURITY.md valt — succesvol getekend, maar consumer-verify
+      # faalt zonder duidelijke diagnostiek. Dit moet de allereerste
+      # stap zijn zodat workflow_dispatch fout-voor-sign stopt.
+      - name: Guard workflow ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release) ;;  # release events draaien per definitie tegen de tag-ref
+            workflow_dispatch)
+              if [ "$REF" != "refs/heads/main" ] && \
+                 ! printf '%s' "$REF" | grep -Eq '^refs/tags/v[0-9A-Za-z._+-]+$'; then
+                echo "Refusing workflow_dispatch from ref '$REF'." >&2
+                echo "release-sign produces signatures whose OIDC subject is bound to the workflow ref." >&2
+                echo "Allowed refs: refs/heads/main or refs/tags/v*. Run from one of those." >&2
+                exit 1
+              fi
+              ;;
+            *) echo "Unsupported event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
+
       - name: Resolve tag
         id: tag
         env:
@@ -44,8 +70,11 @@ jobs:
           # Prerelease begint met `-`, build-metadata met `+`. Geen losse `.`
           # toestaan na patch — anders zou `v1.2.3.foo` doorgelaten worden
           # en daarmee shell-onveilige tekens via filenames smokkelen.
-          if ! printf '%s' "$RESOLVED" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-            echo "Tag '$RESOLVED' does not match expected semver pattern" >&2
+          # `v`-prefix verplicht zodat de tag-vorm gelijk is aan de
+          # IDENTITY_REGEXP in build-image.yml + SECURITY.md (anders zou
+          # `1.2.3` ondertekend worden maar consumer-verify falen).
+          if ! printf '%s' "$RESOLVED" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "Tag '$RESOLVED' does not match expected semver pattern (v-prefix required)" >&2
             exit 1
           fi
           echo "name=$RESOLVED" >> "$GITHUB_OUTPUT"
@@ -63,8 +92,12 @@ jobs:
           # refactor niet stilletjes als "tag missing" faalt; stderr wordt
           # bewaard zodat netwerk-/auth-/rate-limit-fouten niet verward
           # worden met "release bestaat niet".
+          # gh CLI standaard error-formaat begint met "gh: <msg> (HTTP <code>)".
+          # Anchor de grep op die prefix zodat een rate-limit/5xx-bericht
+          # waarin toevallig "Not Found" voorkomt niet als "tag bestaat
+          # niet" wordt geclassificeerd.
           if ! tag_err="$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --silent 2>&1)"; then
-            if printf '%s' "$tag_err" | grep -q "Not Found"; then
+            if printf '%s' "$tag_err" | grep -Eq '^gh: Not Found( |$)|HTTP 404'; then
               echo "Tag '${TAG}' does not exist on origin" >&2
             else
               echo "gh api git/ref/tags failed for '${TAG}': ${tag_err}" >&2
@@ -72,7 +105,7 @@ jobs:
             exit 1
           fi
           if ! rel_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" 2>&1 >/dev/null)"; then
-            if printf '%s' "$rel_err" | grep -q "release not found"; then
+            if printf '%s' "$rel_err" | grep -Eq '^release not found|HTTP 404'; then
               echo "Tag '${TAG}' has no corresponding published release" >&2
             else
               echo "gh release view failed for '${TAG}': ${rel_err}" >&2
@@ -167,6 +200,11 @@ jobs:
           # tag should fail loudly so an operator decides whether to delete
           # the existing assets first (and document why). Geldt ook voor
           # workflow_dispatch re-runs tijdens incident response.
+          # Redirect-trick: `2>&1 1>/tmp/file` stuurt stdout naar bestand en
+          # houdt stderr in $existing_err — anders kunnen we auth-fouten
+          # niet onderscheiden van een succesvolle-maar-lege asset-lijst.
+          # Pas op bij refactoren: `2>&1 > /tmp/file` zou stdout én stderr
+          # samenvoegen en zo de classificatie breken.
           if ! existing_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/existing-assets)"; then
             echo "pre-upload asset listing failed for '${TAG}': ${existing_err}" >&2
             exit 1
@@ -179,7 +217,16 @@ jobs:
               exit 1
             fi
           done
-          gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}"
+          # Bij een gefaalde upload (interrupt, netwerk-fout, partial 5xx)
+          # willen we zien welke assets wel/niet aankwamen voordat we
+          # exit'en, anders ziet operator alleen "upload failed" zonder
+          # asset-state om vanuit te ruimen.
+          if ! gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}"; then
+            upload_rc=$?
+            echo "gh release upload exited ${upload_rc}; partial-asset state:" >&2
+            gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' >&2 || true
+            exit "$upload_rc"
+          fi
 
           # Verify all expected assets actually landed on the release.
           # gh upload returning 0 per asset doesn't guarantee every asset is
