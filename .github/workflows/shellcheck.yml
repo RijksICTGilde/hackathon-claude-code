@@ -34,6 +34,8 @@ jobs:
         with:
           severity: warning
           strict-check-on-push: true
+          ignored-paths: |
+            claude-sandbox/vendor
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,7 +47,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash')
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash' ':!:claude-sandbox/vendor/**')
           if [ ${#files[@]} -eq 0 ]; then
             echo "No shell scripts found; nothing to check."
             exit 0
@@ -73,7 +75,7 @@ jobs:
       - name: Run shellcheck on tracked shell scripts
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash')
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash' ':!:claude-sandbox/vendor/**')
           if [ ${#files[@]} -eq 0 ]; then
             echo "No shell scripts found; nothing to check."
             exit 0
