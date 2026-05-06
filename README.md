@@ -16,7 +16,7 @@ In deze container kun je Claude desgewenst met `--dangerously-skip-permissions` 
 
 ## Onderdelen
 
-- **[claude-sandbox/](claude-sandbox/)** — de container zelf (Dockerfile, firewall, plugins, skills). Lees daar hoe je hem opstart.
+- **[claude-sandbox](claude-sandbox/README.md)** — de container zelf (Dockerfile, firewall, plugins, skills). Lees daar hoe je hem opstart.
 - **[docs/oefeningen.md](docs/oefeningen.md)** — wat je in de container kunt doen: vier categorieën onderzoeksvragen.
 - **[docs/verantwoording.md](docs/verantwoording.md)** — toetsing aan het Overheidsbreed Standpunt Generatieve AI.
 - **[DISCLAIMER.md](DISCLAIMER.md)** — risico's en aansprakelijkheid.

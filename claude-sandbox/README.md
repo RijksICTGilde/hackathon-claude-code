@@ -17,6 +17,10 @@ Verdere optionele stappen staan in [Na installatie](#na-installatie). Vervolgens
 
 Voor toggles zie [Optionele componenten](#optionele-componenten), voor firewall-opties [Firewall](#firewall).
 
+> **LET OP**: Bij wijziging in environment variabelen moet ook het volume verwijderd en opnieuw aangemaakt worden. Dit
+> reset alle configuratie en data.
+
+
 ## Image beschrijving 
 Er is een native versie van Claude geinstalleerd.
 
