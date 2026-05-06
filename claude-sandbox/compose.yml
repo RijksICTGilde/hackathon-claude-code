@@ -8,6 +8,8 @@ services:
         INSTALL_DOCKER: "${INSTALL_DOCKER:?stel INSTALL_DOCKER in op true of false in .env}"
         INSTALL_RTK: "${INSTALL_RTK:?stel INSTALL_RTK in op true of false in .env}"
         INSTALL_OVERHEID_PLUGINS: "${INSTALL_OVERHEID_PLUGINS:?stel INSTALL_OVERHEID_PLUGINS in op true of false in .env}"
+        INSTALL_OVERHEID_GEO: "${INSTALL_OVERHEID_GEO:?stel INSTALL_OVERHEID_GEO in op true of false in .env}"
+        INSTALL_OVERHEID_ZAD_ACTIONS: "${INSTALL_OVERHEID_ZAD_ACTIONS:?stel INSTALL_OVERHEID_ZAD_ACTIONS in op true of false in .env}"
         INSTALL_ANTHROPIC_PLUGINS: "${INSTALL_ANTHROPIC_PLUGINS:?stel INSTALL_ANTHROPIC_PLUGINS in op true of false in .env}"
         INSTALL_LOCAL_SKILLS: "${INSTALL_LOCAL_SKILLS:?stel INSTALL_LOCAL_SKILLS in op true of false in .env}"
         INSTALL_CAVEMAN: "${INSTALL_CAVEMAN:?stel INSTALL_CAVEMAN in op true of false in .env}"
@@ -28,6 +30,7 @@ services:
       - ANTHROPIC_API_KEY
       - OPEN_HTTPS
       - ALLOWED_DOMAINS
+      - MARKETPLACE_AUTOUPDATE
     volumes:
       - claude-home:/home/claude
       - ${PROJECTS_DIR:-./projects}:/home/claude/projects

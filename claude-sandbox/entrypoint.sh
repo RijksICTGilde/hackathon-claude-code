@@ -21,6 +21,25 @@ if [[ ! -f /home/claude/.sdkman/bin/sdkman-init.sh ]]; then
     echo "INFO: SDKman/JVM niet aanwezig in deze image — herbouw met INSTALL_JVM=true om 'sdk install java' etc. te kunnen draaien." >&2
 fi
 
+# Geïnstalleerde marketplaces verversen zodat plugin-bundels up-to-date blijven
+# zonder image-rebuild. Niet-fataal: bij netwerk-failure of upstream-issue
+# waarschuwen we en draaien we door met de bestaande marketplace-snapshot.
+case "${MARKETPLACE_AUTOUPDATE:-true}" in
+    true)
+        echo "Marketplaces updaten..."
+        if ! claude plugin marketplace update; then
+            echo "WAARSCHUWING: 'claude plugin marketplace update' mislukte (netwerk of upstream). Container draait door met de huidige marketplace-snapshot." >&2
+        fi
+        ;;
+    false)
+        echo "INFO: MARKETPLACE_AUTOUPDATE=false — marketplaces niet ververst"
+        ;;
+    *)
+        echo "FOUT: MARKETPLACE_AUTOUPDATE='${MARKETPLACE_AUTOUPDATE}' is ongeldig (verwacht: 'true' of 'false')" >&2
+        exit 1
+        ;;
+esac
+
 # Rootless Docker starten (geconditioneerd op aanwezigheid in image)
 if command -v dockerd-rootless.sh >/dev/null 2>&1; then
     # Rootless Docker data directory voorbereiden
