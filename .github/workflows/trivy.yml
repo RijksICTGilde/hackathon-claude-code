@@ -1,0 +1,173 @@
+name: Trivy security scan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Same-repo PRs, push, schedule: full SARIF run with code-scanning upload.
+    if: |
+      (github.event_name != 'pull_request') ||
+      (github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Fail the workflow on CRITICAL/HIGH vulnerability findings so PRs
+      # cannot land while ignoring them. De SARIF-run is alleen voor het
+      # code-scanning dashboard; merge-blocking gebeurt via deze stap
+      # (tenzij code-scanning expliciet als required check wordt aangezet).
+      # Severity-filter alleen op vuln: transitive deps leveren vaak
+      # MEDIUM/LOW noise op zonder fix-pad. Misconfig/secret hebben dat
+      # probleem niet — die worden in de stap erna ongefilterd gegated.
+      - name: Trivy fail-on-vuln (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          exit-code: '1'
+
+      # Misconfig en secret-detectie worden zonder severity-cap gegated:
+      # een gelekt secret of een Dockerfile-misconfig is altijd een
+      # bewuste actie van de auteur, niet iets dat upstream binnenkomt.
+      # MEDIUM-misconfigs (bv. ontbrekende HEALTHCHECK, USER-default)
+      # mogen niet stilletjes door de PR-gate.
+      - name: Trivy fail-on-misconfig-and-secret (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          scanners: misconfig,secret
+          exit-code: '1'
+
+      - name: Trivy SARIF for code-scanning dashboard
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+
+      # Fail loudly if the scanner crashed and produced no SARIF; otherwise
+      # the upload step would silently no-op and the dashboard would show
+      # stale results without anyone noticing.
+      - name: Verify SARIF output exists
+        id: validate
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s trivy-results.sarif ]; then
+            echo "trivy-results.sarif is missing or empty" >&2
+            exit 1
+          fi
+
+      - name: Upload to code-scanning
+        if: always() && steps.validate.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  scan-fork-pr:
+    name: Trivy filesystem scan (fork PR fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fork-PR runs draaien met een read-only GITHUB_TOKEN
+    # (security-events: write wordt niet toegekend), dus SARIF-upload zou
+    # 403'en. Run trivy met exit-code zodat PR-time secret/vuln/misconfig
+    # gating ook voor externe contributors geldt; output wordt als artifact
+    # geüpload voor reviewers.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Trivy fail-on-vuln (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          exit-code: '1'
+
+      # Zie comment in same-repo job: misconfig/secret zonder severity-cap
+      # gegated zodat MEDIUM-misconfigs niet via fork-PRs slippen.
+      - name: Trivy fail-on-misconfig-and-secret (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          scanners: misconfig,secret
+          exit-code: '1'
+
+      # Tweede run voor MEDIUM-context: zonder fork-toegang tot
+      # security-events kunnen we geen SARIF uploaden, dus shippen we de
+      # volledige JSON als artifact zodat reviewers de details kunnen zien
+      # zonder door log-output te ploegen. exit-code: '0' zodat deze stap
+      # geen fail toevoegt — de gating zit in de stap erboven.
+      - name: Trivy JSON for artifact (informational)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: json
+          output: trivy-fork-pr.json
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: '0'
+
+      # Symmetrie met de same-repo job's "Verify SARIF output exists":
+      # bij een trivy-crash krijgen we een eerder en duidelijker
+      # foutbericht ("trivy-fork-pr.json is missing or empty") dan de
+      # generieke no-files-found van upload-artifact, en het scheelt
+      # bovendien een upload-poging die we toch al failen via
+      # `if-no-files-found: error` op de upload-stap hieronder.
+      - name: Verify JSON output exists
+        id: validate
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s trivy-fork-pr.json ]; then
+            echo "trivy-fork-pr.json is missing or empty" >&2
+            exit 1
+          fi
+
+      - name: Upload Trivy JSON artifact
+        if: always() && steps.validate.outcome == 'success'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: trivy-fork-pr-results
+          path: trivy-fork-pr.json
+          retention-days: 14
+          if-no-files-found: error

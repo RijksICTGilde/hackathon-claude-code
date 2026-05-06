@@ -1,0 +1,254 @@
+name: release-sign
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to sign (existing release)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sign-source:
+    name: Sign source archive and attach to release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # upload assets to release
+      id-token: write   # OIDC for cosign keyless signing
+    steps:
+      # Workflow-ref guard: weiger workflow_dispatch op een non-main /
+      # non-v* branch. Anders zou de OIDC-handtekening een ref-claim
+      # bevatten (bv. refs/heads/feature) die buiten de IDENTITY_REGEXP
+      # in SECURITY.md valt — succesvol getekend, maar consumer-verify
+      # faalt zonder duidelijke diagnostiek. Dit moet de allereerste
+      # stap zijn zodat workflow_dispatch fout-voor-sign stopt.
+      - name: Guard workflow ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release) ;;  # release events draaien per definitie tegen de tag-ref
+            workflow_dispatch)
+              if [ "$REF" != "refs/heads/main" ] && \
+                 ! printf '%s' "$REF" | grep -Eq '^refs/tags/v[0-9A-Za-z._+-]+$'; then
+                echo "Refusing workflow_dispatch from ref '$REF'." >&2
+                echo "release-sign produces signatures whose OIDC subject is bound to the workflow ref." >&2
+                echo "Allowed refs: refs/heads/main or refs/tags/v*. Run from one of those." >&2
+                exit 1
+              fi
+              ;;
+            *) echo "Unsupported event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
+
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release)        RESOLVED="$RELEASE_TAG" ;;
+            workflow_dispatch) RESOLVED="$INPUT_TAG" ;;
+            *) echo "Unsupported event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
+          if [ -z "$RESOLVED" ]; then
+            echo "Resolved tag is empty (event=$EVENT_NAME)" >&2
+            exit 1
+          fi
+          # Restrict to strict semver tags so downstream filenames and
+          # --prefix paths cannot contain slashes, spaces, or shell metachars.
+          # Prerelease begint met `-`, build-metadata met `+`. Geen losse `.`
+          # toestaan na patch — anders zou `v1.2.3.foo` doorgelaten worden
+          # en daarmee shell-onveilige tekens via filenames smokkelen.
+          # `v`-prefix verplicht zodat de tag-vorm gelijk is aan de
+          # IDENTITY_REGEXP in build-image.yml + SECURITY.md (anders zou
+          # `1.2.3` ondertekend worden maar consumer-verify falen).
+          if ! printf '%s' "$RESOLVED" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "Tag '$RESOLVED' does not match expected strict semver (vMAJOR.MINOR.PATCH[-prerelease][+build])" >&2
+            exit 1
+          fi
+          echo "name=$RESOLVED" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag refers to a published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch can target arbitrary tags (incl. moved or typo'd
+          # ones). Refuse to sign anything that isn't a published release.
+          # Beide checks via geauthenticeerde gh API zodat private-repo
+          # refactor niet stilletjes als "tag missing" faalt; stderr wordt
+          # bewaard zodat netwerk-/auth-/rate-limit-fouten niet verward
+          # worden met "release bestaat niet".
+          # gh CLI standaard error-formaat begint met "gh: <msg> (HTTP <code>)".
+          # Anchor de grep zodat een rate-limit/5xx-bericht waarin toevallig
+          # "Not Found" voorkomt niet als "tag bestaat niet" wordt
+          # geclassificeerd. Beide alternatieven anchoren via groepering
+          # zodat ERE-precedence ook de HTTP-code clausule begrenst.
+          if ! tag_err="$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --silent 2>&1)"; then
+            if printf '%s' "$tag_err" | grep -Eq '^gh: (Not Found|.*\(HTTP 404\))'; then
+              echo "Tag '${TAG}' does not exist on origin" >&2
+            else
+              echo "gh api git/ref/tags failed for '${TAG}': ${tag_err}" >&2
+            fi
+            exit 1
+          fi
+          if ! rel_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" 2>&1 >/dev/null)"; then
+            if printf '%s' "$rel_err" | grep -Eq '^(release not found|gh: .*\(HTTP 404\))'; then
+              echo "Tag '${TAG}' has no corresponding published release" >&2
+            else
+              echo "gh release view failed for '${TAG}': ${rel_err}" >&2
+            fi
+            exit 1
+          fi
+
+      - name: Checkout tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          persist-credentials: false
+
+      - name: Create source archive
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="${REPO}-${TAG}/" \
+            -o "${ARCHIVE}" "${TAG}"
+          if [ ! -s "${ARCHIVE}" ]; then
+            echo "Source archive is empty: ${ARCHIVE}" >&2
+            exit 1
+          fi
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          # Roundtrip-verify the checksum file so a silent write failure
+          # (disk full, partial write) cannot ship a bogus .sha256 asset.
+          sha256sum -c "${ARCHIVE}.sha256"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign archive with cosign keyless
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          cosign sign-blob --yes \
+            --output-signature "${ARCHIVE}.sig" \
+            --output-certificate "${ARCHIVE}.pem" \
+            "${ARCHIVE}"
+          # Defensief: controleer dat sig en pem niet leeg zijn voordat we
+          # ze uploaden (zero-byte uitvoer door partial write zou anders
+          # ongezien als asset eindigen).
+          for f in "${ARCHIVE}.sig" "${ARCHIVE}.pem"; do
+            if [ ! -s "$f" ]; then
+              echo "Empty signing output: $f" >&2
+              exit 1
+            fi
+          done
+
+          # Onderteken ook de .sha256 zodat consumers één authoritatieve
+          # cosign-keten hebben. Een ongetekende .sha256 weert alleen
+          # accidentele bit-rot in transit, geen aanvaller met
+          # release-write rights die archief + checksum samen vervangt.
+          cosign sign-blob --yes \
+            --output-signature "${ARCHIVE}.sha256.sig" \
+            --output-certificate "${ARCHIVE}.sha256.pem" \
+            "${ARCHIVE}.sha256"
+          for f in "${ARCHIVE}.sha256.sig" "${ARCHIVE}.sha256.pem"; do
+            if [ ! -s "$f" ]; then
+              echo "Empty signing output: $f" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+          REPO: ${{ github.event.repository.name }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${REPO}-${TAG}.tar.gz"
+          # Houd deze lijst gelijk met de asset-opsomming in SECURITY.md —
+          # anders raken consumer-instructies stuk.
+          ASSETS=(
+            "${ARCHIVE}"
+            "${ARCHIVE}.sig"
+            "${ARCHIVE}.pem"
+            "${ARCHIVE}.sha256"
+            "${ARCHIVE}.sha256.sig"
+            "${ARCHIVE}.sha256.pem"
+          )
+          # Refuse to overwrite signed assets silently. A re-run for the same
+          # tag should fail loudly so an operator decides whether to delete
+          # the existing assets first (and document why). Geldt ook voor
+          # workflow_dispatch re-runs tijdens incident response.
+          # Redirect-trick: `2>&1 1>/tmp/file` stuurt stdout naar bestand en
+          # houdt stderr in $existing_err — anders kunnen we auth-fouten
+          # niet onderscheiden van een succesvolle-maar-lege asset-lijst.
+          # Volgorde matters: dup eerst (`2>&1`), dan stdout omleiden
+          # (`1>/tmp/file`). De omgekeerde volgorde (`>/tmp/file 2>&1`)
+          # stuurt zowel stdout als stderr naar het bestand en breekt
+          # de classificatie.
+          if ! existing_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/existing-assets)"; then
+            echo "pre-upload asset listing failed for '${TAG}': ${existing_err}" >&2
+            exit 1
+          fi
+          EXISTING="$(cat /tmp/existing-assets)"
+          for f in "${ASSETS[@]}"; do
+            if printf '%s\n' "${EXISTING}" | grep -Fxq "$f"; then
+              echo "Refusing to clobber existing release asset: $f" >&2
+              echo "Delete it manually with: gh release delete-asset ${TAG} $f --repo ${REPO_FULL}" >&2
+              exit 1
+            fi
+          done
+          # Bij een gefaalde upload (interrupt, netwerk-fout, partial 5xx)
+          # willen we zien welke assets wel/niet aankwamen voordat we
+          # exit'en, anders ziet operator alleen "upload failed" zonder
+          # asset-state om vanuit te ruimen.
+          # Belangrijk: vang de exit-code in dezelfde regel met `|| rc=$?`.
+          # Een `if ! cmd` constructie kan dat NIET — daarbinnen zou `$?`
+          # de waarde van het hele negatie-test (0) terugzien, niet de
+          # exit-code van cmd, en zou de step met exit 0 stilletjes
+          # kunnen slagen na een echte upload-fout.
+          upload_rc=0
+          gh release upload "${TAG}" "${ASSETS[@]}" --repo "${REPO_FULL}" || upload_rc=$?
+          if [ "$upload_rc" -ne 0 ]; then
+            echo "gh release upload exited ${upload_rc}; partial-asset state:" >&2
+            gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' >&2 \
+              || echo "(asset listing failed; manual investigation required)" >&2
+            exit "$upload_rc"
+          fi
+
+          # Verify all expected assets actually landed on the release.
+          # gh upload returning 0 per asset doesn't guarantee every asset is
+          # visible after the call (rare partial-failure mode).
+          if ! verify_err="$(gh release view "${TAG}" --repo "${REPO_FULL}" --json assets --jq '.assets[].name' 2>&1 1>/tmp/post-assets)"; then
+            echo "post-upload asset listing failed for '${TAG}': ${verify_err}" >&2
+            exit 1
+          fi
+          ASSETS_JSON="$(cat /tmp/post-assets)"
+          for f in "${ASSETS[@]}"; do
+            if ! printf '%s\n' "${ASSETS_JSON}" | grep -Fxq "$f"; then
+              echo "Missing release asset after upload: $f" >&2
+              exit 1
+            fi
+          done

@@ -1,0 +1,83 @@
+name: differential-shellcheck
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: differential-shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Same-repo PRs, push: full differential run with SARIF upload + PR comment.
+    if: |
+      (github.event_name != 'pull_request') ||
+      (github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Differential ShellCheck
+        uses: redhat-plumbers-in-action/differential-shellcheck@d965e66ec0b3b2f821f75c8eff9b12442d9a7d1e # v5.5.6
+        with:
+          severity: warning
+          strict-check-on-push: true
+          ignored-paths: |
+            claude-sandbox/vendor
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # differential-shellcheck levert SARIF + PR-comment, maar faalt PRs
+      # niet automatisch op warnings (strict-check-on-push geldt alleen
+      # voor push-events). Een tweede full-pass shellcheck zorgt dat een
+      # PR rood wordt zodra een tracked script een warning bevat.
+      - name: Fail PR on shellcheck warnings
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash' ':!:claude-sandbox/vendor/**')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found; nothing to check."
+            exit 0
+          fi
+          shellcheck --severity=warning "${files[@]}"
+
+  shellcheck-fork-pr:
+    name: shellcheck (fork PR fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Fork PRs cannot upload SARIF or post PR comments. Run a plain
+    # shellcheck across all tracked shell scripts so external contributions
+    # still get gated on shell warnings/errors.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run shellcheck on tracked shell scripts
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash' ':!:claude-sandbox/vendor/**')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts found; nothing to check."
+            exit 0
+          fi
+          shellcheck --severity=warning "${files[@]}"

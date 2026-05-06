@@ -1,5 +1,7 @@
 # Claude Code Container — Hackathon Editie
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/RijksICTGilde/hackathon-claude-code/badge)](https://scorecard.dev/viewer/?uri=github.com/RijksICTGilde/hackathon-claude-code)
+
 Een sandboxed Docker-container met Claude Code voor hackathons en coding challenges. Gebaseerd op de [devcontainer-opzet van Anthropic](https://code.claude.com/docs/en/devcontainer) en bedoeld om `claude --dangerously-skip-permissions` veiliger te draaien dan op je hostsysteem — geïsoleerd via netwerk- en volume-restricties. De container bevat optioneel skills en plugins uit de Nederlandse overheid-marketplace voor wie aan publieke standaarden werkt.
 
 > **EXPERIMENTEEL** — Dit is een leer- en hackathon-omgeving, geen productiesetup. De container draait generatieve AI (Claude Code) en de output ervan is geen officiële bron. Zie onze [verantwoording](docs/verantwoording.md) en [DISCLAIMER](DISCLAIMER.md) voor meer informatie.
@@ -18,3 +20,6 @@ In deze container kun je Claude desgewenst met `--dangerously-skip-permissions` 
 - **[docs/oefeningen.md](docs/oefeningen.md)** — wat je in de container kunt doen: vier categorieën onderzoeksvragen.
 - **[docs/verantwoording.md](docs/verantwoording.md)** — toetsing aan het Overheidsbreed Standpunt Generatieve AI.
 - **[DISCLAIMER.md](DISCLAIMER.md)** — risico's en aansprakelijkheid.
+- **[SECURITY.md](SECURITY.md)** — verantwoorde melding van kwetsbaarheden (volgt MinBZK-beleid).
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — bijdragen via issues en pull requests (volgt MinBZK-richtlijnen).
+- **[LICENSE](LICENSE)** — EUPL-1.2.

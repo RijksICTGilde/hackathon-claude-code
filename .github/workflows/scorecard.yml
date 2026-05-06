@@ -1,0 +1,89 @@
+name: Scorecard supply-chain security
+
+on:
+  # For Branch-Protection check. Only the default branch is supported. See
+  # https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
+  branch_protection_rule:
+  # To guarantee Maintained check is occasionally updated. See
+  # https://github.com/ossf/scorecard/blob/main/docs/checks.md#maintained
+  schedule:
+    - cron: '24 12 * * 0'
+  push:
+    branches: [ "main" ]
+
+# Declare default permissions as read only.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Needed to upload the results to code-scanning dashboard.
+      security-events: write
+      # Needed to publish results and get a badge (see publish_results below).
+      id-token: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: "Run analysis"
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Only takes effect on the default branch on push/schedule; the
+          # action skips publishing otherwise. De volgende stap rendert
+          # diezelfde branching expliciet zodat publish-state zichtbaar
+          # is in de run-log — niet weghalen, de scorecard-action logt
+          # zelf niet of publishing gevraagd-maar-overgeslagen werd,
+          # waardoor anders onduidelijk blijft of de badge verversd is
+          # of stale data toont.
+          publish_results: true
+
+      - name: "Log run mode"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          PUBLISHED="no (badge will use last published run)"
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "schedule" ]; then
+            if [ "$REF" = "refs/heads/${DEFAULT_BRANCH}" ] || [ "$EVENT_NAME" = "schedule" ]; then
+              PUBLISHED="yes"
+            fi
+          fi
+          echo "Trigger: $EVENT_NAME on $REF"
+          echo "publish_results effective: $PUBLISHED"
+
+      # Fail loudly if the scanner crashed and produced no SARIF; otherwise
+      # the upload steps below would silently no-op and the dashboard would
+      # show stale results without anyone noticing.
+      - name: "Validate SARIF output is non-empty"
+        id: validate
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s results.sarif ]; then
+            echo "results.sarif is missing or empty" >&2
+            exit 1
+          fi
+
+      - name: "Upload artifact"
+        if: always() && steps.validate.outcome == 'success'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: "Upload to code-scanning"
+        if: always() && steps.validate.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        with:
+          sarif_file: results.sarif

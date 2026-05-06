@@ -6,18 +6,25 @@ on:
       - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
-# Globaal readonly. De build-job overruled lokaal naar packages: write om de
-# image naar GHCR te pushen.
+# Globaal read-only. De build-job verhoogt lokaal naar packages: write
+# (GHCR push) en id-token: write (cosign keyless OIDC).
 permissions:
   contents: read
 
 # Voorkom dat twee snelle pushes parallelle multi-arch builds triggeren.
-# cancel-in-progress: false zodat tag-builds niet door een main-push worden afgebroken.
+# Op PR branches mag een nieuwe push de lopende run cancellen (CI-minutes besparen).
+# Op main en tags niet, zodat tag-builds niet door een main-push worden afgebroken.
+# Veilig om PR-runs te cancellen omdat PRs niet pushen of signen; als die
+# beperking ooit weggaat moet cancel-in-progress ook voor PRs naar false,
+# anders kan cosign mid-flight worden afgebroken.
 concurrency:
   group: build-image-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -27,6 +34,7 @@ jobs:
   build:
     name: build-and-push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -41,6 +49,7 @@ jobs:
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -59,27 +68,100 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # PR builds zijn amd64-only om CI-tijd te besparen; arm64-regressies
+      # komen pas op main aan het licht. provenance/sbom worden alleen op
+      # main/tag gegenereerd: ze worden bij push: false toch gebouwd
+      # (buildx genereert ze tijdens build, niet tijdens push), dus uitzetten
+      # op PR scheelt echt CI-tijd. Push gebeurt alleen op main/tag — een
+      # workflow_dispatch op een feature-branch bouwt wel maar pushed niet,
+      # zodat we nooit unsigned images naar GHCR krijgen.
       - name: Build and push image
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: claude-sandbox
           file: claude-sandbox/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
+          provenance: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          sbom: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
 
       - name: Install cosign
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
       # Keyless signing via OIDC: ondertekent de image-digest, niet per tag.
       # Alle tags die naar dezelfde digest wijzen erven daarmee de signature.
+      # De volgende stap verifieert direct dat de signature retrievable is
+      # via Rekor — niet weghalen zonder verify-stap te vervangen.
+      # Ref-guard: push, sign en verify worden gezamenlijk overgeslagen op
+      # workflow_dispatch vanaf een feature-branch — de build draait wel
+      # groen door, maar er wordt niets naar GHCR gepusht of getekend.
+      # Zo komen we nooit in de toestand "gepusht maar onverifieerbaar".
       - name: Sign image with cosign
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "Empty digest from build step; refusing to sign." >&2
+            exit 1
+          fi
+          cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      # Verify the signature we just wrote is actually retrievable from
+      # Rekor. Catches transient Fulcio/Rekor write failures that cosign
+      # sign itself didn't propagate (rare, but ships an unsigned image).
+      # Bounded retry omdat Rekor af en toe traag of kortdurend onbereikbaar
+      # is. Bij definitieve faal stopt de workflow met exit 1 zodat
+      # operators handmatig kunnen ingrijpen — de :latest tag blijft
+      # intussen wijzen naar de unverified digest tot iemand 'm verwijdert
+      # (tag-cleanup vereist extra GHCR-rechten dan de default GITHUB_TOKEN).
+      # NB: de retry behandelt elke non-zero als transient. Een echte
+      # signature-mismatch faalt nog steeds na het budget, maar verbruikt
+      # eerst de retry-tijd; bewuste trade-off vs. parsing van cosign-output.
+      # `if:` ref-guard zelfde reden als Sign-step: zonder push+sign is
+      # er geen handtekening om te verifiëren — verify zou anders falen
+      # met "no matching signatures". Beide guards moeten synchroon
+      # blijven; als één van beide afwijkt krijg je óf een unverified
+      # image óf een gegarandeerde verify-failure.
+      - name: Verify image signature
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Pin issuer-ref naar refs die we daadwerkelijk ondertekenen
+          # (main + semver-tags). Volledig anchored (^...$) en met
+          # bounded character-class voor de tag-component, anders zou
+          # cosign's substring-match `refs/heads/main-evilbranch` of een
+          # tag met slashes/spaces accepteren.
+          IDENTITY_REGEX="^https://github\\.com/${REPO_FULL}/\\.github/workflows/build-image\\.yml@refs/(heads/main|tags/v[0-9A-Za-z._+-]+)$"
+          ISSUER="https://token.actions.githubusercontent.com"
+          REF="${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+          attempts=3
+          delay=15
+          for i in $(seq 1 $attempts); do
+            echo "cosign verify attempt ${i}/${attempts} for ${REF}"
+            if cosign verify \
+                --certificate-identity-regexp "${IDENTITY_REGEX}" \
+                --certificate-oidc-issuer "${ISSUER}" \
+                "${REF}"; then
+              exit 0
+            fi
+            if [ "$i" -lt "$attempts" ]; then
+              echo "Verify failed; retrying in ${delay}s" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            fi
+          done
+
+          echo "cosign verify failed after ${attempts} attempts for ${REF}" >&2
+          exit 1

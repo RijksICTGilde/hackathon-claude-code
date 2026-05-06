@@ -34,7 +34,7 @@ if command -v dockerd-rootless.sh >/dev/null 2>&1; then
     # crasht (anders 30s stilte voor de FATAL — slecht te debuggen).
     docker_started=false
     dockerd_crash=false
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
         if ! kill -0 "$dockerd_pid" 2>/dev/null; then
             dockerd_crash=true
             break
