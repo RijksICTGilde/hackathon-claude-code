@@ -34,8 +34,8 @@ jobs:
         with:
           severity: warning
           strict-check-on-push: true
-          ignored-paths: |
-            claude-sandbox/vendor
+          exclude-path: |
+            claude-sandbox/vendor/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
