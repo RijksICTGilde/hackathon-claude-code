@@ -29,18 +29,34 @@ jobs:
         with:
           persist-credentials: false
 
-      # Fail the workflow on CRITICAL/HIGH findings so PRs cannot land
-      # while ignoring them. De SARIF-run is alleen voor het
+      # Fail the workflow on CRITICAL/HIGH vulnerability findings so PRs
+      # cannot land while ignoring them. De SARIF-run is alleen voor het
       # code-scanning dashboard; merge-blocking gebeurt via deze stap
       # (tenzij code-scanning expliciet als required check wordt aangezet).
-      - name: Trivy fail-on-findings (CRITICAL/HIGH)
+      # Severity-filter alleen op vuln: transitive deps leveren vaak
+      # MEDIUM/LOW noise op zonder fix-pad. Misconfig/secret hebben dat
+      # probleem niet — die worden in de stap erna ongefilterd gegated.
+      - name: Trivy fail-on-vuln (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          scanners: vuln,secret,misconfig
+          scanners: vuln
+          exit-code: '1'
+
+      # Misconfig en secret-detectie worden zonder severity-cap gegated:
+      # een gelekt secret of een Dockerfile-misconfig is altijd een
+      # bewuste actie van de auteur, niet iets dat upstream binnenkomt.
+      # MEDIUM-misconfigs (bv. ontbrekende HEALTHCHECK, USER-default)
+      # mogen niet stilletjes door de PR-gate.
+      - name: Trivy fail-on-misconfig-and-secret (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          scanners: misconfig,secret
           exit-code: '1'
 
       - name: Trivy SARIF for code-scanning dashboard
@@ -94,14 +110,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Trivy fail-on-findings (CRITICAL/HIGH)
+      - name: Trivy fail-on-vuln (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          scanners: vuln,secret,misconfig
+          scanners: vuln
+          exit-code: '1'
+
+      # Zie comment in same-repo job: misconfig/secret zonder severity-cap
+      # gegated zodat MEDIUM-misconfigs niet via fork-PRs slippen.
+      - name: Trivy fail-on-misconfig-and-secret (all severities)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          format: table
+          scanners: misconfig,secret
           exit-code: '1'
 
       # Tweede run voor MEDIUM-context: zonder fork-toegang tot
