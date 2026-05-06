@@ -17,11 +17,11 @@ De oefeningen hieronder gebruiken standaard de snelle variant en noemen de diepe
 
 ### Wat doet de overheid-marketplace voor je werk?
 
-**Achtergrond:** De container bevat skills uit `developer-overheid-nl/skills-marketplace`: `standaarden`, `nerds`, `internet`, `geo`, `developer-overheid` en `zad-actions`. Ze zijn relevant als je werk dicht bij Nederlandse overheidsstandaarden ligt — denk aan API-design, authenticatie, berichtenuitwisseling of geodiensten. Zonder deze skills leunt Claude op generieke kennis en mist hij NL-specifieke regels zoals problem+json, ADR, OIN of Digikoppeling.
+**Achtergrond:** De container bevat skills uit `developer-overheid-nl/skills-marketplace`: `standaarden`, `nerds`, `internet`, `geo`, `developer-overheid` en `zad-actions`. Relevant als je werk dicht bij NL-overheidsstandaarden ligt — API-design, authenticatie, berichtenuitwisseling, geodiensten. Zonder deze skills leunt Claude op generieke kennis en mist NL-specifieke regels (problem+json, ADR, OIN, Digikoppeling).
 
 **Vergelijk:**
-- *Bad practice:* een REST-API bouwen zonder de skills aan te roepen — Claude schrijft een generieke API zonder rekening te houden met de API Design Rules, ADR-linting of het problem+json-formaat.
-- *Good practice:* dezelfde challenge starten met "gebruik `standaarden:ls-api` om de API te toetsen aan de ADR" en zo NL-specifieke regels automatisch meenemen.
+- *Bad practice:* REST-API bouwen zonder skills aan te roepen — generieke API zonder ADR, ADR-linting of problem+json.
+- *Good practice:* dezelfde challenge starten met "gebruik `standaarden:ls-api` om de API te toetsen aan de ADR".
 
 **Probeer zelf:** Pak een challenge die op je dagelijks werk lijkt (bv. een REST-endpoint, een koppelvlak of een kaartdienst). Doe hem twee keer:
 
@@ -38,11 +38,11 @@ Welke skills bij welk werk passen: REST API → `standaarden:ls-api` (ADR/lintin
 
 ### Wanneer voegt rtk (token reduction) merkbaar waarde toe?
 
-**Achtergrond:** `rtk` verkort verbose CLI-output — witruimte, comments, herhalende structuren — voordat die output in Claude's context belandt. Het werkt via een hook die bepaalde commando's automatisch herschrijft (bv. `git status` → `rtk git status`). Dat helpt bij grote codebases of lange bestanden waarbij je context snel vol raakt door tool-output. Bij kleine, gerichte vragen levert het weinig extra op.
+**Achtergrond:** `rtk` verkort verbose CLI-output (witruimte, comments, herhalingen) voordat die in Claude's context belandt. Werkt via een hook die commando's automatisch herschrijft (`git status` → `rtk git status`). Helpt bij grote codebases of lange bestanden; bij kleine gerichte vragen weinig extra.
 
 **Vergelijk:**
-- *Bad practice:* een groot project automatisch laden in context terwijl je maar 5% van de bestanden nodig hebt — context raakt vol, Claude verliest het overzicht en de antwoordkwaliteit daalt.
-- *Good practice:* rtk inzetten op grote bestanden of mappen waar je het exacte relevante deel nog niet weet; zo maak je ruimte voor wat echt telt.
+- *Bad practice:* groot project automatisch laden terwijl je 5% nodig hebt — context vol, Claude verliest overzicht.
+- *Good practice:* rtk inzetten op grote bestanden/mappen waar je het exacte relevante deel nog niet weet.
 
 **Probeer zelf:** Pak een lange context (bv. een groot README plus meerdere source-bestanden), stuur dezelfde vraag eenmaal met en eenmaal zonder rtk. Vergelijk de antwoordkwaliteit en het tokenverbruik — gebruik `/cost` om het verschil meetbaar te maken (zie de [oefening over runtime-instellingen](claude-code.md#hoe-stuur-je-per-sessie-het-model-de-denkdiepte-en-de-kosten)). Probeer dit bij [codingchallenges.fyi](https://codingchallenges.fyi/) met een challenge waarvan de codebase al flink gegroeid is.
 
@@ -58,11 +58,11 @@ Welke skills bij welk werk passen: REST API → `standaarden:ls-api` (ADR/lintin
 
 ### Welke `superpowers`-skill past bij wat voor situatie?
 
-**Achtergrond:** De `superpowers`-plugin levert process-skills: `superpowers:brainstorming`, `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:writing-plans` en `superpowers:executing-plans`. Elk is ontworpen voor een specifiek soort werk. De skills sturen Claude's aanpak en volgorde van redeneren, niet alleen de output — dat maakt ze anders dan een gewone instructie in de prompt.
+**Achtergrond:** De `superpowers`-plugin levert process-skills: `brainstorming`, `test-driven-development`, `systematic-debugging`, `writing-plans`, `executing-plans`. Elke skill stuurt Claude's aanpak en redeneer-volgorde, niet alleen de output — dat onderscheidt ze van een gewone prompt-instructie.
 
 **Vergelijk:**
-- *Bad practice:* meteen code beginnen schrijven voor een feature die nog helemaal niet uitgedacht is — Claude bouwt iets concreets op basis van aannames die jij later pas corrigeert, wat leidt tot veel herwerk.
-- *Good practice:* `superpowers:brainstorming` aanroepen vóór de eerste regel code; `superpowers:systematic-debugging` bij een hardnekkige bug; `superpowers:test-driven-development` voor algoritmes met duidelijke acceptatiecriteria.
+- *Bad practice:* meteen code schrijven voor een feature die nog niet is uitgedacht — Claude bouwt op aannames die jij later corrigeert, veel herwerk.
+- *Good practice:* `superpowers:brainstorming` vóór de eerste regel code; `systematic-debugging` bij een hardnekkige bug; `test-driven-development` voor algoritmes met duidelijke acceptatiecriteria.
 
 **Probeer zelf:** Pak één van je oefen-challenges van [codingchallenges.fyi](https://codingchallenges.fyi/) en doe hem twee keer:
 
@@ -135,11 +135,11 @@ Gebruik voor de codebase een [codingchallenges.fyi](https://codingchallenges.fyi
 
 ### Wanneer helpt `caveman` en wanneer hindert het?
 
-**Achtergrond:** De `caveman`-plugin (third-party) drukt Claude's antwoordstijl in een ultra-compacte vorm: lidwoorden weg, fragmenten oké, geen beleefdheidsfrasen. Doel is ~75% token-reductie in de output. Dat helpt bij snelle iteratieve debug-loops waar je veel korte beurten doet, maar werkt tegen je bij uitlegtaken, code review of onboarding waar volledige zinnen de leesbaarheid bepalen. De plugin heeft verschillende niveaus (van licht tot chinese tekens) en kun je mid-sessie aan- en uitzetten.
+**Achtergrond:** `caveman` (third-party) drukt Claude's antwoordstijl in ultra-compacte vorm: lidwoorden weg, fragmenten oké, geen beleefdheidsfrasen. Doel ~75% token-reductie in output. Helpt bij iteratieve debug-loops met korte beurten; werkt tegen bij uitleg, code review of onboarding waar volledige zinnen de leesbaarheid bepalen. Heeft niveaus (licht tot chinese tekens) en is mid-sessie te schakelen.
 
 **Vergelijk:**
-- *Bad practice:* caveman aan laten staan tijdens een lange architectuur-uitleg of code review — antwoorden worden moeilijk te lezen voor collega's en details over *waarom* iets zo is verdwijnen tussen de fragmenten.
-- *Good practice:* caveman aan tijdens een snelle debug-cyclus (10+ korte beurten op een lokale bug); uit zodra je naar een schrijftaak (commit message, PR-beschrijving, uitleg in een ticket) overschakelt.
+- *Bad practice:* caveman aan tijdens lange architectuur-uitleg of code review — moeilijk leesbaar voor collega's; *waarom*-details verdwijnen tussen de fragmenten.
+- *Good practice:* caveman aan tijdens snelle debug-cyclus (10+ korte beurten); uit zodra je een schrijftaak doet (commit, PR-beschrijving, ticket-uitleg).
 
 **Probeer zelf:** Doe één sessie in twee helften:
 
