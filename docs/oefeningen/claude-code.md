@@ -6,11 +6,11 @@ Deze categorie gaat over Claude Code zelf — niet over wat je bouwt, maar over 
 
 ### Wanneer gebruik je `/clear` of `/compact`?
 
-**Achtergrond:** Bij lange sessies loopt context vol — Claude haalt details door elkaar of mengt eerdere conclusies door latere antwoorden. `/clear` gooit de context weg; `/compact` laat Claude eerst samenvatten en gaat verder met die samenvatting. Kies `/clear` voor onderwerpwisseling, `/compact` voor doorlopend werk dat te lang werd.
+**Achtergrond:** Bij lange sessies loopt de context vol — Claude haalt details door elkaar of vermengt eerdere conclusies met latere antwoorden. `/clear` gooit de context weg; `/compact` laat Claude eerst samenvatten en gaat verder met die samenvatting. Kies `/clear` voor onderwerpwisseling, `/compact` voor doorlopend werk dat te lang werd.
 
 **Vergelijk:**
-- *Bad practice:* één sessie open houden voor de wc-challenge, daarna een JSON-parser, daarna een bug fixen in de wc-code — Claude trekt conclusies door alle drie de contexten heen.
-- *Good practice:* `/clear` tussen ongerelateerde taken (en als Claude afdwaalt); `/compact` als je context-bar bijna vol is maar je nog in dezelfde taak zit en de rode draad wil behouden.
+- *Bad practice:* één sessie open houden voor de wc-challenge, daarna een JSON-parser, daarna een bug fixen in de wc-code — Claude trekt conclusies over alle drie de contexten heen.
+- *Good practice:* `/clear` tussen ongerelateerde taken (en als Claude afdwaalt); `/compact` als de context bijna vol is maar je nog in dezelfde taak zit en de rode draad wil behouden.
 
 **Probeer zelf:** Kies een eenvoudige challenge van [codingchallenges.fyi](https://codingchallenges.fyi/). Houd één sessie open, wissel midden in de implementatie van onderwerp en ga daarna verder met de challenge — observeer waar Claude afdwaalt. Herhaal met `/clear` op het wisselmoment en vergelijk de kwaliteit. Werk daarna door tot je context merkbaar gevuld is en probeer `/compact`: herken je je eigen aanpak nog in de samenvatting?
 
@@ -20,7 +20,7 @@ Deze categorie gaat over Claude Code zelf — niet over wat je bouwt, maar over 
 
 ### Hoe bouw je een goede `CLAUDE.md` op?
 
-**Achtergrond:** `CLAUDE.md` is het per-project instructiebestand dat Claude in elke sessie meeneemt. Een goed bestand vangt projectconventies, pijnpunten, hoe je tests draait en wat Claude juist *niet* moet doen — kort, concreet, niet doublerend met code die hij toch al ziet. `/init` levert een eerste schets; daarna verfijn je hem zelf. Naast project-`CLAUDE.md` bestaat ook een globale `~/.claude/CLAUDE.md` voor instructies die voor al je werk gelden (taalvoorkeur, default review-stijl). De project-versie heeft voorrang bij conflict.
+**Achtergrond:** `CLAUDE.md` is het per-project instructiebestand dat Claude in elke sessie meeneemt. Een goed bestand vangt projectconventies, pijnpunten, hoe je tests draait en wat Claude juist *niet* moet doen — kort, concreet, geen herhaling van code die hij toch al ziet. `/init` levert een eerste schets; daarna verfijn je het zelf. Naast project-`CLAUDE.md` bestaat ook een globale `~/.claude/CLAUDE.md` voor instructies die voor al je werk gelden (taalvoorkeur, default review-stijl). De project-versie heeft voorrang bij conflict.
 
 **Vergelijk:**
 - *Bad practice (leeg):* geen `CLAUDE.md` — Claude moet bij elke sessie raden hoe je tests draait, welke conventies tellen en wat een goede commit-message is. Iedere keer opnieuw uitleggen.
@@ -44,7 +44,7 @@ Voor onderhoud van een groeiend bestand — opschonen, tegenstrijdigheden signal
 
 ### Wat onthoudt Claude tussen sessies via memory?
 
-**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code automatisch geheugen: tijdens je werk noteert hij wat hij in een volgende sessie nuttig acht — een correctie, een conventie die uit een bug bleek, een herhaalde voorkeur. Verschil met `CLAUDE.md`: dat schrijf jij bewust; memory bouwt Claude zelf op. Opslag in `~/.claude/projects/<project>/memory/` — alle worktrees binnen dezelfde repo delen één memory-directory ([Anthropic docs: Storage location](https://code.claude.com/docs/en/memory#storage-location)). Met `/memory` bekijk en bewerk je wat er staat.
+**Achtergrond:** Naast `CLAUDE.md` heeft Claude Code automatisch geheugen: tijdens je werk noteert hij wat hij in een volgende sessie nuttig acht — een correctie, een conventie die uit een bug bleek, een herhaalde voorkeur. Verschil met `CLAUDE.md`: dat schrijf jij bewust; memory bouwt Claude zelf op. Memory wordt opgeslagen in `~/.claude/projects/<project>/memory/` — alle worktrees binnen dezelfde repo delen één memory-directory ([Anthropic docs: Storage location](https://code.claude.com/docs/en/memory#storage-location)). Met `/memory` bekijk en bewerk je wat er staat.
 
 **Vergelijk:**
 - *Bad practice:* dezelfde correctie meerdere sessies geven ("gebruik `pnpm` niet `npm`") — zonder memory blijft Claude de fout maken.
@@ -70,13 +70,13 @@ Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemme
 - *Bad practice:* default-instellingen voor alles — Opus + xhigh op een rename verbrandt budget; Haiku op complexe refactor mist diepte.
 - *Good practice:* per taak bewust kiezen — zwaarder model/hogere effort voor planning, ontwerp, complex debuggen; lichter voor mechanische edits, kleine fixes, eenvoudige scripts. `/cost` af en toe checken.
 
-**Probeer zelf:** Pak een challenge en voer dezelfde substantiële taak (feature met meerdere stappen) twee keer uit: één keer op default model+effort, één keer op een lichter model of lager effort-level (effort werkt niet op Haiku). Noteer doorlooptijd en `/cost` van beide. Doe dan ook een lichte taak (typo-fix, rename) op default én omlaag-gezet — zie je verschil?
+**Probeer zelf:** Pak een challenge en voer dezelfde substantiële taak (feature met meerdere stappen) twee keer uit: één keer met de standaardinstellingen voor model en effort, één keer met een lichter model of een lager effort-level (effort werkt niet op Haiku). Noteer doorlooptijd en `/cost` van beide. Doe daarna ook een lichte taak (typo-fix, rename) op de standaardinstellingen én op een lager niveau — zie je verschil?
 
 **Wat je leert:** Je krijgt gevoel voor welke combinatie bij welk soort werk past, en voor de prijs/kwaliteit-curve van het model+effort-paar.
 
 ---
 
-### Wanneer schakelt plan mode iets toe wat je anders mist?
+### Wanneer voegt plan mode iets toe dat je anders mist?
 
 **Achtergrond:** Plan mode dwingt Claude een expliciet plan voor te leggen vóórdat hij code aanpast, zodat jij kunt bijsturen voordat er werk verzet is dat je toch niet wilt.
 
@@ -88,7 +88,7 @@ Deze drie samen geven je een knop om verbruik en kwaliteit per taak af te stemme
 
 **Wat je leert:** Je ervaart wanneer een expliciet plan totale doorlooptijd verlaagt doordat je minder werk hoeft terug te draaien.
 
-> Plan mode en subagents werken vaak goed samen: laat Claude in main het plan opstellen en delen van de uitvoering — typisch breed-zoeken, samenvatten — delegeren aan een subagent. Zie de [subagent-oefening](#wanneer-delegeer-je-aan-een-subagent) hieronder.
+> Plan mode en subagents werken vaak goed samen: laat Claude in de hoofdsessie het plan opstellen en delen van de uitvoering — denk aan brede zoekacties of samenvatten — aan een subagent delegeren. Zie de [subagent-oefening](#wanneer-delegeer-je-aan-een-subagent) hieronder.
 
 ---
 
@@ -139,7 +139,7 @@ Vergelijk wat elke vorm oplevert.
 **Achtergrond:** De Task/Agent-tool start een subagent in een eigen contextvenster. Die doet zijn werk — bestanden zoeken, logs uitpluizen, diff analyseren — en stuurt alleen een samenvatting terug. Verbose tussenstappen (search-output, logregels, file-dumps) belanden niet in jouw hoofdcontext. Bij brede zoektaken op grote codebases scheelt dat vaak ruimte voor de implementatie zelf. Review-plugins zoals `pr-review-toolkit` werken intern via subagents — maar je kunt de Agent-tool ook expliciet zelf inroepen.
 
 **Vergelijk:**
-- *Bad practice:* Claude in je hoofdsessie laten zoeken naar "alle plekken waar functie X aangeroepen wordt" in een grote codebase — `grep`-resultaten en file-fragmenten vullen je context, en de daadwerkelijke fix moet daarna plaatsvinden in een al volgelopen sessie.
+- *Bad practice:* Claude in je hoofdsessie laten zoeken naar "alle plekken waar functie X aangeroepen wordt" in een grote codebase — `grep`-resultaten en file-fragmenten vullen je context, en de daadwerkelijke fix moet daarna plaatsvinden in een sessie waarvan de context al vol is.
 - *Good practice:* "Gebruik een subagent om alle aanroepen van X in kaart te brengen en alleen een lijst van bestand:regel-paren terug te geven" — de zoektocht blijft in de geïsoleerde context, jij krijgt een nette tabel terug en houdt ruimte voor de fix.
 
 **Probeer zelf:** Pak een [codingchallenges.fyi](https://codingchallenges.fyi/)-challenge waar al wat code in zit. Doe dezelfde verkenning twee keer:

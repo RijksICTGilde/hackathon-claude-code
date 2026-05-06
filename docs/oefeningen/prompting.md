@@ -27,15 +27,15 @@ Informeel prompten betekent: gewone spreektaal, geen vaste structuur, gericht op
 - *Bad practice (te voorschrijvend):* `"Maak een bestand Parser.kt. Voeg een class toe genaamd JsonParser met een methode parse die een String parameter inputStr neemt en een Map<String, Any?> teruggeeft. Check eerst of de string met { begint..."` — je schrijft de implementatie zelf en laat Claude alleen typen.
 - *Good practice:* `"Bouw een HTTP/1.1-server in Kotlin met Ktor die statische bestanden uit ./public serveert, GET- en HEAD-verzoeken afhandelt, correcte statuscodes teruggeeft (200, 404, 405) en Content-Type op extensie baseert"` — functionele eisen, vrije implementatie.
 
-**Probeer zelf:** Kies een challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en prompt hem driemaal: één keer zo vaag dat de opdracht open voor meerdere interpretaties, één keer met exact voorgeschreven klasse-namen en methode-handtekeningen, en één keer op het sweet spot met functionele eisen maar geen implementatie-details. Vergelijk de drie uitkomsten op kwaliteit en hoeveel correctie ze nodig hadden.
+**Probeer zelf:** Kies een challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en prompt hem driemaal: één keer zo vaag dat de opdracht openstaat voor meerdere interpretaties, één keer met exact voorgeschreven klasse-namen en methode-handtekeningen, en één keer in de sweet spot met functionele eisen maar geen implementatie-details. Vergelijk de drie uitkomsten op kwaliteit en hoeveel correctie ze nodig hadden.
 
-**Wat je leert:** Je ervaart waar het sweet spot van specificiteit ligt en waarom te veel detail de output juist slechter maakt.
+**Wat je leert:** Je ervaart waar de sweet spot van specificiteit ligt en waarom te veel detail de output juist slechter maakt.
 
 ---
 
 ### Wat levert het op om eerst om tests te vragen?
 
-**Achtergrond:** Tests dwingen tot expliciete acceptatiecriteria voordat de implementatie er staat. Als je eerst de implementatie vraagt, ontdek je pas achteraf welke edge cases ontbreken — en dan moet je de code aanpassen aan een standaard die nog niet bestond.
+**Achtergrond:** Tests dwingen tot expliciete acceptatiecriteria voordat de implementatie er staat. Als je eerst de implementatie vraagt, ontdek je pas achteraf welke edge cases ontbreken — en dan moet je de code aanpassen aan een standaard die op dat moment nog niet bestond.
 
 **Vergelijk:**
 - *Bad practice:* meteen om de implementatie vragen, daarna pas zien dat edge cases ontbreken of dat het gedrag op ongeldige invoer niet gespecificeerd is.
@@ -85,7 +85,7 @@ Bij spec-driven prompten schrijf je eerst een functioneel ontwerp — een spec �
 
 **Vergelijk:**
 - *Bad practice:* spec uitschrijven voor een 50-regelige helper — overhead weegt niet op tegen eenvoud.
-- *Good practice:* spec uitschrijven voor een feature met meerdere componenten, edge cases en verwachte evolutie — later pas je een requirement aan in de spec en stemt Claude de implementatie opnieuw af zonder heruitleg.
+- *Good practice:* spec uitschrijven voor een feature met meerdere componenten, edge cases en verwachte evolutie — later pas je een requirement aan in de spec en stemt Claude de implementatie opnieuw af zonder dat je alles opnieuw hoeft uit te leggen.
 
 **Probeer zelf:** Doe dezelfde middelgrote challenge — bv. "Build Your Own JSON Parser" van [codingchallenges.fyi](https://codingchallenges.fyi/) — één keer informeel, één keer spec-driven. Voeg daarna een nieuwe requirement toe (opmerkingen-ondersteuning, extra datatype) en vergelijk hoeveel je kunt wijzigen zonder vanaf nul te beginnen.
 
@@ -114,7 +114,7 @@ Structured prompt-driven prompten vervangt vrije proza door een vaste structuur:
 
 **Probeer zelf:** Schrijf voor dezelfde taak twee prompts — vrije proza en de vijf secties gescheiden. Vergelijk hoe goed de output binnen het gewenste formaat blijft en hoeveel correctie-rondes elke variant kost.
 
-**Wat je leert:** Structuur in de prompt leidt tot structuur in de output, met meetbare overhead voor consistent onderhoud.
+**Wat je leert:** Structuur in de prompt leidt tot structuur in de output; de overhead daarvan betaalt zich terug zodra je het formaat consistent moet onderhouden.
 
 ---
 
@@ -132,6 +132,6 @@ Je hebt nu drie stijlen geprobeerd op vergelijkbaar materiaal. De hoofdlijn: inf
 - *Bad practice:* één stijl voor alles — overhead op kleine taken (spec voor 20-regelige helper) of onderspecificatie op grote (informele prompt voor feature met vijf componenten).
 - *Good practice:* per challenge bewust kiezen op omvang, evolutie-verwachting en herhaalbaarheid.
 
-**Probeer zelf:** Kies een nieuwe challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en beslis vooraf welke stijl je gebruikt en waarom. Schrijf je redenering op. Verifieer achteraf: wat werkte, welke stijl had beter gepast?
+**Probeer zelf:** Kies een nieuwe challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en beslis vooraf welke stijl je gebruikt en waarom. Schrijf je redenering op. Verifieer achteraf: wat werkte, en welke stijl zou beter gepast hebben?
 
 **Wat je leert:** Je ontwikkelt een heuristiek voor stijlkeuze en leert van het verschil tussen voorspelling en werkelijkheid.
