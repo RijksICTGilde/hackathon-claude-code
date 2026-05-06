@@ -1,6 +1,6 @@
 ---
 name: digital-waste-spotter
-description: analyze code, runtime behavior, logs, traces, profiling output, or architecture notes to identify digital waste that increases energy use, compute cost, latency, memory pressure, or unnecessary resource consumption. use when reviewing unfamiliar code, investigating inefficient runtime behavior, comparing implementation options, or turning waste findings into practical refactors, coding guidelines, and lightweight engineering checks.
+description: Find digital waste in code, logs, traces, or profiling output: redundant compute, wasted I/O, memory bloat. Use for energy, cost, latency, or resource reviews and refactors.
 ---
 
 # Digital Waste Spotter
