@@ -73,16 +73,16 @@ De volgende plugins zijn voorgeinstalleerd in de image:
 
 ### Developer Overheid NL plugins
 
-> Deze plugins worden geïnstalleerd als `INSTALL_OVERHEID_PLUGINS=true`; bij `false` wordt geen enkele uit deze lijst geïnstalleerd. Zie [Optionele componenten](#optionele-componenten).
+> Deze plugins worden geïnstalleerd op basis van de toggle in de laatste kolom. De plugins onder `INSTALL_OVERHEID_PLUGINS` zijn standaard aan; `geo` en `zad-actions` staan los achter eigen toggles (default `false`) omdat hun skill-bundels relatief veel context-budget kosten. Zie [Optionele componenten](#optionele-componenten).
 
-| Plugin              | Functie                                          |
-|---------------------|--------------------------------------------------|
-| standaarden         | Nederlandse overheidsstandaarden                 |
-| zad-actions         | GitHub Actions voor Nederlandse overheid         |
-| developer-overheid  | Developer resources voor Nederlandse overheid    |
-| nerds               | Nederlandse Richtlijn Digitale Systemen (NeRDS)  |
-| internet            | Internet.nl standaarden                          |
-| geo                 | Geospatiale standaarden                          |
+| Plugin              | Functie                                          | Toggle                          |
+|---------------------|--------------------------------------------------|---------------------------------|
+| standaarden         | Nederlandse overheidsstandaarden                 | `INSTALL_OVERHEID_PLUGINS`      |
+| developer-overheid  | Developer resources voor Nederlandse overheid    | `INSTALL_OVERHEID_PLUGINS`      |
+| nerds               | Nederlandse Richtlijn Digitale Systemen (NeRDS)  | `INSTALL_OVERHEID_PLUGINS`      |
+| internet            | Internet.nl standaarden                          | `INSTALL_OVERHEID_PLUGINS`      |
+| geo                 | Geospatiale standaarden                          | `INSTALL_OVERHEID_GEO`          |
+| zad-actions         | GitHub Actions voor Nederlandse overheid         | `INSTALL_OVERHEID_ZAD_ACTIONS`  |
 
 ### Caveman (third-party)
 
@@ -138,17 +138,19 @@ verbinding maken met de container.
 
 ### Optionele componenten
 
-De image kent zes build-time toggles waarmee je componenten aan- of uitschakelt. Iedere waarde moet exact `true` of `false` zijn (andere waardes laten de build expliciet falen). De meeste defaults staan op `true`; `INSTALL_DOCKER` is een uitzondering en staat op `false` omdat het de container privileged maakt (zie noot bij de tabel).
+De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Iedere waarde moet exact `true` of `false` zijn (andere waardes laten de build expliciet falen). De meeste defaults staan op `true`; `INSTALL_DOCKER`, `INSTALL_OVERHEID_GEO` en `INSTALL_OVERHEID_ZAD_ACTIONS` zijn uitzonderingen en staan op `false` (zie de noten bij de tabel).
 
-| Argument                    | Default | Wat het installeert                                                                              |
-|-----------------------------|---------|--------------------------------------------------------------------------------------------------|
-| `INSTALL_JVM`               | `true`  | SDKman + LSP-plugins (jdtls, kotlin)                                                             |
-| `INSTALL_DOCKER`            | `false` | Docker daemon in de container (builds + nested containers); zet de container ook privileged     |
-| `INSTALL_RTK`               | `true`  | rtk + auto-patch                                                                                 |
-| `INSTALL_OVERHEID_PLUGINS`  | `true`  | 6 DON-plugins (standaarden, zad-actions, developer-overheid, nerds, internet, geo)               |
-| `INSTALL_ANTHROPIC_PLUGINS` | `true`  | 11 Anthropic-plugins (+ LSP's bij `INSTALL_JVM=true`)                                            |
-| `INSTALL_LOCAL_SKILLS`      | `true`  | Lokale skills uit `skills/` (digital-waste-spotter)                                              |
-| `INSTALL_CAVEMAN`           | `true`  | caveman plugin (third-party, ~75% token-reductie via communicatie-stijl)                         |
+| Argument                       | Default | Wat het installeert                                                                          |
+|--------------------------------|---------|----------------------------------------------------------------------------------------------|
+| `INSTALL_JVM`                  | `true`  | SDKman + LSP-plugins (jdtls, kotlin)                                                         |
+| `INSTALL_DOCKER`               | `false` | Docker daemon in de container (builds + nested containers); zet de container ook privileged |
+| `INSTALL_RTK`                  | `true`  | rtk + auto-patch                                                                             |
+| `INSTALL_OVERHEID_PLUGINS`     | `true`  | DON-plugins (standaarden, developer-overheid, nerds, internet)                               |
+| `INSTALL_OVERHEID_GEO`         | `false` | Losse `geo`-plugin (Geonovum geo-standaarden); default uit om context-budget te sparen       |
+| `INSTALL_OVERHEID_ZAD_ACTIONS` | `false` | Losse `zad-actions`-plugin (ZAD GitHub Actions); default uit om context-budget te sparen     |
+| `INSTALL_ANTHROPIC_PLUGINS`    | `true`  | Anthropic-plugins (+ LSP's bij `INSTALL_JVM=true`)                                           |
+| `INSTALL_LOCAL_SKILLS`         | `true`  | Lokale skills uit `skills/` (digital-waste-spotter)                                          |
+| `INSTALL_CAVEMAN`              | `true`  | caveman plugin (third-party, ~75% token-reductie via communicatie-stijl)                     |
 
 Zet de waardes in `.env` of op de commandline:
 ```
@@ -159,6 +161,14 @@ INSTALL_DOCKER=false docker compose build
 > **Let op — `INSTALL_DOCKER=true` impliceert `privileged: true`:** op recente kernels (Ubuntu 24.04+, TUXEDO) kan rootlesskit zonder privileged geen user namespace meer aanmaken, dus crasht de daemon bij start. `compose.yml` koppelt daarom de privileged-flag direct aan `INSTALL_DOCKER`. Een gecompromitteerd proces in een privileged container heeft effectief root op de host — zet de toggle alleen aan als je de Docker daemon (voor builds of nested containers) écht nodig hebt.
 
 > **Let op — volume-recreate vereist:** plugins, skills, rtk en SDKman komen alle terecht onder `/home/claude`, een pad dat onder het `claude-home` volume valt. Het flippen van *elke* toggle vereist daarom **altijd** een image-rebuild **én** volume-recreate, anders blijft de oude inhoud staan (zie [Devcontainer volume-gedrag](#devcontainer-volume-gedrag)). De `cap_add` (NET_ADMIN, NET_RAW) blijven onvoorwaardelijk nodig voor de firewall, ook als `INSTALL_DOCKER=false`.
+
+#### Runtime-toggles
+
+Naast de build-time toggles kent de container één runtime-env-var:
+
+| Variabele                | Default | Wat het doet                                                                                                                                              |
+|--------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `MARKETPLACE_AUTOUPDATE` | `true`  | Draait `claude plugin marketplace update` bij entrypoint-start zodat plugin-bundels up-to-date blijven zonder image-rebuild. Niet-fataal bij netwerk-/upstream-failure. |
 
 #### Voorbeeld: `sdk install java` na `INSTALL_JVM=true`
 

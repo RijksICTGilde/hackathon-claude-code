@@ -8,6 +8,8 @@ ARG INSTALL_JVM=true
 ARG INSTALL_DOCKER=false
 ARG INSTALL_RTK=true
 ARG INSTALL_OVERHEID_PLUGINS=true
+ARG INSTALL_OVERHEID_GEO=false
+ARG INSTALL_OVERHEID_ZAD_ACTIONS=false
 ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
@@ -116,6 +118,10 @@ RUN mkdir -p /home/claude/.claude
 # Let op: houd de plugin-lijst in de README in sync bij wijzigingen.
 # Faalt dit op een verse build, dan is de oorzaak meestal: marketplace onbereikbaar
 # (Docker build-network), plugin upstream hernoemd/verwijderd, of claude-CLI mismatch.
+#
+# Overheid-blok: marketplace wordt één keer toegevoegd zodra minstens één
+# INSTALL_OVERHEID_*-flag true is. Nieuwe split toevoegen = 1 entry in
+# OVERHEID_FLAGS + 1 if-blok per plugin; marketplace-guard schaalt mee.
 RUN case "$INSTALL_ANTHROPIC_PLUGINS" in \
       true) claude plugin marketplace add anthropics/claude-plugins-official || { echo "FOUT: marketplace 'anthropics/claude-plugins-official' toevoegen is mislukt (netwerk of marketplace verwijderd/hernoemd?)" >&2; exit 1; } && \
             for p in github pr-review-toolkit commit-commands superpowers feature-dev \
@@ -126,14 +132,31 @@ RUN case "$INSTALL_ANTHROPIC_PLUGINS" in \
       false) echo "INFO: INSTALL_ANTHROPIC_PLUGINS=false — Anthropic-plugins overgeslagen" ;; \
       *) echo "FOUT: INSTALL_ANTHROPIC_PLUGINS='$INSTALL_ANTHROPIC_PLUGINS' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac && \
-    case "$INSTALL_OVERHEID_PLUGINS" in \
-      true) claude plugin marketplace add developer-overheid-nl/skills-marketplace || { echo "FOUT: marketplace 'developer-overheid-nl/skills-marketplace' toevoegen is mislukt (netwerk of marketplace verwijderd/hernoemd?)" >&2; exit 1; } && \
-            for p in standaarden zad-actions developer-overheid nerds internet geo; do \
-              claude plugin install "$p" || { echo "FOUT: plugin '$p' installeren is mislukt (netwerk of plugin verwijderd/hernoemd?)" >&2; exit 1; }; \
-            done ;; \
-      false) echo "INFO: INSTALL_OVERHEID_PLUGINS=false — Overheid-plugins overgeslagen" ;; \
-      *) echo "FOUT: INSTALL_OVERHEID_PLUGINS='$INSTALL_OVERHEID_PLUGINS' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
-    esac && \
+    OVERHEID_FLAGS=(INSTALL_OVERHEID_PLUGINS INSTALL_OVERHEID_GEO INSTALL_OVERHEID_ZAD_ACTIONS) && \
+    for v in "${OVERHEID_FLAGS[@]}"; do \
+      case "${!v}" in \
+        true|false) ;; \
+        *) echo "FOUT: $v='${!v}' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+      esac; \
+    done && \
+    overheid_any=false && \
+    for v in "${OVERHEID_FLAGS[@]}"; do \
+      if [ "${!v}" = "true" ]; then overheid_any=true; fi; \
+    done && \
+    if [ "$overheid_any" = "true" ]; then \
+      claude plugin marketplace add developer-overheid-nl/skills-marketplace || { echo "FOUT: marketplace 'developer-overheid-nl/skills-marketplace' toevoegen is mislukt (netwerk of marketplace verwijderd/hernoemd?)" >&2; exit 1; }; \
+    fi && \
+    if [ "$INSTALL_OVERHEID_PLUGINS" = "true" ]; then \
+      for p in standaarden developer-overheid nerds internet; do \
+        claude plugin install "$p" || { echo "FOUT: plugin '$p' installeren is mislukt (netwerk of plugin verwijderd/hernoemd?)" >&2; exit 1; }; \
+      done; \
+    else echo "INFO: INSTALL_OVERHEID_PLUGINS=false — Overheid-plugins overgeslagen"; fi && \
+    if [ "$INSTALL_OVERHEID_GEO" = "true" ]; then \
+      claude plugin install geo || { echo "FOUT: plugin 'geo' installeren is mislukt (netwerk of plugin verwijderd/hernoemd?)" >&2; exit 1; }; \
+    else echo "INFO: INSTALL_OVERHEID_GEO=false — geo-plugin overgeslagen"; fi && \
+    if [ "$INSTALL_OVERHEID_ZAD_ACTIONS" = "true" ]; then \
+      claude plugin install zad-actions || { echo "FOUT: plugin 'zad-actions' installeren is mislukt (netwerk of plugin verwijderd/hernoemd?)" >&2; exit 1; }; \
+    else echo "INFO: INSTALL_OVERHEID_ZAD_ACTIONS=false — zad-actions-plugin overgeslagen"; fi && \
     if [ "$INSTALL_JVM" = "true" ] && [ "$INSTALL_ANTHROPIC_PLUGINS" = "true" ]; then \
       for p in jdtls-lsp kotlin-lsp; do \
         claude plugin install "$p" || { echo "FOUT: plugin '$p' installeren is mislukt (netwerk of plugin verwijderd/hernoemd?)" >&2; exit 1; }; \
