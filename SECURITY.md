@@ -72,6 +72,6 @@ cosign verify-blob \
   "$REPO-$TAG.tar.gz"
 ```
 
-> Cosign v2 consumers werken niet met deze assets — bundle format vereist cosign v3+. Eerdere releases (≤ v0.1.0) zijn met v2-format ondertekend en hebben de oude `.sig` + `.pem` assets.
+> Cosign v2 consumers werken niet met deze assets — bundle format vereist cosign v3+.
 
 Zie het [volledige MinBZK-beleid](https://github.com/MinBZK/.github/blob/main/SECURITY.md) voor de complete tekst, do's en don'ts, en wat wij beloven.
