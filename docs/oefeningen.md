@@ -4,7 +4,7 @@ Leren gaat het best door experimenteren in een afgeschermde sandbox. Deze oefeni
 
 ## Vier categorieën
 
-Kies waar je mee aan de slag wil — je voorkennis met Claude Code bepaalt mede je instap.
+Kies waar je mee aan de slag wil — je ervaring met Claude Code bepaalt mede je instap.
 
 1. **[Werken met Claude Code](oefeningen/claude-code.md)** — slash-commands, plan mode, `--dangerously-skip-permissions`, subagents, zelf-review, etc.
 2. **[Plugins, skills en tools](oefeningen/plugins-skills-tools.md)** — wat de meegeleverde overheid-marketplace, `superpowers`, `rtk`, `ralph-loop` en andere features toevoegen aan een kale Claude Code-installatie.

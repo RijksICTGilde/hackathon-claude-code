@@ -4,7 +4,7 @@
 
 ## Beschrijving
 
-Deze repository levert een **Docker-container** die [Claude Code](https://code.claude.com) van Anthropic draait in een netwerk- en bestandssysteem-geïsoleerde omgeving. De container is bedoeld voor hackathons en oefenwerk waarin deelnemers leren hoe ze een AI-assistant effectief kunnen aansturen voor softwareontwikkeling — met expliciete aandacht voor Nederlandse overheidsstandaarden wanneer de overheid-marketplace is ingeschakeld.
+Deze repository levert een **Docker-container** die [Claude Code](https://code.claude.com) van Anthropic draait in een netwerk- en bestandssysteem-geïsoleerde omgeving. De container is bedoeld voor hackathons en oefenwerk waarin deelnemers leren hoe ze een AI-assistent effectief kunnen aansturen voor softwareontwikkeling — met expliciete aandacht voor Nederlandse overheidsstandaarden wanneer de overheid-marketplace is ingeschakeld.
 
 De container is configureerbaar via environment-switches in `.env`. Optionele uitbreidingen kunnen los worden aan- of uitgezet, afhankelijk van wat de hackathon of deelnemer nodig heeft, waaronder:
 
@@ -12,7 +12,7 @@ De container is configureerbaar via environment-switches in `.env`. Optionele ui
 - de overheid-marketplace (`standaarden`, `nerds`, `internet`, `geo`, `developer-overheid`, `zad-actions`),
 - de JVM-toolchain via SDKman (Java/Kotlin language servers).
 
-De container is zo opgezet dat Claude desgewenst met `--dangerously-skip-permissions` gedraaid kan worden — gebruikers kiezen daar zelf voor door de optie mee te geven of de `claude-danger`-alias te gebruiken. Juist díe combinatie — volledige autonomie binnen een sandbox — maakt het leerdoel mogelijk: zien wat een AI-assistant zelfstandig oplost in een tight feedback-loop, zonder dat dat consequenties heeft voor de host of het netwerk daarbuiten.
+De container is zo opgezet dat Claude desgewenst met `--dangerously-skip-permissions` gedraaid kan worden — gebruikers kiezen daar zelf voor door de optie mee te geven of de `claude-danger`-alias te gebruiken. Juist díe combinatie — volledige autonomie binnen een sandbox — maakt het leerdoel mogelijk: zien wat een AI-assistent zelfstandig oplost in een strakke feedback-loop, zonder dat dat consequenties heeft voor de host of het netwerk daarbuiten.
 
 Het experiment ontwikkelt zelf geen AI-systeem. Alle code die *door* Claude in de container wordt gegenereerd, ontstaat in het kader van wegwerp-oefeningen (challenges van [codingchallenges.fyi](https://codingchallenges.fyi)) en gaat niet in productie. De container zelf — Dockerfiles, firewall-script, entrypoints — is met de hand geschreven, met inzet van AI ter ondersteuning waar dat efficiënt was.
 
@@ -22,13 +22,13 @@ We doorlopen hieronder het globale stappenplan uit hoofdstuk 4 van de [Overheids
 
 ### 1) Doel en toepassingsgebied
 
-*Doel:* Onderzoeken hoe AI-assistants praktisch ingezet kunnen worden voor softwareontwikkeling, en hoe een veilige sandbox eruit ziet waarin deelnemers durven te experimenteren met `--dangerously-skip-permissions`.
+*Doel:* Onderzoeken hoe AI-assistenten praktisch ingezet kunnen worden voor softwareontwikkeling, en hoe een veilige sandbox eruit ziet waarin deelnemers durven te experimenteren met `--dangerously-skip-permissions`.
 
-*Toepassingsgebied:* Hackathons, workshops en zelfstudie. De containers zijn niet bedoeld voor het ontwikkelen van productiesoftware — ze missen daarvoor o.a. supply-chain-controles, secrets-management en logging die je in een echte ontwikkelstraat verwacht.
+*Toepassingsgebied:* Hackathons, workshops en zelfstudie. De containers zijn niet bedoeld voor het ontwikkelen van productiesoftware — daarvoor ontbreken o.a. supply-chain-controles, secrets-management en logging die je in een echte ontwikkelstraat verwacht.
 
 ### 2) Mensen en vaardigheden
 
-Deelnemers brengen hun eigen ontwikkelervaring in. De [oefeningen.md](oefeningen.md) biedt onderzoeksvragen en experimenten zodat ook deelnemers die nieuw zijn met AI-assistants snel productief kunnen worden. Mentoren zorgen tijdens hackathons voor uitleg over zowel de container (firewall, volumes) als over wat een AI-assistant wel en niet betrouwbaar kan.
+Deelnemers brengen hun eigen ontwikkelervaring in. [oefeningen.md](oefeningen.md) bevat onderzoeksvragen en experimenten zodat ook deelnemers die nieuw zijn met AI-assistenten snel productief kunnen worden. Mentoren zorgen tijdens hackathons voor uitleg over zowel de container (firewall, volumes) als over wat een AI-assistent wel en niet betrouwbaar kan.
 
 ### 3) Governance
 
@@ -56,7 +56,7 @@ Authenticatie-tokens (GitHub CLI, git credentials) blijven binnen het `claude-ho
 
 De container is een leeromgeving, niet een productiesysteem; BIO-verplichtingen zijn dus niet één-op-één van toepassing. Wel zijn op meerdere niveaus mitigaties aanwezig om experimenten met `--dangerously-skip-permissions` veilig te maken:
 
-- Een iptables-firewall (`init-firewall.sh`) blokkeert alle uitgaand verkeer behalve HTTPS en DNS; in de strikte modus (`OPEN_HTTPS=false`) alleen naar een gewhiteliste lijst hosts.
+- Een iptables-firewall (`init-firewall.sh`) blokkeert alle uitgaand verkeer behalve HTTPS en DNS; in de strikte modus (`OPEN_HTTPS=false`) alleen naar een vooraf goedgekeurde lijst hosts.
 - Het `claude-home`-volume is geïsoleerd van de hostpaden van de gebruiker; alleen de bewust gemounte `projects/`-directory is voor Claude bereikbaar.
 - Image-builds zijn reproduceerbaar via Dockerfiles en versiebeheer; geen handmatige stappen op de host.
 
@@ -72,20 +72,20 @@ Claude Code stuurt prompts en bestandsinhoud naar Anthropic om te kunnen reagere
 
 #### e. Schijnzekerheid
 
-Het feit dat een AI-assistant met de overheid-marketplace ingeschakeld toegang heeft tot overheidsspecifieke skills (`standaarden`, `nerds`, `internet`, `geo`, `developer-overheid`, `zad-actions`) betekent **niet** dat de output automatisch voldoet aan de bijbehorende standaarden. Skills zijn samenvattingen en interpretaties; officiële brondocumenten zijn altijd leidend. Verantwoordelijkheid voor compliance ligt bij de organisatie die de gegenereerde code uiteindelijk in productie zou nemen.
+Het feit dat een AI-assistent met de overheid-marketplace ingeschakeld toegang heeft tot overheidsspecifieke skills (`standaarden`, `nerds`, `internet`, `geo`, `developer-overheid`, `zad-actions`) betekent **niet** dat de output automatisch voldoet aan de bijbehorende standaarden. Skills zijn samenvattingen en interpretaties; officiële brondocumenten zijn altijd leidend. Verantwoordelijkheid voor compliance ligt bij de organisatie die de gegenereerde code uiteindelijk in productie zou nemen.
 
 #### f. Kwaliteit van AI-output
 
-Code en uitleg die Claude produceert moeten worden gereviewed zoals je elke pull request reviewt: tests draaien, documentatie checken, edge cases doordenken. De [oefeningen rond prompting](oefeningen/prompting.md) geven onderzoeksvragen voor het effectief inzetten van Claude in een test-driven loop, juist om kwaliteitsrisico's te beperken.
+Code en uitleg die Claude produceert moeten worden gereviewd zoals je elke pull request reviewt: tests draaien, documentatie checken, edge cases doordenken. De [oefeningen rond prompting](oefeningen/prompting.md) geven onderzoeksvragen voor het effectief inzetten van Claude in een test-driven loop, juist om kwaliteitsrisico's te beperken.
 
 #### g. Vendor lock-in
 
-De container is op dit moment specifiek gebouwd rond Claude Code (Anthropic). Dat is een bewuste keuze voor één eerstklasse implementatie binnen de scope van een hackathon, maar het beperkt de keuze van de gebruiker. Mitigaties:
+De container is op dit moment specifiek gebouwd rond Claude Code (Anthropic). Dat is een bewuste keuze voor één volwaardige implementatie binnen de scope van een hackathon, maar het beperkt de keuze van de gebruiker. Mitigaties:
 
-- De skills die via de overheid-marketplace worden geleverd (zoals die van [developer-overheid-nl/skills-marketplace](https://github.com/developer-overheid-nl/skills-marketplace)) zijn ontworpen om met meerdere AI-assistants te werken; het format is open.
-- De Dockerfiles en het firewall-script zijn niet Anthropic-specifiek en kunnen hergebruikt worden als basis voor containers rond andere AI-assistants (bv. lokale modellen, andere CLI-clients).
+- De skills die via de overheid-marketplace worden geleverd (zoals die van [developer-overheid-nl/skills-marketplace](https://github.com/developer-overheid-nl/skills-marketplace)) zijn ontworpen om met meerdere AI-assistenten te werken; het format is open.
+- De Dockerfiles en het firewall-script zijn niet Anthropic-specifiek en kunnen hergebruikt worden als basis voor containers rond andere AI-assistenten (bv. lokale modellen, andere CLI-clients).
 
-Een variant met een open-source of Europese AI-assistant past binnen de scope van toekomstig werk.
+Een variant met een open-source of Europese AI-assistent past binnen de scope van toekomstig werk.
 
 #### h. Auteursrecht en licenties
 

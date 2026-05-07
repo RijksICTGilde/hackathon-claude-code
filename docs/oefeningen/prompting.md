@@ -27,15 +27,15 @@ Informeel prompten betekent: gewone spreektaal, geen vaste structuur, gericht op
 - *Bad practice (te voorschrijvend):* `"Maak een bestand Parser.kt. Voeg een class toe genaamd JsonParser met een methode parse die een String parameter inputStr neemt en een Map<String, Any?> teruggeeft. Check eerst of de string met { begint..."` — je schrijft de implementatie zelf en laat Claude alleen typen.
 - *Good practice:* `"Bouw een HTTP/1.1-server in Kotlin met Ktor die statische bestanden uit ./public serveert, GET- en HEAD-verzoeken afhandelt, correcte statuscodes teruggeeft (200, 404, 405) en Content-Type op extensie baseert"` — functionele eisen, vrije implementatie.
 
-**Probeer zelf:** Kies een challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en prompt hem driemaal: één keer zo vaag dat de opdracht open voor meerdere interpretaties, één keer met exact voorgeschreven klasse-namen en methode-handtekeningen, en één keer op het sweet spot met functionele eisen maar geen implementatie-details. Vergelijk de drie uitkomsten op kwaliteit en hoeveel correctie ze nodig hadden.
+**Probeer zelf:** Kies een challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en prompt hem driemaal: één keer zo vaag dat de opdracht openstaat voor meerdere interpretaties, één keer met exact voorgeschreven klasse-namen en methode-handtekeningen, en één keer in de sweet spot met functionele eisen maar geen implementatie-details. Vergelijk de drie uitkomsten op kwaliteit en hoeveel correctie ze nodig hadden.
 
-**Wat je leert:** Je ervaart waar het sweet spot van specificiteit ligt en waarom te veel detail de output juist slechter maakt.
+**Wat je leert:** Je ervaart waar de sweet spot van specificiteit ligt en waarom te veel detail de output juist slechter maakt.
 
 ---
 
 ### Wat levert het op om eerst om tests te vragen?
 
-**Achtergrond:** Tests dwingen tot expliciete acceptatiecriteria voordat de implementatie er staat. Als je eerst de implementatie vraagt, ontdek je pas achteraf welke edge cases ontbreken — en dan moet je de code aanpassen aan een standaard die nog niet bestond.
+**Achtergrond:** Tests dwingen tot expliciete acceptatiecriteria voordat de implementatie er staat. Als je eerst de implementatie vraagt, ontdek je pas achteraf welke edge cases ontbreken — en dan moet je de code aanpassen aan een standaard die op dat moment nog niet bestond.
 
 **Vergelijk:**
 - *Bad practice:* meteen om de implementatie vragen, daarna pas zien dat edge cases ontbreken of dat het gedrag op ongeldige invoer niet gespecificeerd is.
@@ -54,22 +54,22 @@ geneste objects en ongeldige input. Implementeer daarna de parser zodat de tests
 
 ### Hoe geef je context wanneer je een sessie hervat?
 
-**Achtergrond:** Elke nieuwe sessie start zonder geheugen van vorige sessies. Een vage hervatting leidt tot heruitleg, verkeerde aannames of werk dat Claude opnieuw uitvoert wat al af was.
+**Achtergrond:** Elke nieuwe sessie start zonder geheugen van vorige. Een vage hervatting leidt tot heruitleg, verkeerde aannames of dubbel werk.
 
 **Vergelijk:**
-- *Bad practice:* `"Ga verder met het Redis-project"` zonder uitleg waar het stond — Claude heeft geen idee welke delen klaar zijn en waar de volgende stap begint.
-- *Good practice:* expliciete status plus de volgende concrete stap:
+- *Bad practice:* `"Ga verder met het Redis-project"` — Claude weet niet wat klaar is of waar de volgende stap begint.
+- *Good practice:* expliciete status plus volgende concrete stap:
 
 ```
 Ik bouw een Redis-kloon in Kotlin. De RESP-parser werkt en GET/SET zijn klaar.
 Volgende: voeg key-expiration toe met TTL-ondersteuning.
 ```
 
-**Probeer zelf:** Werk een challenge een half uur verder, sluit de sessie af en hervat hem op twee manieren: één keer zonder context-zin (alleen de challenge-naam), één keer met een expliciete status-regel en de volgende stap. Meet hoe lang het duurt voor je weer productief aan het werk bent bij elke variant.
+**Probeer zelf:** Werk een challenge een half uur, sluit de sessie en hervat hem twee keer: alleen met de challenge-naam, en met een expliciete status-regel plus volgende stap. Meet hoe lang tot je weer productief bent.
 
-> Als alternatief op een handmatige status-regel: `claude --continue` (of `-c`) hervat de meest recente sessie direct, en `claude --resume` (of `/resume` binnen een sessie) opent een picker waarin je een specifieke eerdere sessie kiest. Handig als je dezelfde dag verder wil; minder geschikt na langere onderbrekingen waarbij je liever bewust kiest welke context relevant blijft.
+> Alternatief: `claude --continue` (of `-c`) hervat de meest recente sessie direct; `claude --resume` (of `/resume` binnen een sessie) opent een picker voor een specifieke eerdere sessie. Handig dezelfde dag; minder geschikt na langere pauzes waarbij je liever bewust kiest welke context relevant blijft.
 
-**Wat je leert:** Je merkt hoeveel tijd je bespaart door bij hervatting één gerichte statusregel mee te geven.
+**Wat je leert:** Eén gerichte statusregel bij hervatting bespaart aanzienlijk tijd.
 
 ---
 
@@ -81,15 +81,15 @@ Bij spec-driven prompten schrijf je eerst een functioneel ontwerp — een spec �
 
 ### Wanneer levert een spec-driven aanpak meer op dan informeel prompten?
 
-**Achtergrond:** Spec-driven is duurder vooraf maar geeft een herbruikbaar artefact. Je kunt de spec bijwerken en Claude de hele feature opnieuw laten implementeren, zonder dat je elke keer de volledige context opnieuw moet opbouwen. Bij kleine, op-zichzelfstaande helpers is die investering niet de moeite waard.
+**Achtergrond:** Spec-driven kost meer vooraf maar levert een herbruikbaar artefact: je werkt de spec bij en laat Claude de feature opnieuw implementeren, zonder elke keer context op te bouwen. Bij kleine helpers is die investering niet de moeite waard.
 
 **Vergelijk:**
-- *Bad practice:* een spec uitschrijven voor een 50-regelige helper-functie — de overhead van de spec weegt niet op tegen de eenvoud van de taak.
-- *Good practice:* een spec uitschrijven voor een feature met meerdere componenten, edge cases en gewenste evolueerbaarheid — zodat je later een requirement kunt aanpassen in de spec en Claude de implementatie opnieuw kan afstemmen zonder dat je de aanpak opnieuw moet uitleggen.
+- *Bad practice:* spec uitschrijven voor een 50-regelige helper — overhead weegt niet op tegen eenvoud.
+- *Good practice:* spec uitschrijven voor een feature met meerdere componenten, edge cases en verwachte evolutie — later pas je een requirement aan in de spec en stemt Claude de implementatie opnieuw af zonder dat je alles opnieuw hoeft uit te leggen.
 
-**Probeer zelf:** Doe dezelfde middelgrote challenge — bijvoorbeeld "Build Your Own JSON Parser" van [codingchallenges.fyi](https://codingchallenges.fyi/) — één keer informeel en één keer spec-driven. Voeg na beide varianten een nieuwe requirement toe (bijv. ondersteuning voor opmerkingen of een extra datatype). Vergelijk hoeveel je kunt wijzigen zonder vanaf nul te beginnen.
+**Probeer zelf:** Doe dezelfde middelgrote challenge — bv. "Build Your Own JSON Parser" van [codingchallenges.fyi](https://codingchallenges.fyi/) — één keer informeel, één keer spec-driven. Voeg daarna een nieuwe requirement toe (opmerkingen-ondersteuning, extra datatype) en vergelijk hoeveel je kunt wijzigen zonder vanaf nul te beginnen.
 
-**Wat je leert:** Je ervaart wanneer de investering in een spec terugverdiend wordt door de flexibiliteit die hij later geeft.
+**Wat je leert:** Je ervaart wanneer de spec-investering terugverdiend wordt door latere flexibiliteit.
 
 ---
 
@@ -101,20 +101,20 @@ Structured prompt-driven prompten vervangt vrije proza door een vaste structuur:
 
 ### Wat verandert er aan de output als je je prompt strak structureert?
 
-**Achtergrond:** Een gestructureerde prompt dwingt jou om expliciet te zijn over rol, context, format en grenzen — en daarmee ook Claude. Onduidelijkheden die in vrije proza verstopt zitten, worden zichtbaar op het moment dat je ze in een vak moet invullen dat er specifiek voor bedoeld is.
+**Achtergrond:** Een gestructureerde prompt dwingt expliciete keuzes over rol, context, format en grenzen — en daarmee ook bij Claude. Onduidelijkheden die in vrije proza verstopt zitten, worden zichtbaar zodra je ze in een vak moet invullen.
 
 **Vergelijk:**
-- *Bad practice:* één lange alinea waar rol, context en taak door elkaar lopen — Claude moet zelf interpreteren welk deel het zwaarst weegt en wat de grenzen zijn.
-- *Good practice:* duidelijk gescheiden secties, bijvoorbeeld:
+- *Bad practice:* één lange alinea waar rol, context en taak door elkaar lopen — Claude moet zelf wegen wat het zwaarst telt en wat de grenzen zijn.
+- *Good practice:* duidelijk gescheiden secties:
   - **Rol:** "Je bent een Kotlin-engineer die werkt aan een CLI-tool."
   - **Context:** "We bouwen een wc-kloon die stdin en file-argumenten afhandelt."
   - **Taak:** "Implementeer de `-w` vlag voor woordtelling."
   - **Output-formaat:** "Geef alleen de gewijzigde bestanden terug, geen uitleg."
   - **Constraints:** "Gebruik alleen de stdlib, geen externe libraries."
 
-**Probeer zelf:** Schrijf voor dezelfde taak twee prompts — één als vrije proza en één met de vijf secties gescheiden. Stuur beide naar Claude en vergelijk hoe goed de output binnen het gewenste formaat blijft en hoeveel correctie-rondes elke variant nodig heeft.
+**Probeer zelf:** Schrijf voor dezelfde taak twee prompts — vrije proza en de vijf secties gescheiden. Vergelijk hoe goed de output binnen het gewenste formaat blijft en hoeveel correctie-rondes elke variant kost.
 
-**Wat je leert:** Je ziet hoe structuur in de prompt leidt tot structuur in de output, en welke overhead het kost om die structuur consistent te hanteren.
+**Wat je leert:** Structuur in de prompt leidt tot structuur in de output; de overhead daarvan betaalt zich terug zodra je het formaat consistent moet onderhouden.
 
 ---
 
@@ -126,12 +126,12 @@ Je hebt nu drie stijlen geprobeerd op vergelijkbaar materiaal. De hoofdlijn: inf
 
 ### Welke stijl past bij wat voor type challenge?
 
-**Achtergrond:** Je hebt nu alle drie de stijlen geprobeerd. Het gaat erom dat je een gevoel ontwikkelt voor wanneer de overhead van een stijl terugverdiend wordt door het resultaat — en wanneer je simpelweg te veel werk steekt in iets wat informeel ook gewerkt had.
+**Achtergrond:** Je hebt alle drie geprobeerd. De vraag is wanneer de overhead van een stijl terugverdiend wordt door het resultaat — en wanneer je te veel werk steekt in iets wat informeel ook had gewerkt.
 
 **Vergelijk:**
-- *Bad practice:* één stijl gebruiken voor alles — leidt tot overhead op kleine taken (een spec voor een 20-regelige helper) of onderspecificatie op grote (een informele prompt voor een feature met vijf componenten en toekomstige uitbreidingen).
-- *Good practice:* per challenge bewust kiezen op basis van omvang, evolutie-verwachting en herhaalbaarheid (zie de heuristiek hierboven).
+- *Bad practice:* één stijl voor alles — overhead op kleine taken (spec voor 20-regelige helper) of onderspecificatie op grote (informele prompt voor feature met vijf componenten).
+- *Good practice:* per challenge bewust kiezen op omvang, evolutie-verwachting en herhaalbaarheid.
 
-**Probeer zelf:** Kies een nieuwe challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en beslis vooráf welke stijl je gaat gebruiken en waarom. Schrijf je redenering op. Verifieer achteraf of die keuze de juiste was: wat werkte, wat had je anders gedaan, en welke stijl had beter gepast?
+**Probeer zelf:** Kies een nieuwe challenge van [codingchallenges.fyi](https://codingchallenges.fyi/) en beslis vooraf welke stijl je gebruikt en waarom. Schrijf je redenering op. Verifieer achteraf: wat werkte, en welke stijl zou beter gepast hebben?
 
-**Wat je leert:** Je ontwikkelt een heuristiek voor stijlkeuze en leert van het verschil tussen je voorspelling en de werkelijkheid.
+**Wat je leert:** Je ontwikkelt een heuristiek voor stijlkeuze en leert van het verschil tussen voorspelling en werkelijkheid.
