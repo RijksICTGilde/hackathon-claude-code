@@ -149,7 +149,13 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
+          # cosign >= 2.5 zet --new-bundle-format default op true; daarmee
+          # worden --output-signature en --output-certificate genegeerd en
+          # faalt sign-blob zonder --bundle (lege bundle-pad). Forceer het
+          # oude format zodat de asset-lijst (.sig + .pem) en de
+          # consumer-instructies in SECURITY.md ongewijzigd blijven.
           cosign sign-blob --yes \
+            --new-bundle-format=false \
             --output-signature "${ARCHIVE}.sig" \
             --output-certificate "${ARCHIVE}.pem" \
             "${ARCHIVE}"
@@ -168,6 +174,7 @@ jobs:
           # accidentele bit-rot in transit, geen aanvaller met
           # release-write rights die archief + checksum samen vervangt.
           cosign sign-blob --yes \
+            --new-bundle-format=false \
             --output-signature "${ARCHIVE}.sha256.sig" \
             --output-certificate "${ARCHIVE}.sha256.pem" \
             "${ARCHIVE}.sha256"
