@@ -157,20 +157,33 @@ jobs:
           # checksum weert alleen accidentele bit-rot, geen aanvaller met
           # release-write rights die archief + checksum samen vervangt.
           # Self-verify direct na sign vangt structureel-corrupte bundles
-          # (truncated protobuf, ontbrekende Rekor-entry) — die slippen door
-          # een non-empty file check heen en zouden anders pas bij consumer
-          # verify falen.
+          # (truncated protobuf, cert/chain mismatch). Bounded retry omdat
+          # Rekor inclusion-proof publicatie soms enkele seconden achterloopt
+          # op de sign-respons — zelfde patroon als build-image.yml verify.
           for blob in "${ARCHIVE}" "${ARCHIVE}.sha256"; do
             cosign sign-blob --yes --bundle "${blob}.bundle" "${blob}"
             if [ ! -s "${blob}.bundle" ]; then
               echo "Empty signing output: ${blob}.bundle" >&2
               exit 1
             fi
-            cosign verify-blob \
-              --bundle "${blob}.bundle" \
-              --certificate-identity-regexp "${IDENTITY_REGEX}" \
-              --certificate-oidc-issuer "${ISSUER}" \
-              "${blob}"
+            attempts=3
+            delay=10
+            for i in $(seq 1 $attempts); do
+              if cosign verify-blob \
+                  --bundle "${blob}.bundle" \
+                  --certificate-identity-regexp "${IDENTITY_REGEX}" \
+                  --certificate-oidc-issuer "${ISSUER}" \
+                  "${blob}"; then
+                break
+              fi
+              if [ "$i" -ge "$attempts" ]; then
+                echo "verify-blob failed after ${attempts} attempts for ${blob}" >&2
+                exit 1
+              fi
+              echo "verify-blob attempt ${i}/${attempts} failed for ${blob}; retrying in ${delay}s" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
           done
 
       - name: Upload assets to release
