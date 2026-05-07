@@ -53,11 +53,8 @@ gh release download "$TAG" --repo RijksICTGilde/$REPO \
   --pattern "$REPO-$TAG.tar.gz*"
 
 # Verifieer dat de checksum zelf authentiek is voordat we hem vertrouwen.
-# --new-bundle-format vertelt cosign v3 dat .bundle het Sigstore-protobuf
-# format is (sig + cert + Rekor entry samen).
 cosign verify-blob \
   --bundle "$REPO-$TAG.tar.gz.sha256.bundle" \
-  --new-bundle-format \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz.sha256"
@@ -66,7 +63,6 @@ sha256sum -c "$REPO-$TAG.tar.gz.sha256"
 
 cosign verify-blob \
   --bundle "$REPO-$TAG.tar.gz.bundle" \
-  --new-bundle-format \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz"

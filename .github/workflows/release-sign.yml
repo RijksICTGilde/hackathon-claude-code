@@ -146,37 +146,32 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.name }}
           REPO: ${{ github.event.repository.name }}
+          REPO_FULL: ${{ github.repository }}
         run: |
           set -euo pipefail
           ARCHIVE="${REPO}-${TAG}.tar.gz"
-          # cosign v3 verwijderde --new-bundle-format=false en het gesplitste
-          # --output-signature/--output-certificate-pad. Sign-blob produceert
-          # nu één Sigstore-protobuf bundle (sig + cert + Rekor entry samen).
-          # Asset-lijst en consumer-verify in SECURITY.md zijn hierop
-          # afgestemd; bij upgrade naar latere cosign-versies opnieuw checken
-          # of --bundle de canonieke uitvoer blijft.
-          cosign sign-blob --yes \
-            --bundle "${ARCHIVE}.bundle" \
-            "${ARCHIVE}"
-          # Defensief: controleer dat de bundle niet leeg is voordat we hem
-          # uploaden (zero-byte uitvoer door partial write zou anders
-          # ongezien als asset eindigen).
-          if [ ! -s "${ARCHIVE}.bundle" ]; then
-            echo "Empty signing output: ${ARCHIVE}.bundle" >&2
-            exit 1
-          fi
+          IDENTITY_REGEX="^https://github\\.com/${REPO_FULL}/\\.github/workflows/release-sign\\.yml@refs/(heads/main|tags/v[0-9A-Za-z._+-]+)$"
+          ISSUER="https://token.actions.githubusercontent.com"
 
-          # Onderteken ook de .sha256 zodat consumers één authoritatieve
-          # cosign-keten hebben. Een ongetekende .sha256 weert alleen
-          # accidentele bit-rot in transit, geen aanvaller met
+          # Onderteken zowel het archief als de .sha256: een ongetekende
+          # checksum weert alleen accidentele bit-rot, geen aanvaller met
           # release-write rights die archief + checksum samen vervangt.
-          cosign sign-blob --yes \
-            --bundle "${ARCHIVE}.sha256.bundle" \
-            "${ARCHIVE}.sha256"
-          if [ ! -s "${ARCHIVE}.sha256.bundle" ]; then
-            echo "Empty signing output: ${ARCHIVE}.sha256.bundle" >&2
-            exit 1
-          fi
+          # Self-verify direct na sign vangt structureel-corrupte bundles
+          # (truncated protobuf, ontbrekende Rekor-entry) — die slippen door
+          # een non-empty file check heen en zouden anders pas bij consumer
+          # verify falen.
+          for blob in "${ARCHIVE}" "${ARCHIVE}.sha256"; do
+            cosign sign-blob --yes --bundle "${blob}.bundle" "${blob}"
+            if [ ! -s "${blob}.bundle" ]; then
+              echo "Empty signing output: ${blob}.bundle" >&2
+              exit 1
+            fi
+            cosign verify-blob \
+              --bundle "${blob}.bundle" \
+              --certificate-identity-regexp "${IDENTITY_REGEX}" \
+              --certificate-oidc-issuer "${ISSUER}" \
+              "${blob}"
+          done
 
       - name: Upload assets to release
         env:
