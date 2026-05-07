@@ -156,10 +156,10 @@ jobs:
           # Onderteken zowel het archief als de .sha256: een ongetekende
           # checksum weert alleen accidentele bit-rot, geen aanvaller met
           # release-write rights die archief + checksum samen vervangt.
-          # Self-verify direct na sign vangt structureel-corrupte bundles
-          # (truncated protobuf, cert/chain mismatch). Bounded retry omdat
-          # Rekor inclusion-proof publicatie soms enkele seconden achterloopt
-          # op de sign-respons — zelfde patroon als build-image.yml verify.
+          # Self-verify vangt truncated/malformed bundles voor upload.
+          # Bounded retry absorbeert Rekor inclusion-proof publicatie-lag
+          # direct na sign (regex/issuer matchen by construction binnen
+          # dezelfde run, dus retry compenseert geen identity-mismatch).
           for blob in "${ARCHIVE}" "${ARCHIVE}.sha256"; do
             cosign sign-blob --yes --bundle "${blob}.bundle" "${blob}"
             if [ ! -s "${blob}.bundle" ]; then
