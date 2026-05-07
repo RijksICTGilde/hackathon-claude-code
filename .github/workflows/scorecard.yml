@@ -19,6 +19,12 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # OSSF webapp eist dat dit job alléén `uses:`-stappen bevat; één enkele
+    # `run:`-stap (zelfs alleen voor logging) laat publish_results falen met
+    # HTTP 400 "scorecard job must only have steps with `uses`", waardoor
+    # de scorecard.dev-badge "invalid repo path" toont. Diagnostiek staat
+    # daarom in een aparte `diagnostics`-job hieronder.
+    # https://github.com/ossf/scorecard-action#workflow-restrictions
     permissions:
       # Needed to upload the results to code-scanning dashboard.
       security-events: write
@@ -37,7 +43,7 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           # Only takes effect on the default branch on push/schedule; the
-          # action skips publishing otherwise. De volgende stap rendert
+          # action skips publishing otherwise. De diagnostics-job rendert
           # diezelfde branching expliciet zodat publish-state zichtbaar
           # is in de run-log — niet weghalen, de scorecard-action logt
           # zelf niet of publishing gevraagd-maar-overgeslagen werd,
@@ -45,7 +51,55 @@ jobs:
           # of stale data toont.
           publish_results: true
 
+      # `if-no-files-found: error` vangt de scanner-crash-zonder-SARIF case
+      # af; een 0-byte SARIF wordt door de codeql/upload-sarif schema-validatie
+      # alsnog afgewezen. Een aparte `[ ! -s results.sarif ]`-check zou een
+      # `run:`-stap zijn en is in dit job niet toegestaan (zie comment boven);
+      # die check staat in de diagnostics-job als belt-and-suspenders.
+      - name: "Upload artifact"
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: "Upload to code-scanning"
+        if: always()
+        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
+        with:
+          sarif_file: results.sarif
+
+  diagnostics:
+    name: Scorecard diagnostics
+    needs: analysis
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: "Download SARIF artifact"
+        if: always()
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: SARIF file
+
+      # Belt-and-suspenders: vangt het geval dat results.sarif wel bestaat
+      # maar 0 bytes is. `if-no-files-found: error` op de upload-stap dekt
+      # alleen ontbrekende files, niet lege.
+      - name: "Validate SARIF non-empty"
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s results.sarif ]; then
+            echo "results.sarif is missing or empty" >&2
+            exit 1
+          fi
+
       - name: "Log run mode"
+        if: always()
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
@@ -60,30 +114,3 @@ jobs:
           fi
           echo "Trigger: $EVENT_NAME on $REF"
           echo "publish_results effective: $PUBLISHED"
-
-      # Fail loudly if the scanner crashed and produced no SARIF; otherwise
-      # the upload steps below would silently no-op and the dashboard would
-      # show stale results without anyone noticing.
-      - name: "Validate SARIF output is non-empty"
-        id: validate
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ ! -s results.sarif ]; then
-            echo "results.sarif is missing or empty" >&2
-            exit 1
-          fi
-
-      - name: "Upload artifact"
-        if: always() && steps.validate.outcome == 'success'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: SARIF file
-          path: results.sarif
-          retention-days: 5
-
-      - name: "Upload to code-scanning"
-        if: always() && steps.validate.outcome == 'success'
-        uses: github/codeql-action/upload-sarif@b20883b0cd1f46c72ae0ba6d1090936928f9fa30 # v4.32.0
-        with:
-          sarif_file: results.sarif
