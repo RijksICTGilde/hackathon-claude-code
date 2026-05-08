@@ -120,7 +120,6 @@ if [ "$OPEN_HTTPS" != "true" ]; then
         "registry.npmjs.org"
         "api.anthropic.com"
         "sentry.io"
-        "statsig.anthropic.com"
         "statsig.com"
         "marketplace.visualstudio.com"
         "vscode.blob.core.windows.net"
@@ -205,6 +204,24 @@ iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 # Allow DNS to Docker's internal resolver (pre-NAT destination)
 iptables -A OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -d 127.0.0.11 -p tcp --dport 53 -j ACCEPT
+
+# Whitelist nameservers (and Docker Desktop ExtServers) from /etc/resolv.conf.
+# On Docker Desktop the embedded resolver DNATs 127.0.0.11:53 to an upstream IP
+# annotated as `# ExtServers: [<ip>]` in resolv.conf — that IP is outside
+# HOST_NETWORK and would otherwise be rejected after lockdown. On Linux Docker
+# resolv.conf only lists 127.0.0.11 (already covered by loopback ACCEPT), so the
+# extra rules are a harmless no-op there.
+while IFS= read -r ns; do
+    [ -z "$ns" ] && continue
+    if [[ "$ns" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        iptables -A OUTPUT -d "$ns" -p udp --dport 53 -j ACCEPT
+        iptables -A OUTPUT -d "$ns" -p tcp --dport 53 -j ACCEPT
+        echo "Whitelisted nameserver: $ns"
+    fi
+done < <({
+    awk '/^nameserver / {print $2}' /etc/resolv.conf
+    awk -F'[][]' '/^# ExtServers:/ {gsub(/[ ,]+/, "\n", $2); print $2}' /etc/resolv.conf
+})
 
 # When not using OPEN_HTTPS, allow only specific outbound traffic to allowed domains
 if [ "$OPEN_HTTPS" != "true" ]; then
