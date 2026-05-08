@@ -27,14 +27,12 @@ Conform het MinBZK-beleid (gebaseerd op NCSC) streven we naar:
 
 ## Verifiëren van release-artefacten
 
-Bij elke gepubliceerde release tekent de `release-sign` workflow zowel het bron-archief als de checksum met cosign keyless. De release bevat zes assets:
+Bij elke gepubliceerde release tekent de `release-sign` workflow zowel het bron-archief als de checksum met cosign keyless. De release bevat vier assets:
 
 - `<repo>-<tag>.tar.gz` — het ondertekende bron-archief
-- `<repo>-<tag>.tar.gz.sig` — handtekening over het archief
-- `<repo>-<tag>.tar.gz.pem` — Sigstore-certificaat voor de archief-handtekening
+- `<repo>-<tag>.tar.gz.bundle` — Sigstore-bundle (handtekening + certificaat + Rekor-entry) voor het archief
 - `<repo>-<tag>.tar.gz.sha256` — SHA256-checksum
-- `<repo>-<tag>.tar.gz.sha256.sig` — handtekening over de checksum
-- `<repo>-<tag>.tar.gz.sha256.pem` — Sigstore-certificaat voor de checksum-handtekening
+- `<repo>-<tag>.tar.gz.sha256.bundle` — Sigstore-bundle voor de checksum
 
 **Belangrijk:** verifieer alleen het `<repo>-<tag>.tar.gz` asset uit de release. GitHub's automatisch gegenereerde "Source code (tar.gz)" download is een ander archief en heeft een andere checksum — die handtekening werkt daar niet op.
 
@@ -56,8 +54,7 @@ gh release download "$TAG" --repo RijksICTGilde/$REPO \
 
 # Verifieer dat de checksum zelf authentiek is voordat we hem vertrouwen.
 cosign verify-blob \
-  --certificate "$REPO-$TAG.tar.gz.sha256.pem" \
-  --signature "$REPO-$TAG.tar.gz.sha256.sig" \
+  --bundle "$REPO-$TAG.tar.gz.sha256.bundle" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz.sha256"
@@ -65,11 +62,12 @@ cosign verify-blob \
 sha256sum -c "$REPO-$TAG.tar.gz.sha256"
 
 cosign verify-blob \
-  --certificate "$REPO-$TAG.tar.gz.pem" \
-  --signature "$REPO-$TAG.tar.gz.sig" \
+  --bundle "$REPO-$TAG.tar.gz.bundle" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz"
 ```
+
+> Cosign v2 consumers werken niet met deze assets — bundle format vereist cosign v3+.
 
 Zie het [volledige MinBZK-beleid](https://github.com/MinBZK/.github/blob/main/SECURITY.md) voor de complete tekst, do's en don'ts, en wat wij beloven.
