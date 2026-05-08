@@ -120,7 +120,6 @@ if [ "$OPEN_HTTPS" != "true" ]; then
         "registry.npmjs.org"
         "api.anthropic.com"
         "sentry.io"
-        "statsig.anthropic.com"
         "statsig.com"
         "marketplace.visualstudio.com"
         "vscode.blob.core.windows.net"
