@@ -160,17 +160,22 @@ jobs:
           # Bounded retry absorbeert Rekor inclusion-proof publicatie-lag
           # direct na sign (regex/issuer matchen by construction binnen
           # dezelfde run, dus retry compenseert geen identity-mismatch).
+          # Extension `.sigstore` (niet `.bundle`) zodat OpenSSF Scorecard's
+          # signed-releases probe de assets als getekend herkent. Scorecard
+          # matcht op suffix-set {.asc,.minisig,.sig,.sign,.sigstore,.sigstore.json};
+          # `.bundle` staat daar niet in. Inhoud is ongewijzigd: cosign v3
+          # bundle output IS sigstore-bundle JSON.
           for blob in "${ARCHIVE}" "${ARCHIVE}.sha256"; do
-            cosign sign-blob --yes --bundle "${blob}.bundle" "${blob}"
-            if [ ! -s "${blob}.bundle" ]; then
-              echo "Empty signing output: ${blob}.bundle" >&2
+            cosign sign-blob --yes --bundle "${blob}.sigstore" "${blob}"
+            if [ ! -s "${blob}.sigstore" ]; then
+              echo "Empty signing output: ${blob}.sigstore" >&2
               exit 1
             fi
             attempts=3
             delay=10
             for i in $(seq 1 $attempts); do
               if cosign verify-blob \
-                  --bundle "${blob}.bundle" \
+                  --bundle "${blob}.sigstore" \
                   --certificate-identity-regexp "${IDENTITY_REGEX}" \
                   --certificate-oidc-issuer "${ISSUER}" \
                   "${blob}"; then
@@ -199,9 +204,9 @@ jobs:
           # anders raken consumer-instructies stuk.
           ASSETS=(
             "${ARCHIVE}"
-            "${ARCHIVE}.bundle"
+            "${ARCHIVE}.sigstore"
             "${ARCHIVE}.sha256"
-            "${ARCHIVE}.sha256.bundle"
+            "${ARCHIVE}.sha256.sigstore"
           )
           # Refuse to overwrite signed assets silently. A re-run for the same
           # tag should fail loudly so an operator decides whether to delete
