@@ -1,3 +1,6 @@
 projects/*
 !projects/.gitkeep
 .env
+compose.override.yml
+host-agents/**/__pycache__/
+host-agents/**/.venv/
