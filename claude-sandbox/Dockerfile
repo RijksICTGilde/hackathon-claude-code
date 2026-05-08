@@ -5,7 +5,6 @@ FROM debian:13.4-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG INSTALL_JVM=true
-ARG INSTALL_DOCKER=false
 ARG INSTALL_RTK=true
 ARG INSTALL_OVERHEID_PLUGINS=true
 ARG INSTALL_OVERHEID_GEO=false
@@ -219,18 +218,6 @@ RUN case "$INSTALL_JVM" in \
     esac
 
 USER root
-# Install docker (rootless mode). De container draait privileged zodra
-# INSTALL_DOCKER=true (compose.yml koppelt die twee); zie compose.yml voor
-# de security-trade-off.
-COPY install-docker.sh /tmp/install-docker.sh
-RUN chmod +x /tmp/install-docker.sh && \
-    case "$INSTALL_DOCKER" in \
-      true) /tmp/install-docker.sh && rm -f /tmp/install-docker.sh ;; \
-      false) rm -f /tmp/install-docker.sh && \
-             echo "INFO: INSTALL_DOCKER=false — Docker overgeslagen" ;; \
-      *) echo "FOUT: INSTALL_DOCKER='$INSTALL_DOCKER' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
-    esac
-
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
@@ -238,20 +225,6 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
   chmod 0440 /etc/sudoers.d/claude-firewall
 
 USER claude
-
-# Rootless Docker environment
-ENV XDG_RUNTIME_DIR=/run/user/1000
-ENV DOCKER_HOST=unix:///run/user/1000/docker.sock
-# cgroup namespace is vereist voor sysfs mount in geneste user namespaces.
-# --net=pasta: pasta (uit passt) i.p.v. default slirp4netns; sneller en zuiniger
-# met geheugen. Val terug op slirp4netns door --net=slirp4netns te zetten én
-# `slirp4netns` te installeren in install-docker.sh.
-ENV DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS="--cgroupns --net=pasta"
-# Testcontainers detecteert dat het in een container draait en zou anders
-# de default-gateway-IP (172.17.0.1 = Docker Desktop's bridge) gebruiken.
-# Rootlesskit publiceert poorten echter op claude-code's localhost, niet
-# op die gateway — dus geven we localhost expliciet op.
-ENV TESTCONTAINERS_HOST_OVERRIDE=localhost
 
 # Startup script voor firewall
 COPY --chown=claude:claude entrypoint.sh /opt/entrypoint.sh
