@@ -1,0 +1,13 @@
+# CODEOWNERS — required reviewers per pad.
+#
+# Wildcards in CODEOWNERS gebruiken niet glob-semantiek maar fnmatch:
+# `*` matcht een heel pad-segment, niet recursief. `* @owner` is dus
+# wel een catch-all (één pattern dat overal matcht), maar bv. `docs/*`
+# matcht alleen direct kinderen — niet `docs/sub/file.md`. Deze regel
+# is bewust catch-all; voeg specifiekere patterns BOVEN deze regel toe
+# als bepaalde paden andere reviewers nodig hebben (laatste match wint).
+#
+# Owners moeten write-access op de repo hebben anders negeert GitHub
+# de regel zonder waarschuwing. Alle drie zijn admin op repo-niveau
+# (geverifieerd via repos/.../collaborators).
+* @loek-rijksoverheid @mreuvekamp @ericwout-overheid
