@@ -72,11 +72,11 @@ RUN NODE_VERSION=v22.22.2 && \
 # git-delta installeren (amd64 + arm64); SHAs uit de upstream release pinnen voor supply-chain integriteit
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere release op dandavison/delta is).
-RUN DELTA_VERSION=0.18.2 && \
+RUN DELTA_VERSION=0.19.2 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) SHA=1658c7b61825d411b50734f34016101309e4b6e7f5799944cf8e4ac542cebd7f ;; \
-      arm64) SHA=937781aa7788e1510858743fff6c9a8b4a69fe0a22a7c8a69493e633227939a9 ;; \
+      amd64) SHA=ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093 ;; \
+      arm64) SHA=0edc36cf514f1bd84becac3e94ee8ae9f8818c6a1f99f7b2ee67b362afa253d3 ;; \
       *) echo "FOUT: git-delta niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
