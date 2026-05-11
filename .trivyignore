@@ -3,9 +3,7 @@
 # bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
 
 # DS-0026 (LOW): Add HEALTHCHECK instruction in your Dockerfile
-# claude-sandbox is een interactieve dev-sandbox die `exec sleep infinity`
-# draait nadat dockerd-rootless is gestart. Er is geen service om health van
-# te checken; pid 1 healthy zegt niets over de bruikbaarheid van de sandbox.
-# Een check op `docker info` zou bovendien false-negatives geven wanneer de
-# image gebouwd is met INSTALL_DOCKER=false.
+# claude-sandbox is interactieve dev-sandbox; entrypoint eindigt op
+# `exec sleep infinity`. Geen service om health van te checken — pid 1
+# healthy zegt niets over de bruikbaarheid van de sandbox.
 DS-0026
