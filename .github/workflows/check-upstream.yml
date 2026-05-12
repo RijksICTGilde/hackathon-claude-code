@@ -283,7 +283,7 @@ jobs:
           EOF
               apt-get update -qq
               for pkg in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
-                ver=$(apt-cache madison "$pkg" | head -1 | awk -F"|" "{gsub(/ /, \"\", \$2); print \$2}")
+                ver=$(apt-cache madison "$pkg" | awk -F"|" "NR==1 {gsub(/ /, \"\", \$2); v=\$2} END {print v}")
                 echo "${pkg}=${ver}"
               done
             ' > /tmp/latest-versions.txt
