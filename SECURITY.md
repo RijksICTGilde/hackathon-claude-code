@@ -30,9 +30,9 @@ Conform het MinBZK-beleid (gebaseerd op NCSC) streven we naar:
 Bij elke gepubliceerde release tekent de `release-sign` workflow zowel het bron-archief als de checksum met cosign keyless. De release bevat vier assets:
 
 - `<repo>-<tag>.tar.gz` — het ondertekende bron-archief
-- `<repo>-<tag>.tar.gz.bundle` — Sigstore-bundle (handtekening + certificaat + Rekor-entry) voor het archief
+- `<repo>-<tag>.tar.gz.sigstore` — Sigstore-bundle (handtekening + certificaat + Rekor-entry) voor het archief
 - `<repo>-<tag>.tar.gz.sha256` — SHA256-checksum
-- `<repo>-<tag>.tar.gz.sha256.bundle` — Sigstore-bundle voor de checksum
+- `<repo>-<tag>.tar.gz.sha256.sigstore` — Sigstore-bundle voor de checksum
 
 **Belangrijk:** verifieer alleen het `<repo>-<tag>.tar.gz` asset uit de release. GitHub's automatisch gegenereerde "Source code (tar.gz)" download is een ander archief en heeft een andere checksum — die handtekening werkt daar niet op.
 
@@ -54,7 +54,7 @@ gh release download "$TAG" --repo RijksICTGilde/$REPO \
 
 # Verifieer dat de checksum zelf authentiek is voordat we hem vertrouwen.
 cosign verify-blob \
-  --bundle "$REPO-$TAG.tar.gz.sha256.bundle" \
+  --bundle "$REPO-$TAG.tar.gz.sha256.sigstore" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz.sha256"
@@ -62,7 +62,7 @@ cosign verify-blob \
 sha256sum -c "$REPO-$TAG.tar.gz.sha256"
 
 cosign verify-blob \
-  --bundle "$REPO-$TAG.tar.gz.bundle" \
+  --bundle "$REPO-$TAG.tar.gz.sigstore" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$REPO-$TAG.tar.gz"

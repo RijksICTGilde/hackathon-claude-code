@@ -1,4 +1,4 @@
-FROM debian:13.4-slim@sha256:cedb1ef40439206b673ee8b33a46a03a0c9fa90bf3732f54704f99cb061d2c5a
+FROM debian:13.4-slim@sha256:109e2c65005bf160609e4ba6acf7783752f8502ad218e298253428690b9eaa4b
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -52,11 +52,11 @@ RUN apt-get update && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v22.22.2 && \
+RUN NODE_VERSION=v24.15.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a ;; \
-      arm64) NODE_ARCH=arm64; SHA=e9e1930fd321a470e29bb68f30318bf58e3ecb4acb4f1533fb19c58328a091fe ;; \
+      amd64) NODE_ARCH=x64;   SHA=472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6 ;; \
+      arm64) NODE_ARCH=arm64; SHA=f3d5a797b5d210ce8e2cb265544c8e482eaedcb8aa409a8b46da7e8595d0dda0 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -71,11 +71,11 @@ RUN NODE_VERSION=v22.22.2 && \
 # git-delta installeren (amd64 + arm64); SHAs uit de upstream release pinnen voor supply-chain integriteit
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere release op dandavison/delta is).
-RUN DELTA_VERSION=0.18.2 && \
+RUN DELTA_VERSION=0.19.2 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) SHA=1658c7b61825d411b50734f34016101309e4b6e7f5799944cf8e4ac542cebd7f ;; \
-      arm64) SHA=937781aa7788e1510858743fff6c9a8b4a69fe0a22a7c8a69493e633227939a9 ;; \
+      amd64) SHA=ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093 ;; \
+      arm64) SHA=0edc36cf514f1bd84becac3e94ee8ae9f8818c6a1f99f7b2ee67b362afa253d3 ;; \
       *) echo "FOUT: git-delta niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
