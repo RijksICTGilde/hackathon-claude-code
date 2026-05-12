@@ -5,7 +5,6 @@ services:
       args:
         # Geen :-default hier: typfouten in .env moeten zichtbaar falen i.p.v. stil terugvallen
         INSTALL_JVM: "${INSTALL_JVM:?stel INSTALL_JVM in op true of false in .env}"
-        INSTALL_DOCKER: "${INSTALL_DOCKER:?stel INSTALL_DOCKER in op true of false in .env}"
         INSTALL_RTK: "${INSTALL_RTK:?stel INSTALL_RTK in op true of false in .env}"
         INSTALL_OVERHEID_PLUGINS: "${INSTALL_OVERHEID_PLUGINS:?stel INSTALL_OVERHEID_PLUGINS in op true of false in .env}"
         INSTALL_OVERHEID_GEO: "${INSTALL_OVERHEID_GEO:?stel INSTALL_OVERHEID_GEO in op true of false in .env}"
@@ -14,18 +13,26 @@ services:
         INSTALL_LOCAL_SKILLS: "${INSTALL_LOCAL_SKILLS:?stel INSTALL_LOCAL_SKILLS in op true of false in .env}"
         INSTALL_CAVEMAN: "${INSTALL_CAVEMAN:?stel INSTALL_CAVEMAN in op true of false in .env}"
     container_name: claude-sandbox
-    # privileged volgt INSTALL_DOCKER (zie README voor waarom, en de
-    # security-trade-off).
-    privileged: ${INSTALL_DOCKER:?stel INSTALL_DOCKER in op true of false in .env}
-    # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset). Bij
-    # privileged: true hebben deze geen extra effect; bij false zijn ze
-    # noodzakelijk — zonder lukt iptables -L niet en faalt init-firewall.sh.
+    # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset) — zonder
+    # lukt iptables -L niet en faalt init-firewall.sh.
     cap_add:
       - NET_ADMIN
       - NET_RAW
     stdin_open: true
     tty: true
     init: true
+    # host.docker.internal is ingebouwd op Docker Desktop en Rancher Desktop
+    # (Mac/Windows) — daar werkt het out-of-the-box. Op Linux Docker en Podman
+    # NIET; daar moet je een compose.override.yml toevoegen met:
+    #   services:
+    #     claude:
+    #       extra_hosts:
+    #         - "host.docker.internal:host-gateway"
+    # Zie compose.override.linux.yml.example in deze repo: kopieer naar
+    # compose.override.yml op Linux/Podman.
+    # NB: doe dit NIET op Rancher Desktop op Mac/Windows — daar resolveert
+    # host-gateway naar de docker0-gateway IN de Lima-VM en niet naar de
+    # echte host. Gebruik daar de ingebouwde host.docker.internal.
     environment:
       - ANTHROPIC_API_KEY
       - OPEN_HTTPS

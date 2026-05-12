@@ -1,0 +1,18 @@
+# Override voor Linux Docker en Podman waar host.docker.internal niet
+# ingebouwd is. Kopieer of symlink naar compose.override.yml:
+#
+#   cp compose.override.linux.yml.example compose.override.yml
+#   # of:
+#   ln -s compose.override.linux.yml.example compose.override.yml
+#
+# host-gateway is een Docker 20.10+ / Podman 4.0+ magic value die door de
+# container-runtime wordt herschreven naar het IP van de bridge-gateway
+# (= het IP waarop de host de container ziet).
+#
+# NIET gebruiken op Rancher Desktop voor Mac/Windows — daar resolveert
+# host-gateway naar de docker0-gateway IN de Lima-VM en niet naar de host
+# zelf. Rancher Desktop heeft host.docker.internal al ingebouwd.
+services:
+  claude:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

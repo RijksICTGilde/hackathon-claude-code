@@ -138,12 +138,11 @@ verbinding maken met de container.
 
 ### Optionele componenten
 
-De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Iedere waarde moet exact `true` of `false` zijn (andere waardes laten de build expliciet falen). De meeste defaults staan op `true`; `INSTALL_DOCKER`, `INSTALL_OVERHEID_GEO` en `INSTALL_OVERHEID_ZAD_ACTIONS` zijn uitzonderingen en staan op `false` (zie de noten bij de tabel).
+De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Iedere waarde moet exact `true` of `false` zijn (andere waardes laten de build expliciet falen). De meeste defaults staan op `true`; `INSTALL_OVERHEID_GEO` en `INSTALL_OVERHEID_ZAD_ACTIONS` zijn uitzonderingen en staan op `false` (zie de noten bij de tabel).
 
 | Argument                       | Default | Wat het installeert                                                                          |
 |--------------------------------|---------|----------------------------------------------------------------------------------------------|
 | `INSTALL_JVM`                  | `true`  | SDKman + LSP-plugins (jdtls, kotlin)                                                         |
-| `INSTALL_DOCKER`               | `false` | Docker daemon in de container (builds + nested containers); zet de container ook privileged |
 | `INSTALL_RTK`                  | `true`  | rtk + auto-patch                                                                             |
 | `INSTALL_OVERHEID_PLUGINS`     | `true`  | DON-plugins (standaarden, developer-overheid, nerds, internet)                               |
 | `INSTALL_OVERHEID_GEO`         | `false` | Losse `geo`-plugin (Geonovum geo-standaarden); default uit om context-budget te sparen       |
@@ -154,13 +153,11 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 
 Zet de waardes in `.env` of op de commandline:
 ```
-INSTALL_DOCKER=false docker compose build
+INSTALL_JVM=false docker compose build
 ```
 (`compose.yml` geeft alle waardes via `${INSTALL_X:?}`-interpolatie door als build-args; ontbrekende of lege waardes laten de build vroegtijdig falen.)
 
-> **Let op — `INSTALL_DOCKER=true` impliceert `privileged: true`:** op recente kernels (Ubuntu 24.04+, TUXEDO) kan rootlesskit zonder privileged geen user namespace meer aanmaken, dus crasht de daemon bij start. `compose.yml` koppelt daarom de privileged-flag direct aan `INSTALL_DOCKER`. Een gecompromitteerd proces in een privileged container heeft effectief root op de host — zet de toggle alleen aan als je de Docker daemon (voor builds of nested containers) écht nodig hebt.
-
-> **Let op — volume-recreate vereist:** plugins, skills, rtk en SDKman komen alle terecht onder `/home/claude`, een pad dat onder het `claude-home` volume valt. Het flippen van *elke* toggle vereist daarom **altijd** een image-rebuild **én** volume-recreate, anders blijft de oude inhoud staan (zie [Devcontainer volume-gedrag](#devcontainer-volume-gedrag)). De `cap_add` (NET_ADMIN, NET_RAW) blijven onvoorwaardelijk nodig voor de firewall, ook als `INSTALL_DOCKER=false`.
+> **Let op — volume-recreate vereist:** plugins, skills, rtk en SDKman komen alle terecht onder `/home/claude`, een pad dat onder het `claude-home` volume valt. Het flippen van *elke* toggle vereist daarom **altijd** een image-rebuild **én** volume-recreate, anders blijft de oude inhoud staan (zie [Devcontainer volume-gedrag](#devcontainer-volume-gedrag)). De `cap_add` (NET_ADMIN, NET_RAW) blijven nodig voor de firewall.
 
 #### Runtime-toggles
 
@@ -256,6 +253,73 @@ pip3 --version
 python3 -m venv .venv && source .venv/bin/activate
 ```
 
+## Maven MCP-agent (host-side)
+De image bevat geen Docker daemon, dus Maven-builds met Testcontainers (of
+andere tests die een Docker-daemon nodig hebben) werken niet rechtstreeks
+vanuit de container. De oplossing is een MCP-server
+(`host-agents/maven/maven_agent.py`) die **op de host** draait en een
+`run_maven`-tool aanbiedt; Claude Code in de container roept die aan via
+`host.docker.internal:7777` (SSE transport) en gebruikt zo de host-Docker.
+
+### Cross-platform setup
+| Omgeving                       | `host.docker.internal` werkt out-of-the-box | Override nodig |
+|--------------------------------|----------------------------------------------|----------------|
+| Docker Desktop (Mac/Windows)   | Ja, ingebouwd                                | Geen           |
+| Rancher Desktop (Mac/Windows)  | Ja, ingebouwd                                | Geen — en juist NIET `host-gateway` toevoegen |
+| Vanilla Docker (Linux)         | Nee                                          | `compose.override.linux.yml.example` → `compose.override.yml` |
+| Podman 4.0+ (alle platforms)   | Alleen `host.containers.internal`; alias via `extra_hosts` | Idem als Linux Docker |
+| Rancher Desktop (Linux)        | Versieafhankelijk; recente builds: ja        | Eerst testen, anders zoals Linux Docker |
+
+Voor Linux Docker / Podman:
+```
+cp compose.override.linux.yml.example compose.override.yml
+docker compose up --build --detach
+```
+
+### Host-agent starten
+1. Installeer Python deps op de host (eenmalig):
+   ```
+   cd host-agents/maven
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. Start de agent met de project-directory:
+   ```
+   PROJECT_DIR=/pad/naar/jouw/maven-project python3 maven_agent.py
+   ```
+
+   Op Linux Docker / Podman moet je ook het bind-adres openzetten zodat de
+   container de agent via het bridge-IP kan bereiken:
+   ```
+   MAVEN_AGENT_HOST=0.0.0.0 PROJECT_DIR=/pad/... python3 maven_agent.py
+   ```
+   Op Docker Desktop / Rancher Desktop (Mac/Windows) volstaat de default
+   `127.0.0.1` — die bridge forwardt host-loopback automatisch.
+
+   Configuratie via env vars:
+
+   | Variabele                    | Default     | Omschrijving                                                         |
+   |------------------------------|-------------|----------------------------------------------------------------------|
+   | `PROJECT_DIR`                | `cwd`       | Maven-projectroot (waar `pom.xml` staat)                             |
+   | `MAVEN_AGENT_HOST`           | `127.0.0.1` | Bind-adres; `0.0.0.0` voor Linux Docker/Podman                       |
+   | `MAVEN_AGENT_PORT`           | `7777`      | TCP-poort                                                            |
+   | `MVN_TIMEOUT`                | `600`       | Timeout per Maven-aanroep (seconden)                                 |
+   | `MAVEN_AGENT_ALLOWED_HOSTS`  | _(leeg)_    | Komma-gescheiden extra hostnames voor de DNS-rebinding-allowlist; `host.docker.internal`, `localhost`, `127.0.0.1` en `::1` staan al standaard. Alleen nodig als je via een andere DNS-naam verbindt. |
+
+### MCP-registratie in de container
+Eenmalig in de container registreren zodat Claude Code de tool kan aanroepen:
+```
+docker compose exec claude bash -lc \
+  "claude mcp add --transport sse maven http://host.docker.internal:7777/sse"
+```
+Verifieer met `claude mcp list`. De firewall (`init-firewall.sh`) staat
+verkeer naar `host.docker.internal` automatisch toe — geen extra
+`ALLOWED_DOMAINS`-aanpassing nodig.
+
+> **Veiligheid:** de agent voert `mvn` uit op je host met de rechten van de
+> gebruiker die hem start. Run hem niet als root en wees bewust van wat er in
+> `pom.xml` plugins zit — `mvn` voert die ongezien uit.
+
 ## Afsluiten
 ```
 docker compose down
@@ -265,13 +329,12 @@ docker compose down
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh`, `get.sdkman.io` en de gepinde `rtk` v0.35.0 staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
-2. **Versie- en SHA-pinning** voor binaries en apt-pakketten. Node.js, git-delta en de Docker apt-pakketten staan met exacte versies (en voor de tarballs/.deb's met SHA-256) in `Dockerfile` en `install-docker.sh`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
 - een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
-- een nieuwere Docker apt-pakketversie beschikbaar is in de Debian 13 trixie-suite
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 

@@ -14,10 +14,10 @@ on:
 permissions:
   contents: read
 
-# Bestanden waar deze workflow naar verwijst (Dockerfile, install-docker.sh,
-# vendor/install-scripts/*) leven onder claude-sandbox/. Dit geldt alleen voor
-# `run:`-steps; `uses:`-steps (checkout, peter-evans/create-pull-request) draaien
-# vanaf de repo-root en zien dus de hele tree.
+# Bestanden waar deze workflow naar verwijst (Dockerfile, vendor/install-scripts/*)
+# leven onder claude-sandbox/. Dit geldt alleen voor `run:`-steps; `uses:`-steps
+# (checkout, peter-evans/create-pull-request) draaien vanaf de repo-root en zien
+# dus de hele tree.
 defaults:
   run:
     working-directory: claude-sandbox
@@ -245,90 +245,5 @@ jobs:
             - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
             - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
             - **Release notes:** https://github.com/dandavison/delta/releases/tag/${{ steps.compare.outputs.latest }}
-
-            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
-
-  # Job 3: Docker apt-pakketten in install-docker.sh.
-  # Draait een Debian 13 (trixie) container om dezelfde apt-suite te krijgen
-  # als de Dockerfile. Debian 13-versies hebben suffix '~debian.13~trixie' en
-  # zijn alleen zichtbaar vanuit een trixie-machine.
-  docker-apt:
-    name: docker-apt
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Query latest Docker apt versions in Debian 13 container
-        run: |
-          set -euo pipefail
-          # Run dezelfde repo-setup als install-docker.sh in een wegwerp-container
-          # en lever een 'pkg=version' lijst terug op stdout.
-          docker run --rm debian:13.4-slim bash -c '
-              set -euo pipefail
-              apt-get update -qq
-              apt-get install -y --no-install-recommends ca-certificates curl gnupg >/dev/null
-              install -m 0755 -d /etc/apt/keyrings
-              curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-              chmod a+r /etc/apt/keyrings/docker.asc
-              cat > /etc/apt/sources.list.d/docker.sources <<EOF
-          Types: deb
-          URIs: https://download.docker.com/linux/debian
-          Suites: trixie
-          Components: stable
-          Architectures: amd64
-          Signed-By: /etc/apt/keyrings/docker.asc
-          EOF
-              apt-get update -qq
-              for pkg in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras; do
-                ver=$(apt-cache madison "$pkg" | awk -F"|" "NR==1 {gsub(/ /, \"\", \$2); v=\$2} END {print v}")
-                echo "${pkg}=${ver}"
-              done
-            ' > /tmp/latest-versions.txt
-          cat /tmp/latest-versions.txt
-
-      - name: Compare with install-docker.sh and rewrite if needed
-        id: compare
-        run: |
-          set -euo pipefail
-          changed=false
-          changes=""
-          while IFS='=' read -r pkg latest; do
-            [ -z "$pkg" ] && continue
-            current=$(grep -oE "${pkg}=[^ \\\\]+" install-docker.sh | head -1 | cut -d= -f2-)
-            if [ -z "$current" ]; then
-              echo "WAARSCHUWING: pakket '$pkg' niet gevonden in install-docker.sh" >&2
-              continue
-            fi
-            if [ "$current" != "$latest" ]; then
-              esc_current=$(printf '%s' "$current" | sed 's|[.[\*^$/]|\\&|g')
-              esc_latest=$(printf '%s'  "$latest"  | sed 's|[\&/]|\\&|g')
-              sed -i "s|${pkg}=${esc_current}|${pkg}=${esc_latest}|" install-docker.sh
-              changes+="- \`${pkg}\`: \`${current}\` → \`${latest}\`"$'\n'
-              changed=true
-            fi
-          done < /tmp/latest-versions.txt
-          {
-            echo "changed=$changed"
-            echo "changes<<EOF"
-            echo "$changes"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Open auto-PR if any apt-package changed
-        if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          branch: deps/docker-apt
-          delete-branch: true
-          commit-message: "chore(deps): bump docker apt packages"
-          title: "chore(deps): bump docker apt packages"
-          labels: dependencies
-          body: |
-            Nieuwste Docker apt-pakket-versies in Debian 13 (trixie) gedetecteerd.
-
-            ${{ steps.compare.outputs.changes }}
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
