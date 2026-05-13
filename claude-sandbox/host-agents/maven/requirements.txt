@@ -1,4 +1,4 @@
 # Maven MCP-agent (host-side) — Python deps.
 # Major-pin op mcp om breaking changes in een 2.x te vermijden, terwijl
 # minor/patch updates (security, bugfixes) wel meekomen.
-mcp>=1.0,<2.0
+mcp>=1.23.0,<2.0
