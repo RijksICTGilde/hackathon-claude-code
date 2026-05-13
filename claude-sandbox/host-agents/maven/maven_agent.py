@@ -8,12 +8,43 @@
 # werkt op Docker Desktop / Rancher Desktop (host loopback bereikbaar via
 # host.docker.internal) en op Linux Docker / Podman (bridge-IP — vereist
 # 0.0.0.0 of expliciet bind aan het docker0/podman0 IP).
+import logging
 import os
 import shlex
 import subprocess
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+
+
+# De `mcp` SDK logt een kale `Failed to validate request: Received request before
+# initialization was complete` wanneer een client een tool-call doet op een
+# session_id waarvan de initialize-handshake niet (meer) voldaan is — typisch
+# nadat deze agent herstart is maar Claude Code in de container nog vasthoudt
+# aan de oude sessie. De melding zelf zegt niet wat je moet doen; we plakken er
+# een reconnect-hint achter zodat de gebruiker weet welke knop wel/niet werkt.
+class _ReinitHintFilter(logging.Filter):
+    NEEDLE = "Received request before initialization was complete"
+    HINT = (
+        "  ↳ tip: Claude Code's MCP-sessie moet opnieuw initialiseren. "
+        "In de container: `claude mcp remove maven && claude mcp add "
+        "--transport sse maven http://host.docker.internal:7777/sse`, "
+        "of in `/mcp` → Reconnect. NIET 'Authenticate' — deze server heeft "
+        "geen auth-laag en dat eindigt in een 404."
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        if self.NEEDLE in msg:
+            record.msg = f"{msg}\n{self.HINT}"
+            record.args = ()
+        return True
+
+
+logging.getLogger().addFilter(_ReinitHintFilter())
 
 PROJECT_DIR = os.environ.get("PROJECT_DIR", os.getcwd())
 TIMEOUT_SEC = int(os.environ.get("MVN_TIMEOUT", "600"))
@@ -77,7 +108,9 @@ def run_maven(
             on top of the current environment (does not replace it). Example:
             {'TESTCONTAINERS_RYUK_DISABLED': 'true'}.
     """
-    cmd = ["mvn", "-B", "--no-transfer-progress"] \
+    wrapper = os.path.join(PROJECT_DIR, "mvnw")
+    mvn = wrapper if os.access(wrapper, os.X_OK) else "mvn"
+    cmd = [mvn, "-B", "--no-transfer-progress"] \
         + shlex.split(goals) + shlex.split(extra_args)
     proc_env = os.environ.copy()
     if env:
