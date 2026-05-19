@@ -13,6 +13,7 @@ services:
         INSTALL_LOCAL_SKILLS: "${INSTALL_LOCAL_SKILLS:?stel INSTALL_LOCAL_SKILLS in op true of false in .env}"
         INSTALL_CAVEMAN: "${INSTALL_CAVEMAN:?stel INSTALL_CAVEMAN in op true of false in .env}"
     container_name: claude-sandbox
+    restart: unless-stopped
     # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset) — zonder
     # lukt iptables -L niet en faalt init-firewall.sh.
     cap_add:
