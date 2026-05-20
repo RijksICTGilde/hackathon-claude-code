@@ -23,15 +23,30 @@ docker compose up --build --detach
 ```
 
 ## Host-agent starten
-1. Installeer Python deps op de host (eenmalig):
+Het makkelijkst is het meegeleverde launcher-script. Dat zet de venv klaar,
+installeert/controleert de deps, regelt `JAVA_HOME` via SDKman en kiest op
+Linux automatisch het juiste bind-adres:
+```
+cd host-agents/maven
+./run.sh /pad/naar/jouw/maven-project
+```
+Zonder argument gebruikt het de huidige directory. Overige instellingen blijven
+via env vars werken, bv. `MAVEN_AGENT_PORT=8888 ./run.sh /pad/...`. Het script
+draait `pip install` elke keer (snel als alles er al staat) zodat gewijzigde
+requirements vanzelf meekomen.
+
+### Handmatig (wat het script doet)
+1. venv aanmaken (eenmalig) en deps installeren:
    ```
    cd host-agents/maven
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
+   python3 -m venv .venv          # eenmalig
+   .venv/bin/pip install -r requirements.txt
    ```
+   Of activeer de venv in elke nieuwe shell met `source .venv/bin/activate`
+   (per shell opnieuw nodig) en gebruik daarna `python3` direct.
 2. Start de agent met de project-directory:
    ```
-   PROJECT_DIR=/pad/naar/jouw/maven-project python3 maven_agent.py
+   PROJECT_DIR=/pad/naar/jouw/maven-project .venv/bin/python maven_agent.py
    ```
 
    `JAVA_HOME` moet in de omgeving van de agent staan, anders kan Maven (of
@@ -39,13 +54,13 @@ docker compose up --build --detach
    start de agent dus vanuit zo'n shell of source eerst de SDKman-init:
    ```
    source ~/.sdkman/bin/sdkman-init.sh
-   PROJECT_DIR=/pad/... python3 maven_agent.py
+   PROJECT_DIR=/pad/... .venv/bin/python maven_agent.py
    ```
 
    Op Linux Docker / Podman moet je ook het bind-adres openzetten zodat de
    container de agent via het bridge-IP kan bereiken:
    ```
-   MAVEN_AGENT_HOST=0.0.0.0 PROJECT_DIR=/pad/... python3 maven_agent.py
+   MAVEN_AGENT_HOST=0.0.0.0 PROJECT_DIR=/pad/... .venv/bin/python maven_agent.py
    ```
    Op Docker Desktop / Rancher Desktop (Mac/Windows) volstaat de default
    `127.0.0.1` — die bridge forwardt host-loopback automatisch.
