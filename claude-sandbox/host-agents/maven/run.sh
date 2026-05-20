@@ -6,22 +6,37 @@
 #
 # Gebruik:
 #   ./run.sh /pad/naar/jouw/maven-project
-#   ./run.sh                 # zonder argument: huidige directory
+#   ./run.sh                 # zonder argument: directory waar je nu staat
 #
 # Overige instellingen blijven via env vars werken, bv:
 #   MAVEN_AGENT_PORT=8888 MVN_TIMEOUT=900 ./run.sh /pad/...
 set -euo pipefail
 
-# Vanuit elke working directory werken: alles is relatief aan de scriptdir.
+# Caller-directory vastleggen vóór we naar de scriptdir springen, zodat een
+# relatief project-pad (en de default) klopt vanuit waar de gebruiker staat.
+CALLER_PWD="$PWD"
 cd "$(dirname "$0")"
 
 # --- Project-directory bepalen en valideren -------------------------------
-PROJECT_DIR="${1:-$PWD}"
-PROJECT_DIR="$(cd "$PROJECT_DIR" 2>/dev/null && pwd || true)"
-if [[ -z "$PROJECT_DIR" ]]; then
-    echo "ERROR: project-directory '${1:-$PWD}' bestaat niet." >&2
+# Relatief pad (of de default) oplossen vanuit de caller-directory, niet de
+# scriptdir.
+RAW_PROJECT_DIR="${1:-$CALLER_PWD}"
+case "$RAW_PROJECT_DIR" in
+    /*) ;;                                          # absoluut: laten staan
+    *)  RAW_PROJECT_DIR="$CALLER_PWD/$RAW_PROJECT_DIR" ;;
+esac
+if [[ ! -e "$RAW_PROJECT_DIR" ]]; then
+    echo "ERROR: project-directory '$RAW_PROJECT_DIR' bestaat niet." >&2
     exit 1
 fi
+if [[ ! -d "$RAW_PROJECT_DIR" ]]; then
+    echo "ERROR: '$RAW_PROJECT_DIR' is geen directory." >&2
+    exit 1
+fi
+PROJECT_DIR="$(cd "$RAW_PROJECT_DIR" && pwd)" || {
+    echo "ERROR: kan '$RAW_PROJECT_DIR' niet betreden (permissies?)." >&2
+    exit 1
+}
 if [[ ! -f "$PROJECT_DIR/pom.xml" ]]; then
     echo "ERROR: geen pom.xml in '$PROJECT_DIR' — is dit wel een Maven-project?" >&2
     exit 1
@@ -35,15 +50,27 @@ if [[ ! -d .venv ]]; then
     python3 -m venv .venv
 fi
 echo "→ deps installeren/controleren…"
-.venv/bin/pip install --quiet -r requirements.txt
+# Quiet op de happy path; bij een fout opnieuw mét volledige output zodat de
+# echte pip-diagnostiek zichtbaar is (de tweede run breekt af via set -e).
+.venv/bin/pip install --quiet -r requirements.txt || {
+    echo "→ deps faalden, opnieuw met volledige output:" >&2
+    .venv/bin/pip install -r requirements.txt
+}
 
 # --- JAVA_HOME ------------------------------------------------------------
-# SDKman zet JAVA_HOME alleen in interactieve shells; source de init hier zodat
-# Maven (of ./mvnw) een JVM vindt zonder dat je vanuit een SDKman-shell hoeft te
-# starten. Bestaande JAVA_HOME respecteren we.
+# SDKman wordt normaal via je shell-rc (.bashrc/.zshrc) geladen, en die draait
+# alleen in interactieve shells. Een script ziet die rc niet, dus sourcen we de
+# init hier expliciet zodat Maven (of ./mvnw) een JVM vindt zonder dat je vanuit
+# een SDKman-shell hoeft te starten. Bestaande JAVA_HOME respecteren we.
 if [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
+    # SDKman-init draait in déze shell; strict-mode tijdelijk uit zodat een
+    # non-zero return of unset var in het vendored script de launcher niet
+    # afbreekt met een onbegrijpelijke fout in SDKman-internals.
+    set +euo pipefail
     # shellcheck disable=SC1091
-    source "$HOME/.sdkman/bin/sdkman-init.sh"
+    source "$HOME/.sdkman/bin/sdkman-init.sh" || \
+        echo "⚠️  SDKman-init faalde; ga verder zonder." >&2
+    set -euo pipefail
 fi
 if [[ -z "${JAVA_HOME:-}" ]]; then
     echo "⚠️  JAVA_HOME is niet gezet en geen SDKman gevonden — Maven kan straks" \
@@ -59,7 +86,8 @@ if [[ -z "${MAVEN_AGENT_HOST:-}" && "$(uname -s)" == "Linux" ]]; then
     export MAVEN_AGENT_HOST="0.0.0.0"
     echo "⚠️  Linux gedetecteerd → bind op 0.0.0.0 zodat de container de agent via" \
          "het bridge-IP bereikt. Dit opent poort ${MAVEN_AGENT_PORT:-7777} op al je" \
-         "interfaces. Op Docker/Rancher Desktop is dit onnodig: zet" \
+         "interfaces en de agent heeft géén authenticatie — draai dit niet op een" \
+         "onvertrouwd netwerk. Op Docker/Rancher Desktop is dit onnodig: zet" \
          "MAVEN_AGENT_HOST=127.0.0.1." >&2
 fi
 
