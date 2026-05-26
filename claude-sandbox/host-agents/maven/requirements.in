@@ -2,6 +2,8 @@
 # Direct deps staan hier; requirements.txt is de met pip-compile gegenereerde
 # lockfile met hashes (Scorecard PinnedDependencies). Regenereer na een bump:
 #   pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+# Vereist pip-tools en dezelfde Python-versie als de header van requirements.txt
+# (anders krijg je een diff in de autogen-header los van je inhoudelijke bump).
 # Exact pin op mcp zodat OSV-Scanner (Scorecard Vulnerabilities-check) een
 # resolved versie ziet; een range-spec laat de scanner alle bekende GHSA's
 # voor het package open rapporteren, ongeacht de ondergrens.

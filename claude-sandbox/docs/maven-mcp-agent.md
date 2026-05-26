@@ -70,7 +70,7 @@ requirements vanzelf meekomen.
 
    | Variabele                    | Default     | Omschrijving                                                         |
    |------------------------------|-------------|----------------------------------------------------------------------|
-   | `PROJECT_DIR`                | `cwd`       | Maven-projectroot (waar `pom.xml` staat)                             |
+   | `PROJECT_DIR`                | `cwd`       | Maven-projectroot (waar `pom.xml` staat). Alleen bij directe invocatie van `maven_agent.py`; `run.sh` eist een expliciet pad-argument en overschrijft `PROJECT_DIR`. |
    | `MAVEN_AGENT_HOST`           | `127.0.0.1` | Bind-adres; `0.0.0.0` voor Linux Docker/Podman                       |
    | `MAVEN_AGENT_PORT`           | `7777`      | TCP-poort                                                            |
    | `MVN_TIMEOUT`                | `600`       | Timeout per Maven-aanroep (seconden)                                 |

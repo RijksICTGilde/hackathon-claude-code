@@ -12,7 +12,7 @@
 set -euo pipefail
 
 # Caller-directory vastleggen vóór we naar de scriptdir springen, zodat een
-# relatief project-pad (en de default) klopt vanuit waar de gebruiker staat.
+# relatief project-pad klopt vanuit waar de gebruiker staat.
 CALLER_PWD="$PWD"
 cd "$(dirname "$0")"
 
