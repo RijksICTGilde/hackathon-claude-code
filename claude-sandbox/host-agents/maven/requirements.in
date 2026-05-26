@@ -1,0 +1,8 @@
+# Maven MCP-agent (host-side) — Python deps (source).
+# Direct deps staan hier; requirements.txt is de met pip-compile gegenereerde
+# lockfile met hashes (Scorecard PinnedDependencies). Regenereer na een bump:
+#   pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+# Exact pin op mcp zodat OSV-Scanner (Scorecard Vulnerabilities-check) een
+# resolved versie ziet; een range-spec laat de scanner alle bekende GHSA's
+# voor het package open rapporteren, ongeacht de ondergrens.
+mcp==1.27.1

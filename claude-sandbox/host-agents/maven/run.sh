@@ -52,9 +52,9 @@ fi
 echo "→ deps installeren/controleren…"
 # Quiet op de happy path; bij een fout opnieuw mét volledige output zodat de
 # echte pip-diagnostiek zichtbaar is (de tweede run breekt af via set -e).
-.venv/bin/pip install --quiet -r requirements.txt || {
+.venv/bin/pip install --quiet --require-hashes -r requirements.txt || {
     echo "→ deps faalden, opnieuw met volledige output:" >&2
-    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install --require-hashes -r requirements.txt
 }
 
 # --- JAVA_HOME ------------------------------------------------------------
