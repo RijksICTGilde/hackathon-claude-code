@@ -68,13 +68,20 @@ requirements vanzelf meekomen.
 
    Configuratie via env vars:
 
-   | Variabele                    | Default     | Omschrijving                                                         |
-   |------------------------------|-------------|----------------------------------------------------------------------|
-   | `PROJECT_DIR`                | `cwd`       | Maven-projectroot (waar `pom.xml` staat). Alleen bij directe invocatie van `maven_agent.py`; `run.sh` eist een expliciet pad-argument en overschrijft `PROJECT_DIR`. |
-   | `MAVEN_AGENT_HOST`           | `127.0.0.1` | Bind-adres; `0.0.0.0` voor Linux Docker/Podman                       |
-   | `MAVEN_AGENT_PORT`           | `7777`      | TCP-poort                                                            |
-   | `MVN_TIMEOUT`                | `600`       | Timeout per Maven-aanroep (seconden)                                 |
-   | `MAVEN_AGENT_ALLOWED_HOSTS`  | _(leeg)_    | Komma-gescheiden extra hostnames voor de DNS-rebinding-allowlist; `host.docker.internal`, `localhost`, `127.0.0.1` en `::1` staan al standaard. Alleen nodig als je via een andere DNS-naam verbindt. |
+   | Variabele                    | Default     | Omschrijving                                          |
+   |------------------------------|-------------|-------------------------------------------------------|
+   | `PROJECT_DIR`                | `cwd`       | Maven-projectroot (waar `pom.xml` staat) — zie noot 1 |
+   | `MAVEN_AGENT_HOST`           | `127.0.0.1` | Bind-adres; `0.0.0.0` voor Linux Docker/Podman        |
+   | `MAVEN_AGENT_PORT`           | `7777`      | TCP-poort                                             |
+   | `MVN_TIMEOUT`                | `600`       | Timeout per Maven-aanroep (seconden)                  |
+   | `MAVEN_AGENT_ALLOWED_HOSTS`  | _(leeg)_    | Extra hostnames voor DNS-rebinding-allowlist — noot 2 |
+
+   1. `PROJECT_DIR` is alleen relevant bij directe invocatie van
+      `maven_agent.py`. `run.sh` eist een expliciet pad-argument en
+      overschrijft `PROJECT_DIR` met de gevalideerde, geresolved waarde.
+   2. Komma-gescheiden lijst. `host.docker.internal`, `localhost`,
+      `127.0.0.1` en `::1` staan al standaard in de allowlist. Alleen
+      nodig als je via een andere DNS-naam verbindt.
 
 ## MCP-registratie in de container
 Eenmalig in de container registreren zodat Claude Code de tool kan aanroepen:
