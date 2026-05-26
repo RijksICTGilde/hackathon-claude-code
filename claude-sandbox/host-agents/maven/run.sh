@@ -6,21 +6,27 @@
 #
 # Gebruik:
 #   ./run.sh /pad/naar/jouw/maven-project
-#   ./run.sh                 # zonder argument: directory waar je nu staat
 #
 # Overige instellingen blijven via env vars werken, bv:
 #   MAVEN_AGENT_PORT=8888 MVN_TIMEOUT=900 ./run.sh /pad/...
 set -euo pipefail
 
 # Caller-directory vastleggen vóór we naar de scriptdir springen, zodat een
-# relatief project-pad (en de default) klopt vanuit waar de gebruiker staat.
+# relatief project-pad klopt vanuit waar de gebruiker staat.
 CALLER_PWD="$PWD"
 cd "$(dirname "$0")"
 
 # --- Project-directory bepalen en valideren -------------------------------
-# Relatief pad (of de default) oplossen vanuit de caller-directory, niet de
-# scriptdir.
-RAW_PROJECT_DIR="${1:-$CALLER_PWD}"
+# Eerste argument is verplicht: het pad naar het Maven-project. Een impliciete
+# default op $PWD verbergt teveel (verkeerde directory → onbegrijpelijke
+# pom.xml-fout verderop), dus we eisen een expliciete keuze van de gebruiker.
+if [[ $# -lt 1 ]]; then
+    echo "ERROR: project-directory ontbreekt." >&2
+    echo "Gebruik: $(basename "$0") /pad/naar/jouw/maven-project" >&2
+    exit 2
+fi
+# Relatief pad oplossen vanuit de caller-directory, niet de scriptdir.
+RAW_PROJECT_DIR="$1"
 case "$RAW_PROJECT_DIR" in
     /*) ;;                                          # absoluut: laten staan
     *)  RAW_PROJECT_DIR="$CALLER_PWD/$RAW_PROJECT_DIR" ;;
@@ -52,9 +58,9 @@ fi
 echo "→ deps installeren/controleren…"
 # Quiet op de happy path; bij een fout opnieuw mét volledige output zodat de
 # echte pip-diagnostiek zichtbaar is (de tweede run breekt af via set -e).
-.venv/bin/pip install --quiet -r requirements.txt || {
+.venv/bin/pip install --quiet --require-hashes -r requirements.txt || {
     echo "→ deps faalden, opnieuw met volledige output:" >&2
-    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install --require-hashes -r requirements.txt
 }
 
 # --- JAVA_HOME ------------------------------------------------------------
