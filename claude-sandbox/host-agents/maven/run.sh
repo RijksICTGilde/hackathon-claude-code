@@ -65,9 +65,10 @@ echo "→ deps installeren/controleren…"
 if [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
     # SDKman-init draait in déze shell; strict-mode tijdelijk uit omdat de
     # vendored init unset-vars en non-zero returns gebruikt voor normaal
-    # gedrag. Exit-status capturen we expliciet zodat een echte fout (kapotte
-    # install, ontbrekend candidate-symlink) niet stil verdwijnt onder
-    # `set +e`.
+    # gedrag. Exit-status capturen we vóór we strict-mode terugzetten, zodat
+    # een echte fout (kapotte install, ontbrekend candidate-symlink) alsnog
+    # zichtbaar wordt in plaats van te verdwijnen achter de tijdelijke
+    # `set +euo pipefail`.
     set +euo pipefail
     # shellcheck disable=SC1091
     source "$HOME/.sdkman/bin/sdkman-init.sh"
@@ -79,10 +80,12 @@ if [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
     fi
 fi
 # Zonder JVM faalt Maven straks alsnog, met een onbegrijpelijke foutmelding
-# diep in de agent. Liever hier hard stoppen met een duidelijke instructie,
-# net als bij de ontbrekende project-dir hierboven.
-if [[ -z "${JAVA_HOME:-}" ]]; then
-    echo "ERROR: JAVA_HOME is niet gezet en SDKman heeft geen JVM geactiveerd." >&2
+# diep in de agent. Veel distro's en Homebrew leveren echter een werkende
+# `mvn` zonder geëxporteerde JAVA_HOME (de Apache-wrapper resolved `java` via
+# PATH en `readlink`), dus we accepteren ook een `java` op PATH; pas als
+# beide ontbreken stoppen we hard.
+if [[ -z "${JAVA_HOME:-}" ]] && ! command -v java >/dev/null 2>&1; then
+    echo "ERROR: geen JAVA_HOME gezet en geen 'java' op PATH gevonden." >&2
     echo "  Zet JAVA_HOME naar een JDK, of installeer er één via SDKman" \
          "('sdk install java')." >&2
     exit 1
