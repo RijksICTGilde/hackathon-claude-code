@@ -69,18 +69,32 @@ echo "→ deps installeren/controleren…"
 # init hier expliciet zodat Maven (of ./mvnw) een JVM vindt zonder dat je vanuit
 # een SDKman-shell hoeft te starten. Bestaande JAVA_HOME respecteren we.
 if [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
-    # SDKman-init draait in déze shell; strict-mode tijdelijk uit zodat een
-    # non-zero return of unset var in het vendored script de launcher niet
-    # afbreekt met een onbegrijpelijke fout in SDKman-internals.
+    # SDKman-init draait in déze shell; strict-mode tijdelijk uit omdat de
+    # vendored init unset-vars en non-zero returns gebruikt voor normaal
+    # gedrag. Exit-status capturen we vóór we strict-mode terugzetten, zodat
+    # een echte fout (kapotte install, ontbrekend candidate-symlink) alsnog
+    # zichtbaar wordt in plaats van te verdwijnen achter de tijdelijke
+    # `set +euo pipefail`.
     set +euo pipefail
     # shellcheck disable=SC1091
-    source "$HOME/.sdkman/bin/sdkman-init.sh" || \
-        echo "⚠️  SDKman-init faalde; ga verder zonder." >&2
+    source "$HOME/.sdkman/bin/sdkman-init.sh"
+    SDKMAN_RC=$?
     set -euo pipefail
+    if (( SDKMAN_RC != 0 )); then
+        echo "⚠️  SDKman-init exit $SDKMAN_RC — JAVA_HOME wordt niet via SDKman" \
+             "gezet; controleer ~/.sdkman of zet JAVA_HOME handmatig." >&2
+    fi
 fi
-if [[ -z "${JAVA_HOME:-}" ]]; then
-    echo "⚠️  JAVA_HOME is niet gezet en geen SDKman gevonden — Maven kan straks" \
-         "geen JVM vinden. Zet JAVA_HOME of installeer een JDK via SDKman." >&2
+# Zonder JVM faalt Maven straks alsnog, met een onbegrijpelijke foutmelding
+# diep in de agent. Veel distro's en Homebrew leveren echter een werkende
+# `mvn` zonder geëxporteerde JAVA_HOME (de Apache-wrapper resolved `java` via
+# PATH en `readlink`), dus we accepteren ook een `java` op PATH; pas als
+# beide ontbreken stoppen we hard.
+if [[ -z "${JAVA_HOME:-}" ]] && ! command -v java >/dev/null 2>&1; then
+    echo "ERROR: geen JAVA_HOME gezet en geen 'java' op PATH gevonden." >&2
+    echo "  Zet JAVA_HOME naar een JDK, of installeer er één via SDKman" \
+         "('sdk install java')." >&2
+    exit 1
 fi
 
 # --- Bind-adres -----------------------------------------------------------
