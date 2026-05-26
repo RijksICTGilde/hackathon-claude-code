@@ -30,8 +30,9 @@ Linux automatisch het juiste bind-adres:
 cd host-agents/maven
 ./run.sh /pad/naar/jouw/maven-project
 ```
-Zonder argument gebruikt het de huidige directory. Overige instellingen blijven
-via env vars werken, bv. `MAVEN_AGENT_PORT=8888 ./run.sh /pad/...`. Het script
+Het pad-argument is verplicht; zonder pad print het script een gebruiksregel en
+stopt met exit-code 2. Overige instellingen blijven via env vars werken, bv.
+`MAVEN_AGENT_PORT=8888 ./run.sh /pad/...`. Het script
 draait `pip install` elke keer (snel als alles er al staat) zodat gewijzigde
 requirements vanzelf meekomen.
 
@@ -40,7 +41,7 @@ requirements vanzelf meekomen.
    ```
    cd host-agents/maven
    python3 -m venv .venv          # eenmalig
-   .venv/bin/pip install -r requirements.txt
+   .venv/bin/pip install --require-hashes -r requirements.txt
    ```
    Of activeer de venv in elke nieuwe shell met `source .venv/bin/activate`
    (per shell opnieuw nodig) en gebruik daarna `python3` direct.
