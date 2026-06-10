@@ -4,13 +4,20 @@
 # of kopieer naar compose.override.yml (let op: overschrijft de Linux-host-override).
 services:
   claude:
+    environment:
+      # Storage-driver, via .env. vfs (default, veilig) of overlay (fuse-overlayfs,
+      # sneller). Entrypoint genereert storage.conf hieruit.
+      - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
     devices:
-      # fuse-overlayfs storage voor rootless podman
-      - "/dev/fuse"
       # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
       # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
       # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
       - "/dev/net/tun"
+      # Optioneel fuse-device, via .env. Default /dev/null = no-op (vfs heeft geen
+      # device nodig). Voor de snellere fuse-overlayfs-driver: zet in .env
+      # PODMAN_STORAGE_DRIVER=overlay én PODMAN_FUSE_DEVICE=/dev/fuse. /dev/fuse
+      # vergroot het kernel-aanvaloppervlak (FUSE-CVE's) — daarom niet default.
+      - "${PODMAN_FUSE_DEVICE:-/dev/null}"
     security_opt:
       # Tailored seccomp-blocklist i.p.v. unconfined. defaultAction=ALLOW (zodat
       # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak

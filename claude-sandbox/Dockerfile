@@ -228,8 +228,11 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 # Optioneel: rootless Podman voor Maven+Testcontainers ín de container
 # (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
 # 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
-# je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime
-# /dev/fuse + seccomp-stand: zie compose.override.podman.yml.example.
+# je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime de
+# seccomp/apparmor-stand uit compose.override.podman.yml.example. Storage =
+# vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
+# fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
+# /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
@@ -247,13 +250,14 @@ RUN case "$INSTALL_PODMAN" in \
 
 USER claude
 
-# Rootless storage-config (fuse-overlayfs + single-uid). Komt mee via de
-# claude-home volume (gepopulate bij eerste run, zoals sdkman/.claude).
-# ignore_chown_errors is nodig in single-uid modus: images die naar uids buiten
-# de enige gemapte uid willen chownen mogen niet hard falen bij extractie.
+# Rootless storage-config (vfs + single-uid). Komt mee via de claude-home volume
+# (gepopulate bij eerste run, zoals sdkman/.claude); de entrypoint schrijft 'm
+# ook op een bestaand volume. Default vfs = veilig (geen /dev/fuse / geen
+# kernel-FUSE-oppervlak). ignore_chown_errors is nodig in single-uid modus:
+# images die naar uids buiten de enige gemapte uid chownen mogen niet hard falen.
 RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
       mkdir -p /home/claude/.config/containers && \
-      printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' \
+      printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' \
         > /home/claude/.config/containers/storage.conf ; \
     fi
 

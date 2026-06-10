@@ -232,15 +232,16 @@ elk debug-stap voor stap gevonden:
 |---|---|---|
 | 1 | AppArmor-profiel `flags=(unconfined) { userns, }` (host, via `setup-host.sh`), container draait eronder | userns-restrictie (`apparmor_restrict_unprivileged_userns=1`) zonder host-sysctl te versoepelen |
 | 2 | Single-uid: geen `/etc/subuid`-entry voor `claude` | privileged `newuidmap`-range-write faalt → vermeden (podman mapt alleen eigen uid) |
-| 3 | `storage.conf`: `ignore_chown_errors=true` + fuse-overlayfs | image-extractie chownt naar niet-gemapte uids in single-uid modus |
+| 3 | `storage.conf`: `vfs` + `ignore_chown_errors=true` (default; `overlay`/fuse-overlayfs optioneel via `.env`) | image-extractie chownt naar niet-gemapte uids in single-uid modus; vfs vermijdt `/dev/fuse` |
 | 4 | `/dev/net/tun` device + bestaande `NET_ADMIN` | pasta rootless-netwerk (tap-device) |
 | 5 | `containers.conf`: `default_sysctls = []` | crun schrijft `net.ipv4.ping_group_range` → `/proc/sys` is RO in outer container |
 | 6 | `--security-opt systempaths=unconfined` | nieuwe procfs in geneste mountns geweigerd (Docker maskeert `/proc` → `mount_too_revealing`) |
 | 7 | `containers.conf`: `[network] firewall_driver = "iptables"` | netavark roept default `nft` aan (niet in image); iptables-nft is wél aanwezig |
 
-`storage.conf`/`containers.conf` worden door `entrypoint.sh` idempotent op het
-`claude-home` volume geschreven (baked-in image-versie wordt door een bestaand
-named volume geschaduwd). Het AppArmor-profiel + de override-`security_opt`/
+`storage.conf` wordt door `entrypoint.sh` elke start gegenereerd uit
+`PODMAN_STORAGE_DRIVER` (.env); `containers.conf` idempotent geschreven. Beide op
+het `claude-home` volume (baked-in image-versie wordt door een bestaand named
+volume geschaduwd). Het AppArmor-profiel + de override-`security_opt`/
 `devices` zijn host-/compose-zaken (`setup-host.sh` + `compose.override.podman.yml`).
 
 ## Security-balans (cruciaal voor de #44-afweging)
@@ -250,9 +251,11 @@ host-agent, geen Docker-socket, geen `--privileged`. mvn/pom-plugins draaien in
 de sandbox (non-root `claude`), Testcontainers-children in geneste rootless
 userns. De Copilot-bug wordt niet gereproduceerd.
 
-Wat dit pad **openzet** op de *outer* sandbox-container (de prijs van de zeven
-aanpassingen): `apparmor=unconfined` (via profiel) + `seccomp=unconfined` +
-`systempaths=unconfined` (masked/RO `/proc` weg) + `/dev/fuse` + `/dev/net/tun`.
+Wat dit pad **openzet** op de *outer* sandbox-container: `apparmor=unconfined`
+(via profiel) + tailored seccomp + `systempaths=unconfined` (masked/RO `/proc`
+weg) + `/dev/net/tun`. `/dev/fuse` is **niet** standaard open — alleen als je
+bewust de fuse-overlayfs-driver kiest (`PODMAN_STORAGE_DRIVER=overlay` +
+`PODMAN_FUSE_DEVICE=/dev/fuse` in `.env`); default is `vfs` zonder device.
 Dat pelt de defense-in-depth van de buitenste container fors af: de
 kernel-attack-surface (syscalls, `/proc`-writes) groeit. Capability-set (geen
 `CAP_SYS_ADMIN`), namespaces en de host-userns-hardening (blijft voor al het

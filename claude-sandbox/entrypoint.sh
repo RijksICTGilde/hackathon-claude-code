@@ -24,17 +24,34 @@ fi
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de
 # image werkt niet betrouwbaar: een al bestaand named volume wordt NIET opnieuw
 # uit de image gevuld, dus de image-versie wordt geschaduwd. Daarom hier bij
-# elke start, idempotent (alleen schrijven als hij ontbreekt). single-uid +
-# fuse-overlayfs + ignore_chown_errors — zie docs/superpowers/specs/
-# 2026-06-10-maven-podman-in-docker-design.md.
+# elke start, idempotent (alleen schrijven als hij ontbreekt). Default = vfs:
+# veilig, geen /dev/fuse / geen kernel-FUSE-oppervlak (zie spec). Voor meer
+# snelheid kun je naar fuse-overlayfs (vereist /dev/fuse) — zie de noot in
+# compose.override.podman.yml.example. single-uid → ignore_chown_errors.
 if command -v podman >/dev/null 2>&1; then
     conf_dir="$HOME/.config/containers"
     mkdir -p "$conf_dir"
     storage_conf="$conf_dir/storage.conf"
-    if [[ ! -f "$storage_conf" ]]; then
-        printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' > "$storage_conf"
-        echo "INFO: rootless podman storage.conf aangemaakt op $storage_conf"
+    # Storage-driver via .env (PODMAN_STORAGE_DRIVER, default vfs). vfs = veilig,
+    # geen /dev/fuse. overlay = fuse-overlayfs (sneller) en vereist /dev/fuse;
+    # ontbreekt dat device, dan vallen we terug op vfs i.p.v. te breken.
+    # storage.conf is een gegenereerd bestand: elke start herschreven uit de env.
+    driver="${PODMAN_STORAGE_DRIVER:-vfs}"
+    if [[ "$driver" == "overlay" && ! -e /dev/fuse ]]; then
+        echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Zet PODMAN_FUSE_DEVICE=/dev/fuse in .env (zie compose.override.podman.yml.example)." >&2
+        driver="vfs"
     fi
+    case "$driver" in
+        overlay)
+            printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' > "$storage_conf" ;;
+        vfs)
+            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' > "$storage_conf" ;;
+        *)
+            echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER='$driver' onbekend (verwacht vfs of overlay) — gebruik vfs." >&2
+            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' > "$storage_conf"
+            driver="vfs" ;;
+    esac
+    echo "INFO: rootless podman storage.conf → driver=$driver ($storage_conf)"
     # Podman zet default de sysctl net.ipv4.ping_group_range; crun probeert die te
     # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
     # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.

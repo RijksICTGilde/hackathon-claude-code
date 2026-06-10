@@ -34,10 +34,11 @@ Daarmee verdwijnt de container→host code-execution van #44.
 
 Werkt — ook op gehardende Ubuntu/Tuxedo (`apparmor_restrict_unprivileged_userns=1`)
 — via een per-setup configset (zie spec/README): single-uid (geen `newuidmap`),
-custom AppArmor-`userns`-profiel, `/dev/fuse` + `/dev/net/tun`,
-`ignore_chown_errors`, tailored seccomp-blocklist, `systempaths=unconfined`,
-`firewall_driver=iptables`, `TESTCONTAINERS_HOST_OVERRIDE=localhost`. **Opt-in**
-(`INSTALL_PODMAN=false` default + aparte `compose.override.podman.yml`).
+custom AppArmor-`userns`-profiel, `/dev/net/tun`, `vfs`-storage met
+`ignore_chown_errors` (default; fuse-overlayfs + `/dev/fuse` optioneel via `.env`),
+tailored seccomp-blocklist, `systempaths=unconfined`, `firewall_driver=iptables`,
+`TESTCONTAINERS_HOST_OVERRIDE=localhost`. **Opt-in** (`INSTALL_PODMAN=false`
+default + aparte `compose.override.podman.yml`).
 Geverifieerd: echte Quarkus/Redis-build 289+46 tests groen.
 
 ### 2. Host-agent — blijft als fallback
