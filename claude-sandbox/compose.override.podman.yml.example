@@ -12,10 +12,15 @@ services:
       # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
       - "/dev/net/tun"
     security_opt:
-      # PoC-startpunt: default-seccomp blokkeert syscalls die nested rootless
-      # podman nodig heeft. Begin met unconfined; verfijn naar een gericht
-      # profiel zodra de PoC draait (verzwakt anders de outer sandbox).
-      - "seccomp=unconfined"
+      # Tailored seccomp-blocklist i.p.v. unconfined. defaultAction=ALLOW (zodat
+      # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak
+      # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
+      # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
+      # bpf, perf_event_open, open_by_handle_at). Strikt veiliger dan unconfined.
+      # Pad is relatief t.o.v. dit compose-bestand (draai compose vanuit claude-sandbox/).
+      # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
+      # zet tijdelijk "seccomp=unconfined".
+      - "seccomp=host-agents/maven/poc-podman/seccomp/podman-sandbox.json"
       # AppArmor: custom profiel dat userns toestaat op gehardende Ubuntu/Tuxedo
       # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
       # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh

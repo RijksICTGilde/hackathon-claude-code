@@ -284,14 +284,21 @@ ongewijzigd.
   (wel als fallback op niet-ondersteunde hosts).
 
 ## Hardening-verfijning (geprobeerd / vervolg)
-- **seccomp=unconfined is nodig** (geverifieerd). Docker-**default** seccomp
-  proberen → `cannot clone: Operation not permitted`: podman's re-exec in een
-  nieuwe userns gebruikt `clone(CLONE_NEW*)`, wat de default-profiel-gating
-  blokkeert. Vervolg (niet triviaal): een *tailored* seccomp-profiel = moby-default
-  + onvoorwaardelijk toestaan van `clone`/`unshare`/`setns`/`mount`/`umount2`/
-  `keyctl`. Vendoren als JSON + `seccomp=<pad>` in de override; vergt enkele
-  recreate-iteraties om de minimale set te vinden. Wint t.o.v. unconfined, maar
-  modest (unconfined opent ~44 syscalls; tailored re-blokkeert het merendeel).
+- **Docker-default seccomp werkt niet** (geverifieerd): `cannot clone: Operation
+  not permitted` — podman's re-exec in een nieuwe userns gebruikt
+  `clone(CLONE_NEW*)`, wat de default-profiel-gating blokkeert.
+- **Opgelost met een tailored blocklist-profiel** (`seccomp/podman-sandbox.json`):
+  `defaultAction = SCMP_ACT_ALLOW` (dus `clone`/`unshare`/`mount`/`setns`/`keyctl`
+  werken — geen argument-gating zoals de default), met `SCMP_ACT_ERRNO` op de
+  echt gevaarlijke kernel-escape-syscalls die Docker-default óók blokkeert:
+  module-load (`init_module`/`finit_module`/`delete_module`/…), `kexec_*`,
+  `reboot`, `iopl`/`ioperm`, `swapon`/`swapoff`, klok-zetten
+  (`settimeofday`/`clock_settime`/`clock_adjtime`), `bpf`, `perf_event_open`,
+  `open_by_handle_at`, `acct`, `_sysctl`, `vm86*`, `nfsservctl`,
+  `lookup_dcookie`. Strikt veiliger dan `unconfined` (re-blokkeert de
+  escape-primitives) zonder podman te breken. Override verwijst ernaar via
+  `seccomp=host-agents/maven/poc-podman/seccomp/podman-sandbox.json`.
+  Breekt een build op een geblokkeerde syscall → uit de blocklist halen.
 - **AppArmor**: een echt confined profiel (docker-default + `userns,`) botst met
   wat nested podman nodig heeft — docker-default `deny mount` blokkeert crun's
   mounts, en `deny @{PROC}/sys/...w` blokkeert netavark's `/proc/sys/net`-writes.
