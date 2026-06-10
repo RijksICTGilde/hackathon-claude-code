@@ -233,16 +233,18 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 # vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
 # fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
 # /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
+#
+# SINGLE-UID modus: het `sed` hieronder verwijdert bewust een eventuele
+# subuid/subgid-range voor `claude`. Op gehardende Ubuntu/Tuxedo faalt de
+# privileged newuidmap-range-write (zie spec, blokkade #2); zonder subuid-entry
+# mapt podman alleen de eigen uid als root (count 1) en gebruikt newuidmap niet.
+# (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
+# fragiel over Docker-builders heen.)
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
               podman fuse-overlayfs uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
-            # SINGLE-UID modus: bewust GEEN subuid/subgid-range voor claude. Op \
-            # gehardende Ubuntu/Tuxedo faalt de privileged newuidmap-range-write \
-            # (zie spec, blokkade #2). Zonder subuid-entry mapt podman alleen de \
-            # eigen uid als root (count 1) en gebruikt newuidmap niet. Defensief \
-            # een eventueel door useradd toegevoegde entry verwijderen. \
             sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ;; \
       false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \

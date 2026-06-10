@@ -4,6 +4,14 @@
 # containers en een Testcontainers-build kan draaien.
 set -euo pipefail
 
+# Maven komt via SDKman, dat alleen in interactieve shells op PATH staat. Source
+# het hier zodat dit script standalone werkt (niet alleen wanneer de caller het
+# al deed). Strict-mode tijdelijk uit: de vendored init gebruikt unset-vars.
+if [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
+    set +u; source "$HOME/.sdkman/bin/sdkman-init.sh"; set -u
+fi
+command -v mvn >/dev/null 2>&1 || { echo "FOUT: 'mvn' niet op PATH (installeer via 'sdk install maven')." >&2; exit 1; }
+
 # Rootless podman heeft een schrijfbare XDG_RUNTIME_DIR nodig; in een container
 # zonder systemd bestaat /run/user/<uid> vaak niet. Maak er zelf een.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/podman-run-$(id -u)}"
