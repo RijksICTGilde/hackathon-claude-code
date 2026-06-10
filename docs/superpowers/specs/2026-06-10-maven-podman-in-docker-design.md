@@ -259,9 +259,12 @@ horen Optie C (sysbox) / D (microVM). De outer-sandbox-relaxaties gelden alleen
 voor containers die met de podman-override draaien; een normale sandbox blijft
 ongewijzigd.
 
+## Bevestigd
+- Volledige Testcontainers-build (zwaarder dan alpine) draaide groen in een
+  aparte sessie onder single-uid + `ignore_chown_errors` → DB-achtige images
+  werken. De single-uid-beperking blijkt in de praktijk geen blokker.
+
 ## Resterende vragen (out of scope PoC)
-- Zwaardere Testcontainers-images (Postgres/Ryuk) onder single-uid +
-  `ignore_chown_errors` — alpine-GenericContainer is bewezen; DB-images nog niet.
 - `seccomp`/`apparmor` verfijnen van `unconfined` naar gerichte profielen om de
   outer-sandbox-relaxatie te beperken.
 - abi-versie van het AppArmor-profiel op andere kernels (werkte op Tuxedo).
