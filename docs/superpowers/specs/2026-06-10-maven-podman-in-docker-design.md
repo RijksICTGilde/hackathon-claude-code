@@ -74,7 +74,7 @@ Host (Docker Desktop / Rancher / Linux Docker)
 | Optie | Isolatie | Host-eis | Cross-platform | Gewicht |
 |---|---|---|---|---|
 | Host-agent (huidig) | geen (host-user) | native mvn + JDK | ja | licht, maar onveilig |
-| **Podman-in-Docker (dit)** | rootless userns in container | `/dev/fuse` + seccomp-tweak | **ja** | licht |
+| **Podman-in-Docker (dit)** | rootless userns in container | AppArmor-userns-profiel + tailored seccomp + `systempaths=unconfined` (vfs default, géén `/dev/fuse`) | **ja** | licht |
 | C — sysbox | sterke (eigen dockerd) | sysbox-runtime, recente kernel | Linux-only | middel |
 | D — microVM | sterkste (eigen kernel) | KVM/nested virt | Linux-only | zwaar |
 
@@ -256,6 +256,8 @@ Wat dit pad **openzet** op de *outer* sandbox-container: `apparmor=unconfined`
 weg) + `/dev/net/tun`. `/dev/fuse` is **niet** standaard open — alleen als je
 bewust de fuse-overlayfs-driver kiest (`PODMAN_STORAGE_DRIVER=overlay` +
 `PODMAN_FUSE_DEVICE=/dev/fuse` in `.env`); default is `vfs` zonder device.
+Op SELinux-hosts (Fedora/RHEL) zet `label=disable` bovendien de SELinux-confinement
+van déze container uit (no-op op AppArmor-hosts).
 Dat pelt de defense-in-depth van de buitenste container fors af: de
 kernel-attack-surface (syscalls, `/proc`-writes) groeit. Capability-set (geen
 `CAP_SYS_ADMIN`), namespaces en de host-userns-hardening (blijft voor al het
@@ -300,17 +302,23 @@ ongewijzigd.
 - **Opgelost met een tailored blocklist-profiel** (`seccomp/podman-sandbox.json`):
   `defaultAction = SCMP_ACT_ALLOW` (dus `clone`/`unshare`/`mount`/`setns`/`keyctl`
   werken — geen argument-gating zoals de default), met `SCMP_ACT_ERRNO` op de
-  echt gevaarlijke kernel-escape-syscalls die Docker-default óók blokkeert:
-  module-load (`init_module`/`finit_module`/`delete_module`/…), `kexec_*`,
-  `reboot`, `iopl`/`ioperm`, `swapon`/`swapoff`, klok-zetten
-  (`settimeofday`/`clock_settime`/`clock_adjtime`), `bpf`, `perf_event_open`,
-  `open_by_handle_at`, `acct`, `_sysctl`, `vm86*`, `nfsservctl`,
-  `lookup_dcookie`. Strikt veiliger dan `unconfined` (re-blokkeert de
-  escape-primitives) zonder podman te breken. Override verwijst ernaar via
+  escape-relevante syscalls die Docker-default óók blokkeert (en die rootless
+  podman + JVM-Testcontainers niet nodig hebben): module-load
+  (`init_module`/`finit_module`/`delete_module`/`create_module`/`query_module`/
+  `get_kernel_syms`), `kexec_*`, `reboot`, `iopl`/`ioperm`, `swapon`/`swapoff`,
+  klok-zetten (`settimeofday`/`clock_settime`/`clock_adjtime`), `bpf`,
+  `perf_event_open`, `open_by_handle_at`, `userfaultfd`, `io_uring_*`,
+  NUMA (`mbind`/`set_mempolicy`/`migrate_pages`/`move_pages`), `process_vm_readv`/
+  `process_vm_writev`, `process_madvise`, `fanotify_init`, `kcmp`, `pidfd_getfd`,
+  `acct`, `_sysctl`, `vm86*`, `nfsservctl`, `lookup_dcookie`. Strikt veiliger dan
+  `unconfined`. Override verwijst ernaar via
   `seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json`.
   Breekt een build op een geblokkeerde syscall → uit de blocklist halen.
+  **Bewust níét geblokkeerd:** `ptrace` (Docker-default láát het toe; sommige
+  JVM-tooling gebruikt het) — kan als verdere tightening alsnog toegevoegd.
   **Geverifieerd** op de gehardende host: `Seccomp: 2` (filter actief, niet
-  unconfined) én de Testcontainers-smoke groen (`Tests run: 1, Failures: 0`).
+  unconfined) én de Testcontainers-smoke groen. De uitgebreide blocklist
+  (io_uring/userfaultfd/NUMA/…) is op een recreate opnieuw te bevestigen.
 - **AppArmor**: een echt confined profiel (docker-default + `userns,`) botst met
   wat nested podman nodig heeft — docker-default `deny mount` blokkeert crun's
   mounts, en `deny @{PROC}/sys/...w` blokkeert netavark's `/proc/sys/net`-writes.

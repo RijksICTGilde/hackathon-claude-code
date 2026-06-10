@@ -62,11 +62,12 @@ met kernel-escape in scope. Genoteerd in de spec.
 - **Dicht:** container→host code-execution van #44.
 - **Open:** relaxaties op de *outer* sandbox-container — seccomp (tailored
   blocklist i.p.v. unconfined: re-blokkeert module-load/kexec/reboot/bpf/perf/
-  `open_by_handle_at`/…), AppArmor (`userns`-profiel, effectief ~unconfined voor
-  deze container), `systempaths=unconfined` (masked/RO `/proc` weg, nodig voor de
-  geneste proc-mount). **Géén** `CAP_SYS_ADMIN`, `--privileged` of socket; de
-  host-userns-hardening blijft systeembreed aan; opt-in + aparte override houden
-  de blast-radius klein.
+  `open_by_handle_at`/`userfaultfd`/`io_uring_*`/NUMA/`kcmp`/`pidfd_getfd`/…;
+  `ptrace` bewust toegestaan), AppArmor (`userns`-profiel, effectief ~unconfined
+  voor deze container), `systempaths=unconfined` (masked/RO `/proc` weg, nodig
+  voor de geneste proc-mount), en op SELinux-hosts `label=disable`. **Géén**
+  `CAP_SYS_ADMIN`, `--privileged` of socket; de host-userns-hardening blijft
+  systeembreed aan; opt-in + aparte override houden de blast-radius klein.
 - **Weging:** geschikt voor het reële #44-dreigingsbeeld (Claude rogue /
   prompt-injectie, semi-vertrouwd). Niet geschikt voor volledig vijandige,
   kernel-exploit-capabele code → daar horen Optie C/D.
