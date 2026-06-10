@@ -12,9 +12,9 @@ vanuit de container. De oplossing is een MCP-server
 > host-agent en zonder de container→host code-execution-bridge die hij per
 > ontwerp is (zie [ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md)
 > en issue #44). Setup: `host-agents/maven/podman/README.md`. **Deze
-> host-agent is de fallback** voor hosts waar dat niet kan (geen userns/`/dev/fuse`/
-> AppArmor-mogelijkheid, of Docker/Rancher Desktop op Mac/Windows) of wie de
-> outer-sandbox-relaxaties van de podman-route niet wil.
+> host-agent is de fallback** voor hosts waar de podman-route (nog) niet kan:
+> geen userns/`/dev/fuse`/AppArmor-mogelijkheid, dichtgetimmerde kernels, of
+> Docker/Rancher Desktop op Mac/Windows (nog te verifiëren).
 
 ## Cross-platform setup
 | Omgeving                       | `host.docker.internal` werkt out-of-the-box | Override nodig |

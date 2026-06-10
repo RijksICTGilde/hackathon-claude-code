@@ -41,10 +41,16 @@ custom AppArmor-`userns`-profiel, `/dev/fuse` + `/dev/net/tun`,
 Geverifieerd: echte Quarkus/Redis-build 289+46 tests groen.
 
 ### 2. Host-agent — blijft als fallback
-Voor hosts waar podman-in-docker niet kan (geen userns/`/dev/fuse`/AppArmor-
-mogelijkheid; of Docker/Rancher Desktop op Mac/Windows waar de set niet 1-op-1
-geldt), of wie de outer-sandbox-relaxaties (zie balans) niet wil accepteren.
-Met de goedkope hardening hieronder.
+Voor hosts waar podman-in-docker (nog) niet kan: geen userns/`/dev/fuse`/
+AppArmor-mogelijkheid, dichtgetimmerde kernels, of Docker/Rancher Desktop op
+Mac/Windows (nog te verifiëren). Met de goedkope hardening hieronder.
+
+> **Niet** als "veiliger alternatief voor wie de outer-sandbox-relaxaties
+> mijdt": die relaxaties verbreden het kernel-oppervlak van de *container*
+> (escape vereist nog een kernel-exploit). De host-agent voert daarentegen code
+> **direct op de host** uit als de host-user — dat is voor een op container-escape
+> beduchte gebruiker juist een zwakker, niet sterker model. De host-agent is een
+> *dekkings*-fallback (waar podman niet kan), geen security-upgrade.
 
 ### Optie C (sysbox) / D (microVM)
 Out-of-scope voor nu. Alleen overwegen bij écht onvertrouwde of multi-tenant code
