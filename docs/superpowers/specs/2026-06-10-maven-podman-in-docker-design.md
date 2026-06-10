@@ -299,6 +299,8 @@ ongewijzigd.
   escape-primitives) zonder podman te breken. Override verwijst ernaar via
   `seccomp=host-agents/maven/poc-podman/seccomp/podman-sandbox.json`.
   Breekt een build op een geblokkeerde syscall → uit de blocklist halen.
+  **Geverifieerd** op de gehardende host: `Seccomp: 2` (filter actief, niet
+  unconfined) én de Testcontainers-smoke groen (`Tests run: 1, Failures: 0`).
 - **AppArmor**: een echt confined profiel (docker-default + `userns,`) botst met
   wat nested podman nodig heeft — docker-default `deny mount` blokkeert crun's
   mounts, en `deny @{PROC}/sys/...w` blokkeert netavark's `/proc/sys/net`-writes.
