@@ -1,0 +1,22 @@
+# AppArmor-profiel dat de sandbox-container userns laat gebruiken op gehardende
+# Ubuntu/Tuxedo (kernel.apparmor_restrict_unprivileged_userns=1), ZONDER die
+# host-hardening systeembreed uit te zetten. Alleen containers die expliciet
+# onder dit profiel draaien krijgen userns; al het andere blijft docker-default.
+#
+# Installeren op de HOST:  ./setup-host.sh   (of zie README)
+# Draaien:  docker ... --security-opt apparmor=claude-sandbox-podman
+#
+# flags=(unconfined): deze container is verder onbeperkt (gelijk aan
+# apparmor=unconfined) — de MAC-laag vervalt voor déze container, maar Docker's
+# masked paths, capability-set en namespaces blijven. De `userns,` regel is wat
+# de Ubuntu-restrictie nodig heeft om userns toe te staan. Zie de security-noot
+# in de spec.
+#
+# abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
+# AppArmor (parser kent abi 4.0 niet), verwijder dan de eerste regel.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile claude-sandbox-podman flags=(unconfined) {
+  userns,
+}

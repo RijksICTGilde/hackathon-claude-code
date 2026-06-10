@@ -1,8 +1,24 @@
 # PoC: Maven + Testcontainers via rootless Podman-in-Docker
 
 Bewijst dat de sandbox Testcontainers nested kan draaien (issue #44), zonder
-host-agent, `--privileged` of Docker-socket. Ontwerp:
+host-agent, `--privileged` of Docker-socket. Ontwerp + PoC-bevindingen:
 `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`.
+
+## Wat de PoC uitwees
+Op gehardende Ubuntu/Tuxedo (`kernel.apparmor_restrict_unprivileged_userns=1`)
+werkt de naïeve multi-uid rootless podman **niet**: de host blokkeert userns-maps
+en de privileged `newuidmap`-range faalt. Daarom draait deze set in **single-uid
+modus** (geen `newuidmap`) en regelt userns via een **custom AppArmor-profiel**
+i.p.v. de host systeembreed te verzwakken.
+
+## Per-setup matrix
+| Host-setup | Wat nodig is |
+|---|---|
+| Gehardend Ubuntu 23.10+ / Tuxedo (`sysctl=1`) | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + override |
+| Linux Docker, niet-gehardend (`sysctl=0`) | override; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
+| Docker Desktop / Rancher (Mac/Win) | override; nog te testen — vermoedelijk out-of-the-box |
+
+Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
 
 ## Stappen (op de host)
 
@@ -12,17 +28,24 @@ host-agent, `--privileged` of Docker-socket. Ontwerp:
    # Firewall whitelist bevat geen registries; Testcontainers pullt van docker.io.
    ALLOWED_DOMAINS=registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,docker.io
    ```
-2. Image bouwen met Podman erin en de runtime-override (geeft `/dev/fuse` + seccomp):
+2. **AppArmor-profiel laden** (gehardende host; onschadelijk elders):
+   ```
+   ./host-agents/maven/poc-podman/setup-host.sh
+   ```
+   Dit installeert `claude-sandbox-podman` in `/etc/apparmor.d/` en laadt het.
+   De override verwijst ernaar; zonder dit faalt de container-start met
+   "AppArmor profile not found".
+3. Image bouwen + starten met de runtime-override (`/dev/fuse`, seccomp, profiel):
    ```
    cd claude-sandbox
-   docker compose -f compose.yml -f compose.override.podman.yml.example up --build -d
+   docker compose -f compose.yml -f compose.override.podman.yml.example up --build -d --force-recreate
    ```
-3. In de container een JDK+Maven regelen (eenmalig, blijft in het claude-home volume):
+4. JDK+Maven in de container (eenmalig, blijft in het claude-home volume):
    ```
    docker compose exec claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && sdk install java && sdk install maven"
    ```
-4. Smoke-test draaien:
+5. Smoke-test:
    ```
    docker compose exec claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && \
@@ -36,17 +59,21 @@ Verwacht: het script print `nested-ok` en eindigt met `PoC GESLAAGD`.
 
 | Symptoom | Oorzaak | Maatregel |
 |---|---|---|
-| `podman info` faalt op storage | `/dev/fuse` niet door | override `/dev/fuse` controleren; anders `~/.config/containers/storage.conf` → `driver = "vfs"` (traag, geen fuse nodig) |
-| syscall/permission errors bij `podman run` | seccomp | override staat al op `seccomp=unconfined`; controleer dat de override actief is (`docker inspect`) |
-| `newuidmap: write to uid_map failed: Operation not permitted` | AppArmor `docker-default` blokkeert de write naar `/proc/<pid>/uid_map` (Debian/Ubuntu) | override staat op `apparmor=unconfined`; check `cat /proc/self/attr/current` in de container → moet `unconfined` zijn, niet `docker-default (enforce)`. Caps/subuid zijn hier NIET de oorzaak als `/proc/self/uid_map` = `0 0 4294967295`. |
+| `unshare ... uid_map: Operation not permitted` of `podman info` faalt op userns | host-hardening blokkeert userns; profiel niet (goed) geladen | `setup-host.sh` gedraaid? `cat /proc/self/attr/current` in de container → moet `claude-sandbox-podman` zijn. Container ná het laden **recreaten** (`--force-recreate`) — de AppArmor-mediatie klikt vast bij start. |
+| `newuidmap: write to uid_map failed` | je draait toch multi-uid (subuid-entry aanwezig) | image is single-uid (geen subuid). Check `cat /etc/subuid` in de container → geen `claude:`-regel. |
+| `podman info` faalt op storage | `/dev/fuse` niet door | override `/dev/fuse` controleren; anders `~/.config/containers/storage.conf` → `driver = "vfs"` (traag, geen fuse) |
+| image-extractie faalt op chown | single-uid kan niet naar andere uids chownen | `ignore_chown_errors=true` staat al in storage.conf; controleer dat het meekwam (`podman info` → graphOptions) |
+| syscall/permission errors bij `podman run` | seccomp | override staat op `seccomp=unconfined`; check dat de override actief is (`docker inspect`) |
 | image-pull hangt/timeout | firewall blokkeert registry | `ALLOWED_DOMAINS` uit stap 1 toevoegen en container herstarten |
 | Ryuk-container faalt | reaper in nested rootless | `TESTCONTAINERS_RYUK_DISABLED=true` (staat al in de smoke-test) |
 
 ## Noteer voor de afweging (#44 DoD)
 
-- Welke seccomp-stand nodig was (unconfined vs gericht profiel).
-- Storage-driver (overlay/fuse-overlayfs vs vfs) en globale build-/test-tijd.
-- Of subuid-mapping werkte of de single-uid fallback nodig was.
+- Werkt single-uid podman onder het AppArmor-`userns`-profiel (sysctl blijft 1)?
+- Draait een echte Testcontainers-build (Ryuk/Postgres) met `ignore_chown_errors`,
+  of breken images die naar meerdere uids chownen?
+- Welke seccomp-stand nodig was; storage-driver (fuse-overlayfs vs vfs) + build-tijd.
 
-Slaagt de PoC → uitwerken als aanbevolen pad, host-agent degraderen tot fallback,
-en de #44-DoD (doc + ADR) afronden met deze keuze.
+Slaagt dit → uitwerken als optioneel pad (alleen projecten die Testcontainers
+nodig hebben), host-agent blijft fallback, #44-DoD (doc/ADR) afronden met deze
+keuze en de security-trade-off van het unconfined-profiel.

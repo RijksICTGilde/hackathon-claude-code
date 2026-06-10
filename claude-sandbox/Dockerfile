@@ -235,20 +235,25 @@ RUN case "$INSTALL_PODMAN" in \
             apt-get install -y --no-install-recommends \
               podman fuse-overlayfs uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
-            # subuid/subgid-range voor rootless mapping (idempotent) \
-            { grep -q '^claude:' /etc/subuid || echo 'claude:100000:65536' >> /etc/subuid; } && \
-            { grep -q '^claude:' /etc/subgid || echo 'claude:100000:65536' >> /etc/subgid; } ;; \
+            # SINGLE-UID modus: bewust GEEN subuid/subgid-range voor claude. Op \
+            # gehardende Ubuntu/Tuxedo faalt de privileged newuidmap-range-write \
+            # (zie spec, blokkade #2). Zonder subuid-entry mapt podman alleen de \
+            # eigen uid als root (count 1) en gebruikt newuidmap niet. Defensief \
+            # een eventueel door useradd toegevoegde entry verwijderen. \
+            sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ;; \
       false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
 USER claude
 
-# Rootless storage-config (fuse-overlayfs). Komt mee via de claude-home volume
-# (gepopulate bij eerste run, zoals sdkman/.claude). Alleen bij INSTALL_PODMAN.
+# Rootless storage-config (fuse-overlayfs + single-uid). Komt mee via de
+# claude-home volume (gepopulate bij eerste run, zoals sdkman/.claude).
+# ignore_chown_errors is nodig in single-uid modus: images die naar uids buiten
+# de enige gemapte uid willen chownen mogen niet hard falen bij extractie.
 RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
       mkdir -p /home/claude/.config/containers && \
-      printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\n' \
+      printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' \
         > /home/claude/.config/containers/storage.conf ; \
     fi
 

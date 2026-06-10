@@ -12,10 +12,11 @@ services:
       # podman nodig heeft. Begin met unconfined; verfijn naar een gericht
       # profiel zodra de PoC draait (verzwakt anders de outer sandbox).
       - "seccomp=unconfined"
-      # AppArmor (Debian/Ubuntu): het docker-default-profiel medieert writes naar
-      # /proc/<pid>/uid_map en blokkeert daarmee newuidmap → rootless podman faalt
-      # met "newuidmap: write to uid_map failed: Operation not permitted". Zelfde
-      # PoC-afweging als seccomp: later vervangen door een gericht profiel.
-      - "apparmor=unconfined"
+      # AppArmor: custom profiel dat userns toestaat op gehardende Ubuntu/Tuxedo
+      # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
+      # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh
+      # (anders faalt de container-start: "AppArmor profile not found"). Op een
+      # host zonder AppArmor: vervang door "apparmor=unconfined".
+      - "apparmor=claude-sandbox-podman"
       # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
       - "label=disable"

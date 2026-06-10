@@ -1,7 +1,7 @@
 # Maven via rootless Podman-in-Docker (PoC)
 
 **Datum:** 2026-06-10
-**Status:** Ontwerp — PoC, klaar voor implementatie
+**Status:** PoC uitgevoerd — herziene aanpak (single-uid + AppArmor-userns-profiel). Zie "PoC-bevindingen" onderaan.
 **Context:** [issue #44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 
 ## Probleem
@@ -156,3 +156,69 @@ vervolgstap.
   Linux-container, niet op de host).
 - Productie-harden van de nested setup (egress-policy per build, image-allowlist) —
   pas relevant als dit het gekozen pad wordt.
+
+---
+
+## PoC-bevindingen (2026-06-10)
+
+PoC gedraaid op een host met **TUXEDO OS** (Ubuntu-based), native rootful Docker
+Engine. Resultaat: de kale aanpak (multi-uid rootless podman) **werkt niet** op
+gehardende Ubuntu-hosts. Twee onafhankelijke blokkades gevonden via systematisch
+debuggen (eliminatie: userns-ownership, capabilities, NoNewPrivs, seccomp,
+container-AppArmor-profiel, nosuid — allemaal uitgesloten):
+
+1. **`kernel.apparmor_restrict_unprivileged_userns=1`** (Ubuntu 23.10+ hardening).
+   Blokkeert **élke** unprivileged userns-map — zelfs een single-line self-map
+   (`unshare -U -r` faalt). Bewezen: faalt bij sysctl=1; werkt bij sysctl=0
+   **mits de container wordt gerecreëerd** (de AppArmor-mediatie klikt vast bij
+   container-start; een runtime-sysctl-flip pakt niet op een draaiende container).
+   `apparmor=unconfined` op de container helpt **niet** — de restrictie zit op
+   host-kernelniveau.
+
+2. **Privileged multi-uid `newuidmap`-range-write** faalt met
+   `write to uid_map failed: Operation not permitted`, óók met sysctl=0+recreate,
+   terwijl de single-line self-map dan wél werkt. Oorzaak niet sluitend herleid;
+   omzeild door newuidmap helemaal niet te gebruiken (single-uid modus).
+
+### Gevolg voor het ontwerp
+De kernclaim "host-OS maakt niet uit / lichtgewicht" is **gefalsifieerd** voor
+gehardende Ubuntu (de overheids-Linux-basis + veel dev-laptops): podman-in-docker
+vereist daar een **host-level wijziging**. Wel blijft het buiten `--privileged`
+en zonder Docker-socket, dus het reproduceert de Copilot-bug niet.
+
+### Herziene aanpak: single-uid + AppArmor-userns-profiel (per-setup set)
+Besluit (gebruiker, 2026-06-10): uitwerken als een **set configs die per
+host-setup werkt**. Weinig projecten hebben dit nodig, dus per-setup is acceptabel.
+
+- **Engine: single-uid modus.** Geen `/etc/subuid`/`/etc/subgid`-entry voor
+  `claude` → podman mapt alleen de eigen uid als root (count 1), gebruikt
+  `newuidmap` niet → omzeilt blokkade #2. `ignore_chown_errors=true` in
+  `storage.conf` zodat multi-uid images tóch extracten.
+- **Blokkade #1: custom AppArmor-profiel met `userns,`** i.p.v. host-sysctl
+  versoepelen. Host-profiel `flags=(unconfined) { userns, }`, geladen met
+  `apparmor_parser`, container draait eronder via `--security-opt
+  apparmor=<profiel>`. De restrictie blijft systeembreed aan; alleen deze
+  container krijgt userns. Geen `sysctl=0` nodig.
+
+### Per-setup matrix
+| Host-setup | userns-status | Maatregel |
+|---|---|---|
+| Linux Docker, niet-gehardend (sysctl=0 / oudere kernel) | open | alleen `/dev/fuse` + seccomp + single-uid engine |
+| Gehardend Ubuntu 23.10+ (sysctl=1) | restrictie | **custom AppArmor-`userns`-profiel** (geen host-verzwakking) — voorkeur; of `sysctl=0` permanent (verzwakt host) |
+| Docker Desktop / Rancher (Mac/Win) | VM, rootful | vermoedelijk out-of-the-box; nog te testen |
+
+### Trade-off van de AppArmor-route (security)
+`flags=(unconfined) { userns, }` = effectief unconfined voor déze container + userns
+toegestaan. Verzwakt dus de container-MAC-laag (zoals eerder geanalyseerd: `mount`,
+`/proc`/`/sys`-writes, ptrace-scoping vervallen), maar Docker's masked paths +
+capability-set + namespaces blijven. De host-hardening blijft voor al het andere
+intact (andere containers blijven `docker-default`). Voor het #44-dreigingsbeeld
+(Claude rogue / prompt-injection) acceptabel; voor volledig vijandige code niet.
+
+### Nog te verifiëren op de host (kan niet in deze werkomgeving)
+- Werkt single-uid podman onder het custom AppArmor-`userns`-profiel met sysctl=1?
+  (self-map werkte onder sysctl=0+apparmor=unconfined — profiel zou equivalent
+  moeten zijn met sysctl aan.)
+- Draait een echte Testcontainers-build (Ryuk/Postgres) onder single-uid +
+  `ignore_chown_errors`, of breken images die naar meerdere uids chownen?
+- abi-versie van het AppArmor-profiel op niet-Ubuntu-24.04-kernels (Tuxedo).
