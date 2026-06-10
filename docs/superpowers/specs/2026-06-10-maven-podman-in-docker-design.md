@@ -283,7 +283,27 @@ ongewijzigd.
 - Hiermee is de host-side Maven MCP-agent in deze sandbox **niet meer nodig**
   (wel als fallback op niet-ondersteunde hosts).
 
-## Resterende vragen (out of scope PoC)
-- `seccomp`/`apparmor` verfijnen van `unconfined` naar gerichte profielen om de
-  outer-sandbox-relaxatie te beperken.
-- abi-versie van het AppArmor-profiel op andere kernels (werkte op Tuxedo).
+## Hardening-verfijning (geprobeerd / vervolg)
+- **seccomp=unconfined is nodig** (geverifieerd). Docker-**default** seccomp
+  proberen → `cannot clone: Operation not permitted`: podman's re-exec in een
+  nieuwe userns gebruikt `clone(CLONE_NEW*)`, wat de default-profiel-gating
+  blokkeert. Vervolg (niet triviaal): een *tailored* seccomp-profiel = moby-default
+  + onvoorwaardelijk toestaan van `clone`/`unshare`/`setns`/`mount`/`umount2`/
+  `keyctl`. Vendoren als JSON + `seccomp=<pad>` in de override; vergt enkele
+  recreate-iteraties om de minimale set te vinden. Wint t.o.v. unconfined, maar
+  modest (unconfined opent ~44 syscalls; tailored re-blokkeert het merendeel).
+- **AppArmor**: een echt confined profiel (docker-default + `userns,`) botst met
+  wat nested podman nodig heeft — docker-default `deny mount` blokkeert crun's
+  mounts, en `deny @{PROC}/sys/...w` blokkeert netavark's `/proc/sys/net`-writes.
+  Een werkend confined profiel moet die deny's gericht openen; vergt iteratie.
+- **systempaths=unconfined**: grof (heft alle masked/RO `/proc`-paden op), maar de
+  geneste procfs-mount vereist dat de maskering weg is; nauwelijks te versmallen.
+- abi-versie van het AppArmor-profiel: werkte op Tuxedo; `setup-host.sh` heeft nu
+  een abi-fallback voor oudere AppArmor.
+
+**Conclusie verfijning:** de vier relaxaties zijn grotendeels inherent aan nested
+rootless podman, niet overbodig. De veiligheid zit in de *scoping* (opt-in, aparte
+override, geen `CAP_SYS_ADMIN`/`--privileged`/socket, host-userns-hardening blijft
+voor al het andere aan), niet in het wegpoetsen van de relaxaties. Een tailored
+seccomp-profiel is de enige verfijning met noemenswaardige winst en staat als
+vervolg genoteerd.
