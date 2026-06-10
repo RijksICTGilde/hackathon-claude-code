@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Draai BINNEN de sandbox-container (met INSTALL_PODMAN=true gebouwd en de
-# podman compose-override actief). Bewijst dat rootless Podman nested containers
-# en een Testcontainers-build kan draaien.
+# podman compose-override actief). Verifieert dat rootless Podman nested
+# containers en een Testcontainers-build kan draaien.
 set -euo pipefail
 
 # Rootless podman heeft een schrijfbare XDG_RUNTIME_DIR nodig; in een container
@@ -29,7 +29,7 @@ for _ in $(seq 1 20); do [ -S "$SOCK" ] && break; sleep 0.5; done
 echo "== 4. Maven + Testcontainers =="
 export DOCKER_HOST="unix://$SOCK"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="$SOCK"
-# Ryuk (resource-reaper) is in nested rootless setups vaak instabiel; uit voor de PoC.
+# Ryuk (resource-reaper) is in nested rootless setups vaak instabiel; daarom uit.
 export TESTCONTAINERS_RYUK_DISABLED=true
 # Rootless podman publisht gepublishte poorten op localhost, maar Testcontainers
 # resolvet de container-host default als de netavark bridge-gateway (bv.
@@ -41,4 +41,4 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 cd "$(dirname "$0")/sample"
 mvn -B --no-transfer-progress test
 
-echo "== PoC GESLAAGD =="
+echo "== OK — Testcontainers werkt =="

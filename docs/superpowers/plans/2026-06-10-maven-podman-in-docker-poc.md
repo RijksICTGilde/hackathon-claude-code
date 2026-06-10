@@ -20,10 +20,10 @@
 | `claude-sandbox/compose.yml` | `INSTALL_PODMAN`-arg doorgeven (default false) |
 | `claude-sandbox/.env.sample` | `INSTALL_PODMAN`-flag documenteren |
 | `claude-sandbox/compose.override.podman.yml.example` | runtime: `/dev/fuse` + seccomp |
-| `claude-sandbox/host-agents/maven/poc-podman/sample/pom.xml` | minimaal Maven-project |
-| `claude-sandbox/host-agents/maven/poc-podman/sample/src/test/java/poc/SmokeIT.java` | één Testcontainers-test |
-| `claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh` | rootless-podman + Testcontainers smoke |
-| `claude-sandbox/host-agents/maven/poc-podman/README.md` | run-stappen, `ALLOWED_DOMAINS`, fallbacks |
+| `claude-sandbox/host-agents/maven/podman/sample/pom.xml` | minimaal Maven-project |
+| `claude-sandbox/host-agents/maven/podman/sample/src/test/java/poc/SmokeIT.java` | één Testcontainers-test |
+| `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | rootless-podman + Testcontainers smoke |
+| `claude-sandbox/host-agents/maven/podman/README.md` | run-stappen, `ALLOWED_DOMAINS`, fallbacks |
 
 ---
 
@@ -170,8 +170,8 @@ git commit -m "feat(sandbox): compose-override voor rootless podman runtime (#44
 ## Task 4: Sample Maven+Testcontainers-project
 
 **Files:**
-- Create: `claude-sandbox/host-agents/maven/poc-podman/sample/pom.xml`
-- Create: `claude-sandbox/host-agents/maven/poc-podman/sample/src/test/java/poc/SmokeIT.java`
+- Create: `claude-sandbox/host-agents/maven/podman/sample/pom.xml`
+- Create: `claude-sandbox/host-agents/maven/podman/sample/src/test/java/poc/SmokeIT.java`
 
 - [ ] **Step 1: pom.xml**
 
@@ -258,7 +258,7 @@ In deze omgeving: XML/Java visueel reviewen; `python3 -c 'import xml.dom.minidom
 - [ ] **Step 4: Commit**
 
 ```bash
-git add claude-sandbox/host-agents/maven/poc-podman/sample
+git add claude-sandbox/host-agents/maven/podman/sample
 git commit -m "test(maven-podman): sample Testcontainers-project voor PoC (#44)"
 ```
 
@@ -267,7 +267,7 @@ git commit -m "test(maven-podman): sample Testcontainers-project voor PoC (#44)"
 ## Task 5: smoke-test.sh
 
 **Files:**
-- Create: `claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh`
+- Create: `claude-sandbox/host-agents/maven/podman/smoke-test.sh`
 
 - [ ] **Step 1: Script schrijven**
 
@@ -313,27 +313,27 @@ echo "== PoC GESLAAGD =="
 - [ ] **Step 2: Uitvoerbaar maken**
 
 ```bash
-chmod +x claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh
+chmod +x claude-sandbox/host-agents/maven/podman/smoke-test.sh
 ```
 
 - [ ] **Step 3: Check**
 
-Run: `shellcheck claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh` (indien beschikbaar) → geen errors.
+Run: `shellcheck claude-sandbox/host-agents/maven/podman/smoke-test.sh` (indien beschikbaar) → geen errors.
 Echt draaien: in de container `./smoke-test.sh` (host-stap).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh
+git add claude-sandbox/host-agents/maven/podman/smoke-test.sh
 git commit -m "test(maven-podman): smoke-test rootless podman + Testcontainers (#44)"
 ```
 
 ---
 
-## Task 6: poc-podman/README.md
+## Task 6: podman/README.md
 
 **Files:**
-- Create: `claude-sandbox/host-agents/maven/poc-podman/README.md`
+- Create: `claude-sandbox/host-agents/maven/podman/README.md`
 
 - [ ] **Step 1: README schrijven** — exacte run-stappen, `ALLOWED_DOMAINS` voor registry-egress, en de fallbacks uit de spec (vfs-storage, seccomp, single-uid, Ryuk). Inhoud:
 
@@ -366,7 +366,7 @@ host-agent, `--privileged` of Docker-socket. Ontwerp:
    ```
    docker compose exec claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && \
-      host-agents/maven/poc-podman/smoke-test.sh"
+      host-agents/maven/podman/smoke-test.sh"
    ```
    (pad relatief vanaf `/home/claude/projects` als de repo daar gemount staat;
    anders het absolute pad gebruiken.)
@@ -394,7 +394,7 @@ Verwacht: stappen 1–4 in het script printen `nested-ok` en eindigen met
 - [ ] **Step 2: Commit**
 
 ```bash
-git add claude-sandbox/host-agents/maven/poc-podman/README.md
+git add claude-sandbox/host-agents/maven/podman/README.md
 git commit -m "docs(maven-podman): PoC run-instructies + fallbacks (#44)"
 ```
 

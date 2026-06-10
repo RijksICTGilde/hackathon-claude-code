@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-setup voor rootless Podman-in-Docker (issue #44, PoC).
+# Host-setup voor rootless Podman-in-Docker (issue #44).
 # Laadt een AppArmor-profiel dat ALLEEN de sandbox-container userns laat
 # gebruiken, zodat de host-hardening (apparmor_restrict_unprivileged_userns)
 # systeembreed aan kan blijven. Op niet-gehardende hosts is het profiel

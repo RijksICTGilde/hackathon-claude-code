@@ -20,7 +20,7 @@ services:
       # Pad is relatief t.o.v. dit compose-bestand (draai compose vanuit claude-sandbox/).
       # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
       # zet tijdelijk "seccomp=unconfined".
-      - "seccomp=host-agents/maven/poc-podman/seccomp/podman-sandbox.json"
+      - "seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json"
       # AppArmor: custom profiel dat userns toestaat op gehardende Ubuntu/Tuxedo
       # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
       # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh

@@ -11,7 +11,7 @@ vanuit de container. De oplossing is een MCP-server
 > Testcontainers **ín** de sandbox draaien via rootless Podman, zonder deze
 > host-agent en zonder de container→host code-execution-bridge die hij per
 > ontwerp is (zie [ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md)
-> en issue #44). Setup: `host-agents/maven/poc-podman/README.md`. **Deze
+> en issue #44). Setup: `host-agents/maven/podman/README.md`. **Deze
 > host-agent is de fallback** voor hosts waar dat niet kan (geen userns/`/dev/fuse`/
 > AppArmor-mogelijkheid, of Docker/Rancher Desktop op Mac/Windows) of wie de
 > outer-sandbox-relaxaties van de podman-route niet wil.

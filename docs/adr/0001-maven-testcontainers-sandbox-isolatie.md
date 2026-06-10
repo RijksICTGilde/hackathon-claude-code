@@ -1,6 +1,7 @@
 # ADR 0001 — Isolatie voor Maven/Testcontainers-builds in de sandbox
 
-**Status:** Geaccepteerd (PoC geslaagd) — 2026-06-10
+**Status:** Voorgesteld — werkend op Linux, in review (PR). Breekt door zodra
+breed bevestigd (collega-tests); dan kan de host-agent vervallen. — 2026-06-10
 **Context-issue:** [#44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 **Zie ook:** `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`
 (ontwerp, bevindingen, volledige werkende config, security-balans).
@@ -75,7 +76,10 @@ met kernel-escape in scope. Genoteerd in de spec.
 ## Consequenties
 
 - Projecten die Testcontainers nodig hebben: gebruik de podman-set
-  (`host-agents/maven/poc-podman/README.md`).
-- De host-agent blijft beschikbaar en is nu expliciet als fallback gedocumenteerd
-  in `docs/maven-mcp-agent.md`.
+  (`host-agents/maven/podman/README.md`).
+- **Intentie: de host-agent vervangen.** De host-agent blijft tijdelijk
+  beschikbaar (gedocumenteerd als fallback in `docs/maven-mcp-agent.md`) totdat
+  de podman-opzet breed bevestigd is (collega-tests, en Mac/Windows
+  geverifieerd). Lukt dat en is de oplossing objectief beter → host-agent
+  verwijderen. Lukt het niet → dan is dit geen oplossing en gaat de PR niet door.
 - Beslissing C/D: uitgesteld, niet nu.

@@ -1,8 +1,15 @@
-# Maven via rootless Podman-in-Docker (PoC)
+# Maven via rootless Podman-in-Docker (ontwerp + bevindingen)
 
 **Datum:** 2026-06-10
-**Status:** PoC GESLAAGD op gehardende host (Tuxedo/Ubuntu, sysctl=1). Testcontainers-build draaide echt (`Tests run: 1, Failures: 0, Errors: 0`). Zie "PoC-bevindingen" + "Werkende configuratie" onderaan.
+**Status:** Werkend op Linux (gehardende Tuxedo/Ubuntu, sysctl=1) — voorgesteld als
+vervanger van de Maven host-agent, in review (PR). Testcontainers-build bevestigd
+op een echt project (289+46 tests groen). Mac/Windows nog te verifiëren. Zie
+"Bevindingen" + "Werkende configuratie" onderaan.
 **Context:** [issue #44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
+
+> De ontwerp-secties hieronder ("Oorspronkelijke scope/onzekerheden",
+> "Verificatie", "Beslis-criteria") beschrijven de opzet tijdens de uitwerking;
+> de uitkomst staat in "Bevindingen" en verder.
 
 ## Probleem
 
@@ -74,7 +81,7 @@ Host (Docker Desktop / Rancher / Linux Docker)
 Podman-in-Docker zit qua isolatie boven de host-agent en onder sysbox, maar is als
 enige sterkere optie cross-platform en vereist geen speciale host-runtime.
 
-## PoC-scope
+## Oorspronkelijke scope
 
 Doel: bewijzen dat rootless Podman ín de sandbox-container een Maven build met
 Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
@@ -85,10 +92,10 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 - Smoke-test: `podman info` → kale nested container → minimale Maven+Testcontainers
   build groen.
 
-**Niet (pas ná geslaagde PoC):**
+**Niet (pas ná brede bevestiging):**
 - Host-agent verwijderen of MCP-tool herschrijven.
 - Documentatie in `maven-mcp-agent.md`/`SECURITY.md` als definitieve aanbeveling
-  (DoD van #44) — dat volgt op de PoC-uitslag.
+  (DoD van #44) — dat volgde op de uitkomst.
 - Optie C/D besluit.
 
 ## Artefacten
@@ -97,15 +104,15 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 |---|---|
 | `claude-sandbox/Dockerfile` | `ARG INSTALL_PODMAN=false`; bij `true`: `podman fuse-overlayfs uidmap passt slirp4netns` installeren, `/etc/subuid`+`/etc/subgid` voor `claude`, rootless `storage.conf` (fuse-overlayfs) + `containers.conf` |
 | `claude-sandbox/compose.override.podman.yml.example` | `devices: [/dev/fuse]`, `security_opt: [seccomp=...]` (zie onzekerheden), env-hints |
-| `claude-sandbox/host-agents/maven/poc-podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
-| `claude-sandbox/host-agents/maven/poc-podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
-| `claude-sandbox/host-agents/maven/poc-podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
+| `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
+| `claude-sandbox/host-agents/maven/podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
+| `claude-sandbox/host-agents/maven/podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
 
-## Bekende onzekerheden (wat de PoC moet uitwijzen)
+## Oorspronkelijke onzekerheden (inmiddels opgelost — zie Bevindingen)
 
 1. **seccomp.** Het default-Docker-seccomp-profiel blokkeert mogelijk syscalls die
    nested rootless podman nodig heeft. Eerst proberen met een gericht profiel;
-   `seccomp=unconfined` als de PoC anders niet draait — afweging documenteren
+   `seccomp=unconfined` als het anders niet draait — afweging documenteren
    (unconfined verzwakt de outer sandbox).
 2. **`/dev/fuse`.** fuse-overlayfs vereist `--device /dev/fuse`. Werkt de
    Docker/Rancher-VM mee? Zo niet: terugval op `vfs`-storage (werkt overal, traag
@@ -120,7 +127,7 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
    `production.cloudflare.docker.com`). Nested egress loopt via de
    sandbox-iptables, dus dezelfde whitelist geldt.
 5. **Ryuk.** Op sommige nested setups werkt de Ryuk-resource-reaper niet; mogelijk
-   `TESTCONTAINERS_RYUK_DISABLED=true` nodig voor de PoC.
+   `TESTCONTAINERS_RYUK_DISABLED=true` nodig in deze opzet.
 6. **Performance.** Nested rootless + fuse-overlayfs (of vfs) is trager dan native.
    Globaal meten of een typische build acceptabel blijft.
 
@@ -135,12 +142,12 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 ## Verificatie
 
 De huidige werkomgeving heeft géén container-runtime, geen `/dev/fuse` en geen
-sudo — de PoC is hier **niet** live te draaien. De artefacten zijn zo gebouwd dat
+sudo — dit kon daar niet live gedraaid worden. De artefacten zijn zo gebouwd dat
 de gebruiker ze op de eigen host (waar Docker/Rancher de sandbox-image bouwt)
-uitvoert via `poc-podman/README.md`. De uitkomst (logs/uitslag) bepaalt de
+uitvoert via `podman/README.md`. De uitkomst (logs/uitslag) bepaalt de
 vervolgstap.
 
-## Beslis-criteria na de PoC
+## Beslis-criteria (gevolgd)
 
 - **Slaagt zonder `--privileged`/socket** → uitwerken als aanbevolen pad; host-agent
   degraderen tot fallback; #44-DoD (doc + ADR) afronden met deze keuze.
@@ -151,7 +158,7 @@ vervolgstap.
 
 ## Out of scope (YAGNI)
 
-- Host-agent verwijderen vóór de PoC slaagt.
+- Host-agent verwijderen vóór brede bevestiging.
 - Mac/Windows-specifieke `podman machine`-variant (niet nodig: Podman draait ín de
   Linux-container, niet op de host).
 - Productie-harden van de nested setup (egress-policy per build, image-allowlist) —
@@ -159,9 +166,9 @@ vervolgstap.
 
 ---
 
-## PoC-bevindingen (2026-06-10)
+## Bevindingen (2026-06-10)
 
-PoC gedraaid op een host met **TUXEDO OS** (Ubuntu-based), native rootful Docker
+Uitgevoerd op een host met **TUXEDO OS** (Ubuntu-based), native rootful Docker
 Engine. Resultaat: de kale aanpak (multi-uid rootless podman) **werkt niet** op
 gehardende Ubuntu-hosts. Twee onafhankelijke blokkades gevonden via systematisch
 debuggen (eliminatie: userns-ownership, capabilities, NoNewPrivs, seccomp,
@@ -297,7 +304,7 @@ ongewijzigd.
   `open_by_handle_at`, `acct`, `_sysctl`, `vm86*`, `nfsservctl`,
   `lookup_dcookie`. Strikt veiliger dan `unconfined` (re-blokkeert de
   escape-primitives) zonder podman te breken. Override verwijst ernaar via
-  `seccomp=host-agents/maven/poc-podman/seccomp/podman-sandbox.json`.
+  `seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json`.
   Breekt een build op een geblokkeerde syscall → uit de blocklist halen.
   **Geverifieerd** op de gehardende host: `Seccomp: 2` (filter actief, niet
   unconfined) én de Testcontainers-smoke groen (`Tests run: 1, Failures: 0`).
