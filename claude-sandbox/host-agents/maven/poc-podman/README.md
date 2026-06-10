@@ -38,7 +38,7 @@ Verwacht: het script print `nested-ok` en eindigt met `PoC GESLAAGD`.
 |---|---|---|
 | `podman info` faalt op storage | `/dev/fuse` niet door | override `/dev/fuse` controleren; anders `~/.config/containers/storage.conf` → `driver = "vfs"` (traag, geen fuse nodig) |
 | syscall/permission errors bij `podman run` | seccomp | override staat al op `seccomp=unconfined`; controleer dat de override actief is (`docker inspect`) |
-| `newuidmap: write to uid_map failed` | subuid/caps in outer container | terugval: podman met `--userns=keep-id` of single-uid mapping; check `/etc/subuid` bevat `claude:` |
+| `newuidmap: write to uid_map failed: Operation not permitted` | AppArmor `docker-default` blokkeert de write naar `/proc/<pid>/uid_map` (Debian/Ubuntu) | override staat op `apparmor=unconfined`; check `cat /proc/self/attr/current` in de container → moet `unconfined` zijn, niet `docker-default (enforce)`. Caps/subuid zijn hier NIET de oorzaak als `/proc/self/uid_map` = `0 0 4294967295`. |
 | image-pull hangt/timeout | firewall blokkeert registry | `ALLOWED_DOMAINS` uit stap 1 toevoegen en container herstarten |
 | Ryuk-container faalt | reaper in nested rootless | `TESTCONTAINERS_RYUK_DISABLED=true` (staat al in de smoke-test) |
 

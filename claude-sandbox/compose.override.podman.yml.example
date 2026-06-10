@@ -12,5 +12,10 @@ services:
       # podman nodig heeft. Begin met unconfined; verfijn naar een gericht
       # profiel zodra de PoC draait (verzwakt anders de outer sandbox).
       - "seccomp=unconfined"
+      # AppArmor (Debian/Ubuntu): het docker-default-profiel medieert writes naar
+      # /proc/<pid>/uid_map en blokkeert daarmee newuidmap → rootless podman faalt
+      # met "newuidmap: write to uid_map failed: Operation not permitted". Zelfde
+      # PoC-afweging als seccomp: later vervangen door een gericht profiel.
+      - "apparmor=unconfined"
       # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
       - "label=disable"
