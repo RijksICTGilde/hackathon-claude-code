@@ -18,6 +18,7 @@ podman run --rm alpine:3.20 echo "nested-ok"
 
 echo "== 3. podman socket service =="
 SOCK="$XDG_RUNTIME_DIR/podman/podman.sock"
+mkdir -p "$(dirname "$SOCK")"
 podman system service --time=0 "unix://$SOCK" &
 SVC=$!
 trap 'kill "$SVC" 2>/dev/null || true' EXIT
