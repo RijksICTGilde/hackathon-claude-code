@@ -38,9 +38,14 @@ if command -v podman >/dev/null 2>&1; then
     # Podman zet default de sysctl net.ipv4.ping_group_range; crun probeert die te
     # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
     # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.
+    # default_sysctls=[]: zie ping_group_range hierboven.
+    # firewall_driver=iptables: netavark roept default `nft` aan voor bridge-
+    # netwerken (Testcontainers), maar die binary zit niet in de image. De
+    # iptables-driver gebruikt iptables-nft (al aanwezig) en heeft de nft-binary
+    # niet nodig.
     containers_conf="$conf_dir/containers.conf"
     if [[ ! -f "$containers_conf" ]]; then
-        printf '[containers]\ndefault_sysctls = []\n' > "$containers_conf"
+        printf '[containers]\ndefault_sysctls = []\n\n[network]\nfirewall_driver = "iptables"\n' > "$containers_conf"
         echo "INFO: rootless podman containers.conf aangemaakt op $containers_conf"
     fi
 fi
