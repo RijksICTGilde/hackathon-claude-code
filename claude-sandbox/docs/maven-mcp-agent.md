@@ -7,6 +7,15 @@ vanuit de container. De oplossing is een MCP-server
 `run_maven`-tool aanbiedt; Claude Code in de container roept die aan via
 `host.docker.internal:7777` (SSE transport) en gebruikt zo de host-Docker.
 
+> **Voorkeursalternatief: Podman-in-Docker.** Op de meeste Linux-hosts kun je
+> Testcontainers **ín** de sandbox draaien via rootless Podman, zonder deze
+> host-agent en zonder de container→host code-execution-bridge die hij per
+> ontwerp is (zie [ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md)
+> en issue #44). Setup: `host-agents/maven/poc-podman/README.md`. **Deze
+> host-agent is de fallback** voor hosts waar dat niet kan (geen userns/`/dev/fuse`/
+> AppArmor-mogelijkheid, of Docker/Rancher Desktop op Mac/Windows) of wie de
+> outer-sandbox-relaxaties van de podman-route niet wil.
+
 ## Cross-platform setup
 | Omgeving                       | `host.docker.internal` werkt out-of-the-box | Override nodig |
 |--------------------------------|----------------------------------------------|----------------|
@@ -108,6 +117,17 @@ verkeer naar `host.docker.internal` automatisch toe — geen extra
 > **Veiligheid:** de agent voert `mvn` uit op je host met de rechten van de
 > gebruiker die hem start. Run hem niet als root en wees bewust van wat er in
 > `pom.xml` plugins zit — `mvn` voert die ongezien uit.
+>
+> Goedkope hardening (zie [ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md), issue #44):
+> - Draai `run.sh` als **dedicated least-privilege host-user** — niet in de
+>   `docker`-group, geen sudo. Dan kan een rogue `pom.xml`/`mvnw` hooguit als die
+>   user draaien, niet escaleren naar host-root.
+> - Houd host-maven-projecten **buiten** de gedeelde `projects`-map, zodat Claude
+>   geen `pom.xml`/`mvnw` kan schrijven die de host vervolgens uitvoert.
+> - Linux: bind op `127.0.0.1` of firewall poort 7777; draai niet op een
+>   onvertrouwd netwerk (de agent heeft geen auth-laag).
+>
+> Wil je deze bridge helemaal vermijden, gebruik dan Podman-in-Docker (bovenaan).
 
 ## Troubleshooting
 
