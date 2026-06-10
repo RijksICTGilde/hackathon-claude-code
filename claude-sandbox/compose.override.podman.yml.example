@@ -1,0 +1,16 @@
+# Runtime-vereisten voor rootless Podman ín de sandbox (zie
+# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md).
+# Gebruik:  docker compose -f compose.yml -f compose.override.podman.yml.example up --build -d
+# of kopieer naar compose.override.yml (let op: overschrijft de Linux-host-override).
+services:
+  claude:
+    devices:
+      # fuse-overlayfs storage voor rootless podman
+      - "/dev/fuse"
+    security_opt:
+      # PoC-startpunt: default-seccomp blokkeert syscalls die nested rootless
+      # podman nodig heeft. Begin met unconfined; verfijn naar een gericht
+      # profiel zodra de PoC draait (verzwakt anders de outer sandbox).
+      - "seccomp=unconfined"
+      # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
+      - "label=disable"

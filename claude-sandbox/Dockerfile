@@ -12,6 +12,7 @@ ARG INSTALL_OVERHEID_ZAD_ACTIONS=false
 ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
+ARG INSTALL_PODMAN=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -224,7 +225,32 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
   chmod 0440 /etc/sudoers.d/claude-firewall
 
+# Optioneel: rootless Podman voor Maven+Testcontainers ín de container
+# (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
+# 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
+# je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime
+# /dev/fuse + seccomp-stand: zie compose.override.podman.yml.example.
+RUN case "$INSTALL_PODMAN" in \
+      true) apt-get update && \
+            apt-get install -y --no-install-recommends \
+              podman fuse-overlayfs uidmap passt slirp4netns && \
+            apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            # subuid/subgid-range voor rootless mapping (idempotent) \
+            { grep -q '^claude:' /etc/subuid || echo 'claude:100000:65536' >> /etc/subuid; } && \
+            { grep -q '^claude:' /etc/subgid || echo 'claude:100000:65536' >> /etc/subgid; } ;; \
+      false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
 USER claude
+
+# Rootless storage-config (fuse-overlayfs). Komt mee via de claude-home volume
+# (gepopulate bij eerste run, zoals sdkman/.claude). Alleen bij INSTALL_PODMAN.
+RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
+      mkdir -p /home/claude/.config/containers && \
+      printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\n' \
+        > /home/claude/.config/containers/storage.conf ; \
+    fi
 
 # Startup script voor firewall
 COPY --chown=claude:claude entrypoint.sh /opt/entrypoint.sh
