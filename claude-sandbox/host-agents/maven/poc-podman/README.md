@@ -4,12 +4,18 @@ Bewijst dat de sandbox Testcontainers nested kan draaien (issue #44), zonder
 host-agent, `--privileged` of Docker-socket. Ontwerp + PoC-bevindingen:
 `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`.
 
+## Status: GESLAAGD
+Op een gehardende host (Tuxedo OS, Ubuntu-based, `sysctl=1`) draaide de
+Testcontainers-smoke echt groen (`Tests run: 1, Failures: 0, Errors: 0`).
+
 ## Wat de PoC uitwees
 Op gehardende Ubuntu/Tuxedo (`kernel.apparmor_restrict_unprivileged_userns=1`)
 werkt de naïeve multi-uid rootless podman **niet**: de host blokkeert userns-maps
 en de privileged `newuidmap`-range faalt. Daarom draait deze set in **single-uid
 modus** (geen `newuidmap`) en regelt userns via een **custom AppArmor-profiel**
-i.p.v. de host systeembreed te verzwakken.
+i.p.v. de host systeembreed te verzwakken. De volledige keten van zeven
+aanpassingen + de security-balans staan in de spec
+(`docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`).
 
 ## Per-setup matrix
 | Host-setup | Wat nodig is |

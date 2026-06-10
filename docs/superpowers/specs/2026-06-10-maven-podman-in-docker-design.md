@@ -1,7 +1,7 @@
 # Maven via rootless Podman-in-Docker (PoC)
 
 **Datum:** 2026-06-10
-**Status:** PoC uitgevoerd — herziene aanpak (single-uid + AppArmor-userns-profiel). Zie "PoC-bevindingen" onderaan.
+**Status:** PoC GESLAAGD op gehardende host (Tuxedo/Ubuntu, sysctl=1). Testcontainers-build draaide echt (`Tests run: 1, Failures: 0, Errors: 0`). Zie "PoC-bevindingen" + "Werkende configuratie" onderaan.
 **Context:** [issue #44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 
 ## Probleem
@@ -215,10 +215,53 @@ capability-set + namespaces blijven. De host-hardening blijft voor al het andere
 intact (andere containers blijven `docker-default`). Voor het #44-dreigingsbeeld
 (Claude rogue / prompt-injection) acceptabel; voor volledig vijandige code niet.
 
-### Nog te verifiëren op de host (kan niet in deze werkomgeving)
-- Werkt single-uid podman onder het custom AppArmor-`userns`-profiel met sysctl=1?
-  (self-map werkte onder sysctl=0+apparmor=unconfined — profiel zou equivalent
-  moeten zijn met sysctl aan.)
-- Draait een echte Testcontainers-build (Ryuk/Postgres) onder single-uid +
-  `ignore_chown_errors`, of breken images die naar meerdere uids chownen?
-- abi-versie van het AppArmor-profiel op niet-Ubuntu-24.04-kernels (Tuxedo).
+## Werkende configuratie (geverifieerd 2026-06-10)
+
+Op een gehardende host (Tuxedo OS, Ubuntu-based, `sysctl=1`) draaide de
+Testcontainers-smoke echt groen. De volledige keten van zeven aanpassingen,
+elk debug-stap voor stap gevonden:
+
+| # | Aanpassing | Lost op |
+|---|---|---|
+| 1 | AppArmor-profiel `flags=(unconfined) { userns, }` (host, via `setup-host.sh`), container draait eronder | userns-restrictie (`apparmor_restrict_unprivileged_userns=1`) zonder host-sysctl te versoepelen |
+| 2 | Single-uid: geen `/etc/subuid`-entry voor `claude` | privileged `newuidmap`-range-write faalt → vermeden (podman mapt alleen eigen uid) |
+| 3 | `storage.conf`: `ignore_chown_errors=true` + fuse-overlayfs | image-extractie chownt naar niet-gemapte uids in single-uid modus |
+| 4 | `/dev/net/tun` device + bestaande `NET_ADMIN` | pasta rootless-netwerk (tap-device) |
+| 5 | `containers.conf`: `default_sysctls = []` | crun schrijft `net.ipv4.ping_group_range` → `/proc/sys` is RO in outer container |
+| 6 | `--security-opt systempaths=unconfined` | nieuwe procfs in geneste mountns geweigerd (Docker maskeert `/proc` → `mount_too_revealing`) |
+| 7 | `containers.conf`: `[network] firewall_driver = "iptables"` | netavark roept default `nft` aan (niet in image); iptables-nft is wél aanwezig |
+
+`storage.conf`/`containers.conf` worden door `entrypoint.sh` idempotent op het
+`claude-home` volume geschreven (baked-in image-versie wordt door een bestaand
+named volume geschaduwd). Het AppArmor-profiel + de override-`security_opt`/
+`devices` zijn host-/compose-zaken (`setup-host.sh` + `compose.override.podman.yml`).
+
+## Security-balans (cruciaal voor de #44-afweging)
+
+Wat dit pad **dichtzet**: de container→host code-execution van #44. Geen
+host-agent, geen Docker-socket, geen `--privileged`. mvn/pom-plugins draaien in
+de sandbox (non-root `claude`), Testcontainers-children in geneste rootless
+userns. De Copilot-bug wordt niet gereproduceerd.
+
+Wat dit pad **openzet** op de *outer* sandbox-container (de prijs van de zeven
+aanpassingen): `apparmor=unconfined` (via profiel) + `seccomp=unconfined` +
+`systempaths=unconfined` (masked/RO `/proc` weg) + `/dev/fuse` + `/dev/net/tun`.
+Dat pelt de defense-in-depth van de buitenste container fors af: de
+kernel-attack-surface (syscalls, `/proc`-writes) groeit. Capability-set (geen
+`CAP_SYS_ADMIN`), namespaces en de host-userns-hardening (blijft voor al het
+andere aan) staan nog wél.
+
+**Weging:** voor het reële #44-dreigingsbeeld (Claude rogue / prompt-injectie,
+semi-vertrouwd) is dit een netto verbetering — host-user-escalatie dicht, in ruil
+voor meer kernel-oppervlak dat alleen een kernel-exploit-capabele aanval benut.
+Voor *volledig vijandige* code (kernel-escape in scope) is het pad te zwak; daar
+horen Optie C (sysbox) / D (microVM). De outer-sandbox-relaxaties gelden alleen
+voor containers die met de podman-override draaien; een normale sandbox blijft
+ongewijzigd.
+
+## Resterende vragen (out of scope PoC)
+- Zwaardere Testcontainers-images (Postgres/Ryuk) onder single-uid +
+  `ignore_chown_errors` — alpine-GenericContainer is bewezen; DB-images nog niet.
+- `seccomp`/`apparmor` verfijnen van `unconfined` naar gerichte profielen om de
+  outer-sandbox-relaxatie te beperken.
+- abi-versie van het AppArmor-profiel op andere kernels (werkte op Tuxedo).
