@@ -102,8 +102,8 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 
 | Bestand | Inhoud |
 |---|---|
-| `claude-sandbox/Dockerfile` | `ARG INSTALL_PODMAN=false`; bij `true`: `podman fuse-overlayfs uidmap passt slirp4netns` installeren, `/etc/subuid`+`/etc/subgid` voor `claude`, rootless `storage.conf` (fuse-overlayfs) + `containers.conf` |
-| `claude-sandbox/compose.override.podman.yml.example` | `devices: [/dev/fuse]`, `security_opt: [seccomp=...]` (zie onzekerheden), env-hints |
+| `claude-sandbox/Dockerfile` | `ARG INSTALL_PODMAN=false`; bij `true`: `podman fuse-overlayfs uidmap passt slirp4netns` installeren, subuid/subgid-regel voor `claude` **verwijderd** (single-uid), rootless `storage.conf` (vfs) |
+| `claude-sandbox/compose.override.podman.yml.example` | `devices: [/dev/net/tun, ${PODMAN_FUSE_DEVICE:-/dev/null}]`, `security_opt: [seccomp=<profiel>, apparmor=<profiel>, systempaths=unconfined, label=disable]`, `PODMAN_STORAGE_DRIVER`-env |
 | `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
 | `claude-sandbox/host-agents/maven/podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
 | `claude-sandbox/host-agents/maven/podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
@@ -242,7 +242,7 @@ elk debug-stap voor stap gevonden:
 `PODMAN_STORAGE_DRIVER` (.env); `containers.conf` idempotent geschreven. Beide op
 het `claude-home` volume (baked-in image-versie wordt door een bestaand named
 volume geschaduwd). Het AppArmor-profiel + de override-`security_opt`/
-`devices` zijn host-/compose-zaken (`setup-host.sh` + `compose.override.podman.yml`).
+`devices` zijn host-/compose-zaken (`setup-host.sh` + `compose.override.podman.yml.example`).
 
 ## Security-balans (cruciaal voor de #44-afweging)
 
