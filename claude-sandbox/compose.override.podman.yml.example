@@ -24,3 +24,9 @@ services:
       - "apparmor=claude-sandbox-podman"
       # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
       - "label=disable"
+      # Docker maskeert delen van /proc (kcore, sysrq-trigger, /proc/sys ...). Een
+      # geneste container die een nieuwe procfs mount zou die maskering ontsluieren
+      # → kernel weigert ("mount proc: Operation not permitted"). systempaths=
+      # unconfined heft de masked/RO /proc-paden op de outer container op.
+      # LET OP: peelt outer-sandbox-hardening verder af (zie security-noot in spec).
+      - "systempaths=unconfined"
