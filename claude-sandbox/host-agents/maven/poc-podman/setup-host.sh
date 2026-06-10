@@ -15,12 +15,23 @@ PROFILE_DST="/etc/apparmor.d/claude-sandbox-podman"
 
 echo "== Host-setup: rootless Podman-in-Docker =="
 
-# 1. /dev/fuse (fuse-overlayfs storage)
-if [[ -e /dev/fuse ]]; then
-    echo "✓ /dev/fuse aanwezig"
-else
-    echo "✗ /dev/fuse ONTBREEKT — 'sudo modprobe fuse', of val terug op vfs-storage (README)." >&2
-fi
+# 1. Kernel-devices: /dev/fuse (fuse-overlayfs storage) en /dev/net/tun (rootless
+# netwerk-tap). Ontbreken ze, dan proberen we de module te laden.
+ensure_device() {
+    local dev="$1" mod="$2"
+    if [[ -e "$dev" ]]; then
+        echo "✓ $dev aanwezig"
+    else
+        echo "• $dev ontbreekt → 'sudo modprobe $mod'…"
+        if sudo modprobe "$mod" 2>/dev/null && [[ -e "$dev" ]]; then
+            echo "✓ $dev nu aanwezig"
+        else
+            echo "✗ $dev nog steeds afwezig — kernel mist '$mod'. Zie README-fallbacks." >&2
+        fi
+    fi
+}
+ensure_device /dev/fuse fuse
+ensure_device /dev/net/tun tun
 
 # 2. userns-hardening melden (informatief)
 RESTRICT="$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)"
@@ -44,7 +55,20 @@ fi
 
 echo "→ profiel laden: $PROFILE_SRC → $PROFILE_DST"
 sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
-sudo apparmor_parser -r -W "$PROFILE_DST"
+if ! sudo apparmor_parser -r -W "$PROFILE_DST" 2>/tmp/aa-err; then
+    # Oudere AppArmor kent `abi <abi/4.0>,` niet → parse-fout. Strip die regel en
+    # probeer opnieuw; de userns-regel werkt ook zonder de abi-declaratie.
+    if grep -q 'abi' /tmp/aa-err 2>/dev/null || grep -q '^abi ' "$PROFILE_DST"; then
+        echo "• apparmor_parser faalde; abi-regel strippen en opnieuw proberen…" >&2
+        sudo sed -i '/^abi /d' "$PROFILE_DST"
+        sudo apparmor_parser -r -W "$PROFILE_DST"
+    else
+        cat /tmp/aa-err >&2
+        rm -f /tmp/aa-err
+        exit 1
+    fi
+fi
+rm -f /tmp/aa-err
 echo "✓ profiel 'claude-sandbox-podman' geladen."
 echo
 echo "Start nu de sandbox met de podman-override:"
