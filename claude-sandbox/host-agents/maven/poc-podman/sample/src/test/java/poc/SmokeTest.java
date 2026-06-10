@@ -7,8 +7,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+// Naam MOET op *Test eindigen: `mvn test` draait surefire, en surefire pakt
+// alleen *Test/Test*/*Tests — NIET *IT (dat is failsafe). Een *IT-naam wordt
+// stil overgeslagen → groene build zonder dat de container ooit startte.
 @Testcontainers
-class SmokeIT {
+class SmokeTest {
 
     @Container
     GenericContainer<?> alpine =
