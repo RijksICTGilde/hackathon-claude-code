@@ -107,7 +107,9 @@ verkeer naar `host.docker.internal` automatisch toe — geen extra
 
 > **Veiligheid:** de agent voert `mvn` uit op je host met de rechten van de
 > gebruiker die hem start. Run hem niet als root en wees bewust van wat er in
-> `pom.xml` plugins zit — `mvn` voert die ongezien uit.
+> `pom.xml` plugins zit — `mvn` voert die ongezien uit. Voor het hardenen van
+> deze host-bridge op Linux, macOS en Windows, zie
+> [`maven-host-agent-hardening.md`](maven-host-agent-hardening.md).
 
 ## Troubleshooting
 
