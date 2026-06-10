@@ -6,7 +6,10 @@ host-agent, `--privileged` of Docker-socket. Ontwerp + PoC-bevindingen:
 
 ## Status: GESLAAGD
 Op een gehardende host (Tuxedo OS, Ubuntu-based, `sysctl=1`) draaide de
-Testcontainers-smoke echt groen (`Tests run: 1, Failures: 0, Errors: 0`).
+Testcontainers-smoke echt groen (`Tests run: 1, Failures: 0, Errors: 0`). Op een
+écht project bevestigd: een Quarkus-module met Redis-stack Dev-Services +
+integratietests draaide **289 + 46 tests groen** via podman in de sandbox — pas
+mét `TESTCONTAINERS_HOST_OVERRIDE=localhost` (zie hieronder).
 
 ## Wat de PoC uitwees
 Op gehardende Ubuntu/Tuxedo (`kernel.apparmor_restrict_unprivileged_userns=1`)
@@ -75,6 +78,7 @@ Verwacht: het script print `nested-ok` en eindigt met `PoC GESLAAGD`.
 | syscall/permission errors bij `podman run` | seccomp | override staat op `seccomp=unconfined`; check dat de override actief is (`docker inspect`) |
 | image-pull hangt/timeout | firewall blokkeert registry | `ALLOWED_DOMAINS` uit stap 1 toevoegen en container herstarten |
 | Ryuk-container faalt | reaper in nested rootless | `TESTCONTAINERS_RYUK_DISABLED=true` (staat al in de smoke-test) |
+| `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat nu in de smoke-test; zet hem ook in je eigen build-env) |
 
 ## Noteer voor de afweging (#44 DoD)
 

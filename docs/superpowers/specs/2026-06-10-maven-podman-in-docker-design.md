@@ -260,9 +260,28 @@ voor containers die met de podman-override draaien; een normale sandbox blijft
 ongewijzigd.
 
 ## Bevestigd
-- Volledige Testcontainers-build (zwaarder dan alpine) draaide groen in een
-  aparte sessie onder single-uid + `ignore_chown_errors` → DB-achtige images
-  werken. De single-uid-beperking blijkt in de praktijk geen blokker.
+- Volledige Testcontainers-build draaide groen in een aparte sessie op een écht
+  project: een Quarkus-module met Redis-stack Dev-Services + integratietests,
+  **289 + 46 tests groen**, image-pull van `redis/redis-stack-server` (521 MB) en
+  containerstart via podman. Single-uid + `ignore_chown_errors` is in de praktijk
+  geen blokker voor DB-achtige images.
+- **Extra nodig voor containers met port-wait** (Postgres/Redis/Quarkus
+  Dev-Services): `TESTCONTAINERS_HOST_OVERRIDE=localhost`. Rootless podman
+  publisht gepublishte poorten op localhost, maar Testcontainers resolvet de
+  container-host default als de netavark bridge-gateway (bv. `10.88.0.1`) →
+  port-wait timeout. De alpine-GenericContainer in de smoke heeft geen port-wait
+  en miste dit; nu toegevoegd aan `smoke-test.sh`.
+- Env-samenvatting voor een echte build in de sandbox:
+  ```
+  export XDG_RUNTIME_DIR="/tmp/podman-run-$(id -u)"; mkdir -p "$XDG_RUNTIME_DIR"
+  podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" &
+  export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
+  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="$XDG_RUNTIME_DIR/podman/podman.sock"
+  export TESTCONTAINERS_RYUK_DISABLED=true
+  export TESTCONTAINERS_HOST_OVERRIDE=localhost
+  ```
+- Hiermee is de host-side Maven MCP-agent in deze sandbox **niet meer nodig**
+  (wel als fallback op niet-ondersteunde hosts).
 
 ## Resterende vragen (out of scope PoC)
 - `seccomp`/`apparmor` verfijnen van `unconfined` naar gerichte profielen om de

@@ -31,6 +31,13 @@ export DOCKER_HOST="unix://$SOCK"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="$SOCK"
 # Ryuk (resource-reaper) is in nested rootless setups vaak instabiel; uit voor de PoC.
 export TESTCONTAINERS_RYUK_DISABLED=true
+# Rootless podman publisht gepublishte poorten op localhost, maar Testcontainers
+# resolvet de container-host default als de netavark bridge-gateway (bv.
+# 10.88.0.1) → port-wait timeouts op containers die op een poort wachten
+# (Postgres, Redis, Quarkus Dev-Services). Deze smoke gebruikt een alpine zonder
+# port-wait en zou het missen; echte builds hebben dit nodig. Bevestigd op een
+# echt project (289+46 tests groen pas mét deze override).
+export TESTCONTAINERS_HOST_OVERRIDE=localhost
 cd "$(dirname "$0")/sample"
 mvn -B --no-transfer-progress test
 
