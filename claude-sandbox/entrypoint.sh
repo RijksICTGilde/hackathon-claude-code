@@ -28,11 +28,20 @@ fi
 # fuse-overlayfs + ignore_chown_errors — zie docs/superpowers/specs/
 # 2026-06-10-maven-podman-in-docker-design.md.
 if command -v podman >/dev/null 2>&1; then
-    storage_conf="$HOME/.config/containers/storage.conf"
+    conf_dir="$HOME/.config/containers"
+    mkdir -p "$conf_dir"
+    storage_conf="$conf_dir/storage.conf"
     if [[ ! -f "$storage_conf" ]]; then
-        mkdir -p "$(dirname "$storage_conf")"
         printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' > "$storage_conf"
         echo "INFO: rootless podman storage.conf aangemaakt op $storage_conf"
+    fi
+    # Podman zet default de sysctl net.ipv4.ping_group_range; crun probeert die te
+    # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
+    # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.
+    containers_conf="$conf_dir/containers.conf"
+    if [[ ! -f "$containers_conf" ]]; then
+        printf '[containers]\ndefault_sysctls = []\n' > "$containers_conf"
+        echo "INFO: rootless podman containers.conf aangemaakt op $containers_conf"
     fi
 fi
 

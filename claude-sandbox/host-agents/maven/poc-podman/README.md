@@ -63,6 +63,7 @@ Verwacht: het script print `nested-ok` en eindigt met `PoC GESLAAGD`.
 | `newuidmap: write to uid_map failed` | je draait toch multi-uid (subuid-entry aanwezig) | image is single-uid (geen subuid). Check `cat /etc/subuid` in de container → geen `claude:`-regel. |
 | `podman info` faalt op storage | `/dev/fuse` niet door | override `/dev/fuse` controleren; anders `~/.config/containers/storage.conf` → `driver = "vfs"` (traag, geen fuse) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
+| `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit nu bij start) |
 | `graphOptions: {}` / `ignore_chown_errors` ontbreekt | storage.conf landde niet (bestaand volume schaduwt de baked-in versie) | entrypoint schrijft hem nu bij start; bij een oud volume eenmalig handmatig: zie `entrypoint.sh`-blok, of recreate met een verse `claude-home` |
 | image-extractie faalt op chown | single-uid kan niet naar andere uids chownen | `ignore_chown_errors=true` staat al in storage.conf; controleer dat het meekwam (`podman info` → graphOptions) |
 | syscall/permission errors bij `podman run` | seccomp | override staat op `seccomp=unconfined`; check dat de override actief is (`docker inspect`) |
