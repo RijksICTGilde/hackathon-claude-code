@@ -21,6 +21,21 @@ if [[ ! -f /home/claude/.sdkman/bin/sdkman-init.sh ]]; then
     echo "INFO: SDKman/JVM niet aanwezig in deze image — herbouw met INSTALL_JVM=true om 'sdk install java' etc. te kunnen draaien." >&2
 fi
 
+# Rootless podman storage-config op het claude-home volume zetten. Baked-in in de
+# image werkt niet betrouwbaar: een al bestaand named volume wordt NIET opnieuw
+# uit de image gevuld, dus de image-versie wordt geschaduwd. Daarom hier bij
+# elke start, idempotent (alleen schrijven als hij ontbreekt). single-uid +
+# fuse-overlayfs + ignore_chown_errors — zie docs/superpowers/specs/
+# 2026-06-10-maven-podman-in-docker-design.md.
+if command -v podman >/dev/null 2>&1; then
+    storage_conf="$HOME/.config/containers/storage.conf"
+    if [[ ! -f "$storage_conf" ]]; then
+        mkdir -p "$(dirname "$storage_conf")"
+        printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' > "$storage_conf"
+        echo "INFO: rootless podman storage.conf aangemaakt op $storage_conf"
+    fi
+fi
+
 # Geïnstalleerde marketplaces verversen zodat plugin-bundels up-to-date blijven
 # zonder image-rebuild. Niet-fataal: bij netwerk-failure of upstream-issue
 # waarschuwen we en draaien we door met de bestaande marketplace-snapshot.
