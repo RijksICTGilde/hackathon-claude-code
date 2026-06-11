@@ -27,7 +27,7 @@ fi
 # elke start, idempotent (alleen schrijven als hij ontbreekt). Default = vfs:
 # veilig, geen /dev/fuse / geen kernel-FUSE-oppervlak (zie spec). Voor meer
 # snelheid kun je naar fuse-overlayfs (vereist /dev/fuse) — zie de noot in
-# compose.override.podman.yml. single-uid → ignore_chown_errors.
+# compose.override.podman-linux.yml. single-uid → ignore_chown_errors.
 if command -v podman >/dev/null 2>&1; then
     conf_dir="$HOME/.config/containers"
     mkdir -p "$conf_dir"
@@ -38,7 +38,7 @@ if command -v podman >/dev/null 2>&1; then
     # storage.conf is een gegenereerd bestand: elke start herschreven uit de env.
     driver="${PODMAN_STORAGE_DRIVER:-vfs}"
     if [[ "$driver" == "overlay" && ! -e /dev/fuse ]]; then
-        echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Zet PODMAN_FUSE_DEVICE=/dev/fuse in .env (zie compose.override.podman.yml)." >&2
+        echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Zet PODMAN_FUSE_DEVICE=/dev/fuse in .env (zie compose.override.podman-linux.yml)." >&2
         driver="vfs"
     fi
     case "$driver" in

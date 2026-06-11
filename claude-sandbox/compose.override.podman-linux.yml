@@ -2,7 +2,7 @@
 # docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md).
 # Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml — dat zou
 # auto-laden en de relaxaties op elke `docker compose up` afdwingen):
-#   docker compose -f compose.yml -f compose.override.podman.yml up --build -d
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d
 services:
   claude:
     environment:

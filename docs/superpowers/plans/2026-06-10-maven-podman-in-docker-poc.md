@@ -19,7 +19,7 @@
 | `claude-sandbox/Dockerfile` | Conditioneel rootless Podman installeren (ARG) |
 | `claude-sandbox/compose.yml` | `INSTALL_PODMAN`-arg doorgeven (default false) |
 | `claude-sandbox/.env.sample` | `INSTALL_PODMAN`-flag documenteren |
-| `claude-sandbox/compose.override.podman.yml` | runtime: `/dev/fuse` + seccomp |
+| `claude-sandbox/compose.override.podman-linux.yml` | runtime: `/dev/fuse` + seccomp |
 | `claude-sandbox/host-agents/maven/podman/sample/pom.xml` | minimaal Maven-project |
 | `claude-sandbox/host-agents/maven/podman/sample/src/test/java/poc/SmokeIT.java` | één Testcontainers-test |
 | `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | rootless-podman + Testcontainers smoke |
@@ -130,14 +130,14 @@ git commit -m "feat(sandbox): INSTALL_PODMAN doorgeven via compose + .env.sample
 ## Task 3: compose-override voor runtime-capabilities
 
 **Files:**
-- Create: `claude-sandbox/compose.override.podman.yml`
+- Create: `claude-sandbox/compose.override.podman-linux.yml`
 
 - [ ] **Step 1: Bestand schrijven**
 
 ```yaml
 # Runtime-vereisten voor rootless Podman ín de sandbox (zie
 # docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md).
-# Gebruik:  docker compose -f compose.yml -f compose.override.podman.yml up --build -d
+# Gebruik:  docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d
 # of kopieer naar compose.override.yml (let op: overschrijft de Linux-host-override).
 services:
   claude:
@@ -155,13 +155,13 @@ services:
 
 - [ ] **Step 2: Check**
 
-Run (host): `docker compose -f claude-sandbox/compose.yml -f claude-sandbox/compose.override.podman.yml config >/dev/null && echo OK`.
+Run (host): `docker compose -f claude-sandbox/compose.yml -f claude-sandbox/compose.override.podman-linux.yml config >/dev/null && echo OK`.
 In deze omgeving: YAML laadt zonder syntaxfout (`python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' <file>`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add claude-sandbox/compose.override.podman.yml
+git add claude-sandbox/compose.override.podman-linux.yml
 git commit -m "feat(sandbox): compose-override voor rootless podman runtime (#44)"
 ```
 
@@ -350,7 +350,7 @@ host-agent, `--privileged` of Docker-socket. Ontwerp:
    ```
    echo "INSTALL_PODMAN=true" >> claude-sandbox/.env   # of in .env.sample-kopie
    cd claude-sandbox
-   docker compose -f compose.yml -f compose.override.podman.yml up --build -d
+   docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d
    ```
 2. Registry-egress toestaan (firewall whitelist bevat geen registries). Zet in
    `.env` vóór stap 1:

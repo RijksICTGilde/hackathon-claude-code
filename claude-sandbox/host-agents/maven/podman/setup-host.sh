@@ -72,5 +72,5 @@ rm -f /tmp/aa-err
 echo "✓ profiel 'claude-sandbox-podman' geladen."
 echo
 echo "Start nu de sandbox met de podman-override:"
-echo "  docker compose -f compose.yml -f compose.override.podman.yml up -d --force-recreate"
+echo "  docker compose -f compose.yml -f compose.override.podman-linux.yml up -d --force-recreate"
 echo "== klaar =="
