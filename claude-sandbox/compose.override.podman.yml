@@ -1,7 +1,8 @@
 # Runtime-vereisten voor rootless Podman ín de sandbox (zie
 # docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md).
-# Gebruik:  docker compose -f compose.yml -f compose.override.podman.yml.example up --build -d
-# of kopieer naar compose.override.yml (let op: overschrijft de Linux-host-override).
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml — dat zou
+# auto-laden en de relaxaties op elke `docker compose up` afdwingen):
+#   docker compose -f compose.yml -f compose.override.podman.yml up --build -d
 services:
   claude:
     environment:

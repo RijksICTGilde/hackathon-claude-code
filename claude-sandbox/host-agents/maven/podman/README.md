@@ -50,7 +50,7 @@ Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
 3. Image bouwen + starten met de runtime-override (seccomp, apparmor, netwerk):
    ```
    cd claude-sandbox
-   docker compose -f compose.yml -f compose.override.podman.yml.example up --build -d --force-recreate
+   docker compose -f compose.yml -f compose.override.podman.yml up --build -d --force-recreate
    ```
    Storage is default `vfs` (veilig, geen `/dev/fuse`). Sneller? Zet in `.env`
    `PODMAN_STORAGE_DRIVER=overlay` + `PODMAN_FUSE_DEVICE=/dev/fuse` (fuse-overlayfs;

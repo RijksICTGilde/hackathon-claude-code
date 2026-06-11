@@ -38,7 +38,7 @@ custom AppArmor-`userns`-profiel, `/dev/net/tun`, `vfs`-storage met
 `ignore_chown_errors` (default; fuse-overlayfs + `/dev/fuse` optioneel via `.env`),
 tailored seccomp-blocklist, `systempaths=unconfined`, `firewall_driver=iptables`,
 `TESTCONTAINERS_HOST_OVERRIDE=localhost`. **Opt-in** (`INSTALL_PODMAN=false`
-default + aparte `compose.override.podman.yml.example`).
+default + aparte `compose.override.podman.yml`).
 Geverifieerd: echte Quarkus/Redis-build 289+46 tests groen.
 
 ### 2. Host-agent — blijft als fallback

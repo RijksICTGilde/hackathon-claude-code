@@ -229,7 +229,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 # (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
 # 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
 # je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime de
-# seccomp/apparmor-stand uit compose.override.podman.yml.example. Storage =
+# seccomp/apparmor-stand uit compose.override.podman.yml. Storage =
 # vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
 # fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
 # /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
