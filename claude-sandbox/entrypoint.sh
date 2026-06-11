@@ -38,7 +38,7 @@ if command -v podman >/dev/null 2>&1; then
     # storage.conf is een gegenereerd bestand: elke start herschreven uit de env.
     driver="${PODMAN_STORAGE_DRIVER:-vfs}"
     if [[ "$driver" == "overlay" && ! -e /dev/fuse ]]; then
-        echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Zet PODMAN_FUSE_DEVICE=/dev/fuse in .env (zie compose.override.podman-linux.yml)." >&2
+        echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Uncomment de '/dev/fuse'-device in je podman-override (compose.override.podman-*.yml) en recreate." >&2
         driver="vfs"
     fi
     case "$driver" in

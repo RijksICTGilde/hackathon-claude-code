@@ -14,11 +14,12 @@ services:
       # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
       # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
       - "/dev/net/tun"
-      # Optioneel fuse-device, via .env. Default /dev/null = no-op (vfs heeft geen
-      # device nodig). Voor de snellere fuse-overlayfs-driver: zet in .env
-      # PODMAN_STORAGE_DRIVER=overlay én PODMAN_FUSE_DEVICE=/dev/fuse. /dev/fuse
-      # vergroot het kernel-aanvaloppervlak (FUSE-CVE's) — daarom niet default.
-      - "${PODMAN_FUSE_DEVICE:-/dev/null}"
+      # Optioneel: /dev/fuse — alleen nodig voor de snellere fuse-overlayfs-driver
+      # (`PODMAN_STORAGE_DRIVER=overlay` in .env). Uitgecommentarieerd want het
+      # vergroot het kernel-aanvaloppervlak (FUSE-CVE's); default-storage vfs heeft
+      # het niet nodig. Vergeet je dit bij overlay, dan valt de entrypoint terug op
+      # vfs met een waarschuwing — geen broken start.
+      # - "/dev/fuse"
     security_opt:
       # Tailored seccomp-blocklist i.p.v. unconfined. defaultAction=ALLOW (zodat
       # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak

@@ -18,9 +18,10 @@ services:
     devices:
       # /dev/net/tun is in de Fedora CoreOS VM al aanwezig (pasta/slirp4netns tap).
       - "/dev/net/tun"
-      # Default /dev/null = no-op (vfs heeft geen device nodig). Voor fuse-overlayfs:
-      # .env → PODMAN_STORAGE_DRIVER=overlay én PODMAN_FUSE_DEVICE=/dev/fuse.
-      - "${PODMAN_FUSE_DEVICE:-/dev/null}"
+      # Optioneel: /dev/fuse — alleen voor fuse-overlayfs (`PODMAN_STORAGE_DRIVER=
+      # overlay`). Uitgecommentarieerd (FUSE-kernel-aanvaloppervlak); vfs heeft het
+      # niet nodig. Bij overlay zonder dit device valt de entrypoint terug op vfs.
+      # - "/dev/fuse"
     security_opt:
       # Zie compose.override.podman-linux.yml voor de motivatie van deze seccomp-blocklist.
       # ABSOLUUT pad via ${PWD}: podman-compose geeft de string ongewijzigd door aan

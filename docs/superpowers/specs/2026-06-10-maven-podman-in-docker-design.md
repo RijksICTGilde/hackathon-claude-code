@@ -103,7 +103,7 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 | Bestand | Inhoud |
 |---|---|
 | `claude-sandbox/Dockerfile` | `ARG INSTALL_PODMAN=false`; bij `true`: `podman fuse-overlayfs uidmap passt slirp4netns` installeren, subuid/subgid-regel voor `claude` **verwijderd** (single-uid), rootless `storage.conf` (vfs) |
-| `claude-sandbox/compose.override.podman-linux.yml` | `devices: [/dev/net/tun, ${PODMAN_FUSE_DEVICE:-/dev/null}]`, `security_opt: [seccomp=<profiel>, apparmor=<profiel>, systempaths=unconfined, label=disable]`, `PODMAN_STORAGE_DRIVER`-env |
+| `claude-sandbox/compose.override.podman-linux.yml` | `devices: [/dev/net/tun]` (+ uitgecommentarieerde `/dev/fuse` voor overlay), `security_opt: [seccomp=<profiel>, apparmor=<profiel>, systempaths=unconfined, label=disable]`, `PODMAN_STORAGE_DRIVER`-env |
 | `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
 | `claude-sandbox/host-agents/maven/podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
 | `claude-sandbox/host-agents/maven/podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
@@ -254,8 +254,8 @@ userns. De Copilot-bug wordt niet gereproduceerd.
 Wat dit pad **openzet** op de *outer* sandbox-container: `apparmor=unconfined`
 (via profiel) + tailored seccomp + `systempaths=unconfined` (masked/RO `/proc`
 weg) + `/dev/net/tun`. `/dev/fuse` is **niet** standaard open — alleen als je
-bewust de fuse-overlayfs-driver kiest (`PODMAN_STORAGE_DRIVER=overlay` +
-`PODMAN_FUSE_DEVICE=/dev/fuse` in `.env`); default is `vfs` zonder device.
+bewust de fuse-overlayfs-driver kiest (`PODMAN_STORAGE_DRIVER=overlay` in `.env`
+én de `/dev/fuse`-device uncomment in de override); default is `vfs` zonder device.
 Op SELinux-hosts (Fedora/RHEL) zet `label=disable` bovendien de SELinux-confinement
 van déze container uit (no-op op AppArmor-hosts).
 Dat pelt de defense-in-depth van de buitenste container fors af: de

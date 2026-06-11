@@ -54,9 +54,9 @@ Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
    docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d --force-recreate
    ```
    Storage is default `vfs` (veilig, geen `/dev/fuse`). Sneller? Zet in `.env`
-   `PODMAN_STORAGE_DRIVER=overlay` + `PODMAN_FUSE_DEVICE=/dev/fuse` (fuse-overlayfs;
-   groter kernel-aanvaloppervlak) en recreate. Wisselen vereist eenmalig
-   `podman system reset` in de container.
+   `PODMAN_STORAGE_DRIVER=overlay` én uncomment de `/dev/fuse`-device in de
+   override (fuse-overlayfs; groter kernel-aanvaloppervlak), en recreate. Wisselen
+   vereist eenmalig `podman system reset` in de container.
 4. JDK+Maven in de container (eenmalig, blijft in het claude-home volume):
    ```
    docker compose exec claude bash -lc \
@@ -130,7 +130,7 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 |---|---|---|
 | `unshare ... uid_map: Operation not permitted` of `podman info` faalt op userns | host-hardening blokkeert userns; profiel niet (goed) geladen | `setup-host.sh` gedraaid? `cat /proc/self/attr/current` in de container → moet `claude-sandbox-podman` zijn. Container ná het laden **recreaten** (`--force-recreate`) — de AppArmor-mediatie klikt vast bij start. |
 | `newuidmap: write to uid_map failed` | je draait toch multi-uid (subuid-entry aanwezig) | image is single-uid (geen subuid). Check `cat /etc/subuid` in de container → geen `claude:`-regel. |
-| `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse` ontbreekt | entrypoint valt automatisch terug op vfs + waarschuwt; zet `PODMAN_FUSE_DEVICE=/dev/fuse` in `.env` of blijf op `vfs` (default) |
+| `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse`-device niet doorgegeven | entrypoint valt automatisch terug op vfs + waarschuwt; uncomment de `/dev/fuse`-device in de override of blijf op `vfs` (default) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
 | `mount proc: Operation not permitted` | Docker maskeert `/proc`; geneste procfs-mount geweigerd | override staat op `systempaths=unconfined` |
