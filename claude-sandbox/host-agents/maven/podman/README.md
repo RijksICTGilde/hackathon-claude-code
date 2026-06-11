@@ -147,3 +147,9 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 ## Openstaand
 - Docker Desktop / Rancher Desktop (Mac/Windows) verifiëren.
 - seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
+
+## Maximale isolatie (eigen kernel)
+Deze opzet deelt de host-kernel (restrisico: kernel-escape). Wil je die laag óók
+sluiten: op **Linux** via Kata Containers (microVM per container) —
+`docs/kata-linux-maximale-isolatie.md`. Op **Mac/Windows** is die kernel-grens er
+al (Docker Desktop/Rancher/`podman machine` draaien in een VM).

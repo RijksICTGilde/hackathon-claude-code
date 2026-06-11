@@ -54,8 +54,11 @@ Mac/Windows (nog te verifiëren). Met de goedkope hardening hieronder.
 > *dekkings*-fallback (waar podman niet kan), geen security-upgrade.
 
 ### Optie C (sysbox) / D (microVM)
-Out-of-scope voor nu. Alleen overwegen bij écht onvertrouwde of multi-tenant code
-met kernel-escape in scope. Genoteerd in de spec.
+Out-of-scope als default. Voor wie de kernel-escape-laag tóch wil sluiten (écht
+onvertrouwde / multi-tenant code): op **Linux-native** via Kata Containers
+(eigen guest-kernel per container) — zie `docs/kata-linux-maximale-isolatie.md`.
+Op **Mac/Windows is die kernel-grens er al** (Docker Desktop/Rancher/`podman
+machine` draaien in een VM), dus daar is Kata niet nodig.
 
 ## Security-balans (podman-in-docker)
 
