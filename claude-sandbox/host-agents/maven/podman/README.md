@@ -150,6 +150,7 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 
 ## Maximale isolatie (eigen kernel)
 Deze opzet deelt de host-kernel (restrisico: kernel-escape). Wil je die laag óók
-sluiten: op **Linux** via Kata Containers (microVM per container) —
-`docs/kata-linux-maximale-isolatie.md`. Op **Mac/Windows** is die kernel-grens er
-al (Docker Desktop/Rancher/`podman machine` draaien in een VM).
+sluiten: op **Linux** het makkelijkst door de sandbox in een **VM** te draaien
+(podman in Lima/Multipass) — `docs/maximale-isolatie-linux.md` (met Kata/gVisor
+als alternatieven). Op **Mac/Windows** is die kernel-grens er al (Docker
+Desktop/Rancher/`podman machine` draaien in een VM).
