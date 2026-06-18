@@ -13,3 +13,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  # Python-deps van de Maven host-agent. Zonder deze entry scant Dependabot
+  # requirements.txt niet (geen pip in de dependency graph), waardoor o.a.
+  # cryptography/starlette/python-multipart stil verouderden tot Trivy ze ving.
+  - package-ecosystem: "pip"
+    directory: "/claude-sandbox/host-agents/maven"
+    schedule:
+      interval: "weekly"
