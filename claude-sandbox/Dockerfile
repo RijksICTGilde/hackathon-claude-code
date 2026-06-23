@@ -12,6 +12,7 @@ ARG INSTALL_OVERHEID_ZAD_ACTIONS=false
 ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
+ARG INSTALL_PODMAN=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -224,7 +225,43 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
   chmod 0440 /etc/sudoers.d/claude-firewall
 
+# Optioneel: rootless Podman voor Maven+Testcontainers ín de container
+# (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
+# 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
+# je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime de
+# seccomp/apparmor-stand uit compose.override.podman.yml. Storage =
+# vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
+# fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
+# /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
+#
+# SINGLE-UID modus: het `sed` hieronder verwijdert bewust een eventuele
+# subuid/subgid-range voor `claude`. Op gehardende Ubuntu/Tuxedo faalt de
+# privileged newuidmap-range-write (zie spec, blokkade #2); zonder subuid-entry
+# mapt podman alleen de eigen uid als root (count 1) en gebruikt newuidmap niet.
+# (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
+# fragiel over Docker-builders heen.)
+RUN case "$INSTALL_PODMAN" in \
+      true) apt-get update && \
+            apt-get install -y --no-install-recommends \
+              podman fuse-overlayfs uidmap passt slirp4netns && \
+            apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ;; \
+      false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
 USER claude
+
+# Rootless storage-config (vfs + single-uid). Komt mee via de claude-home volume
+# (gepopulate bij eerste run, zoals sdkman/.claude); de entrypoint schrijft 'm
+# ook op een bestaand volume. Default vfs = veilig (geen /dev/fuse / geen
+# kernel-FUSE-oppervlak). ignore_chown_errors is nodig in single-uid modus:
+# images die naar uids buiten de enige gemapte uid chownen mogen niet hard falen.
+RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
+      mkdir -p /home/claude/.config/containers && \
+      printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' \
+        > /home/claude/.config/containers/storage.conf ; \
+    fi
 
 # Startup script voor firewall
 COPY --chown=claude:claude entrypoint.sh /opt/entrypoint.sh

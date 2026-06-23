@@ -12,6 +12,8 @@ services:
         INSTALL_ANTHROPIC_PLUGINS: "${INSTALL_ANTHROPIC_PLUGINS:?stel INSTALL_ANTHROPIC_PLUGINS in op true of false in .env}"
         INSTALL_LOCAL_SKILLS: "${INSTALL_LOCAL_SKILLS:?stel INSTALL_LOCAL_SKILLS in op true of false in .env}"
         INSTALL_CAVEMAN: "${INSTALL_CAVEMAN:?stel INSTALL_CAVEMAN in op true of false in .env}"
+        # Optioneel, default false: nieuwe flag mag bestaande .env niet breken.
+        INSTALL_PODMAN: "${INSTALL_PODMAN:-false}"
     container_name: claude-sandbox
     restart: unless-stopped
     # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset) — zonder

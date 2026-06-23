@@ -1,0 +1,46 @@
+# Runtime-vereisten voor rootless Podman ín de sandbox (zie
+# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md).
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml — dat zou
+# auto-laden en de relaxaties op elke `docker compose up` afdwingen):
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d
+services:
+  claude:
+    environment:
+      # Storage-driver, via .env. vfs (default, veilig) of overlay (fuse-overlayfs,
+      # sneller). Entrypoint genereert storage.conf hieruit.
+      - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
+    devices:
+      # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
+      # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
+      # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
+      - "/dev/net/tun"
+      # Optioneel: /dev/fuse — alleen nodig voor de snellere fuse-overlayfs-driver
+      # (`PODMAN_STORAGE_DRIVER=overlay` in .env). Uitgecommentarieerd want het
+      # vergroot het kernel-aanvaloppervlak (FUSE-CVE's); default-storage vfs heeft
+      # het niet nodig. Vergeet je dit bij overlay, dan valt de entrypoint terug op
+      # vfs met een waarschuwing — geen broken start.
+      # - "/dev/fuse"
+    security_opt:
+      # Tailored seccomp-blocklist i.p.v. unconfined. defaultAction=ALLOW (zodat
+      # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak
+      # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
+      # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
+      # bpf, perf_event_open, open_by_handle_at). Strikt veiliger dan unconfined.
+      # Pad is relatief t.o.v. dit compose-bestand (draai compose vanuit claude-sandbox/).
+      # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
+      # zet tijdelijk "seccomp=unconfined".
+      - "seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json"
+      # AppArmor: custom profiel dat userns toestaat op gehardende Ubuntu/Tuxedo
+      # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
+      # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh
+      # (anders faalt de container-start: "AppArmor profile not found"). Op een
+      # host zonder AppArmor: vervang door "apparmor=unconfined".
+      - "apparmor=claude-sandbox-podman"
+      # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
+      - "label=disable"
+      # Docker maskeert delen van /proc (kcore, sysrq-trigger, /proc/sys ...). Een
+      # geneste container die een nieuwe procfs mount zou die maskering ontsluieren
+      # → kernel weigert ("mount proc: Operation not permitted"). systempaths=
+      # unconfined heft de masked/RO /proc-paden op de outer container op.
+      # LET OP: peelt outer-sandbox-hardening verder af (zie security-noot in spec).
+      - "systempaths=unconfined"
