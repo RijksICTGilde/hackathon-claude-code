@@ -18,6 +18,27 @@
 
 # install:- channel: stable; cliVersion: 5.23.0; cliNativeVersion: 0.7.34; api: https://api.sdkman.io/2
 
+# Refuse to install on Cygwin
+if [[ "$(uname -s)" == CYGWIN_NT* ]]; then
+	echo ""
+	echo "======================================================================================================"
+	echo " SDKMAN does not support Cygwin."
+	echo ""
+	echo " The SDKMAN native components rely on POSIX path semantics that are incompatible"
+	echo " with Cygwin's path translation, which causes platform detection, candidate"
+	echo " listings, and self-update to fail in confusing ways."
+	echo ""
+	echo " On Windows, please use Windows Subsystem for Linux 2 (WSL2) instead:"
+	echo ""
+	echo "    https://learn.microsoft.com/windows/wsl/install"
+	echo ""
+	echo " Then re-run this installer from inside your WSL2 distribution."
+	echo "======================================================================================================"
+	echo ""
+	exit 1
+fi
+
+
 set -e
 
 track_last_command() {
@@ -135,8 +156,21 @@ echo ''
 
 # Sanity checks
 
+if [ -e "$SDKMAN_DIR" ] && [ ! -d "$SDKMAN_DIR" ]; then
+	echo ""
+	echo "======================================================================================================"
+	echo " Cannot install SDKMAN: \$SDKMAN_DIR exists but is not a directory."
+	echo ""
+	echo "    ${SDKMAN_DIR}"
+	echo ""
+	echo " Remove the file or set SDKMAN_DIR to a different path, then re-run the installer."
+	echo "======================================================================================================"
+	echo ""
+	exit 1
+fi
+
 echo "Looking for a previous installation of SDKMAN..."
-if [ -d "$SDKMAN_DIR" ]; then
+if [ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ]; then
 	echo "SDKMAN found."
 	echo ""
 	echo "======================================================================================================"
@@ -469,26 +503,32 @@ echo "$SDKMAN_NATIVE_VERSION" > "${SDKMAN_DIR}/var/version_native"
 
 
 if [[ $darwin == true ]]; then
-  touch "$sdkman_bash_profile"
-  echo "Attempt update of login bash profile on OSX..."
-  if [[ -z $(grep 'sdkman-init.sh' "$sdkman_bash_profile") ]]; then
-    echo -e "\n$sdkman_init_snippet" >> "$sdkman_bash_profile"
-    echo "Added sdkman init snippet to $sdkman_bash_profile"
+  if command -v bash &>/dev/null; then
+    echo "Attempt update of login bash profile on OSX..."
+    touch "$sdkman_bash_profile"
+    if [[ -z $(grep 'sdkman-init.sh' "$sdkman_bash_profile") ]]; then
+      echo -e "\n$sdkman_init_snippet" >> "$sdkman_bash_profile"
+      echo "Added sdkman init snippet to $sdkman_bash_profile"
+    fi
   fi
 else
-  echo "Attempt update of interactive bash profile on regular UNIX..."
-  touch "${sdkman_bashrc}"
-  if [[ -z $(grep 'sdkman-init.sh' "$sdkman_bashrc") ]]; then
-      echo -e "\n$sdkman_init_snippet" >> "$sdkman_bashrc"
-      echo "Added sdkman init snippet to $sdkman_bashrc"
+  if command -v bash &>/dev/null; then
+    echo "Attempt update of interactive bash profile on regular UNIX..."
+    touch "$sdkman_bashrc"
+    if [[ -z $(grep 'sdkman-init.sh' "$sdkman_bashrc") ]]; then
+        echo -e "\n$sdkman_init_snippet" >> "$sdkman_bashrc"
+        echo "Added sdkman init snippet to $sdkman_bashrc"
+    fi
   fi
 fi
 
 echo "Attempt update of zsh profile..."
-touch "$sdkman_zshrc"
-if [[ -z $(grep 'sdkman-init.sh' "$sdkman_zshrc") ]]; then
-    echo -e "\n$sdkman_init_snippet" >> "$sdkman_zshrc"
-    echo "Updated existing ${sdkman_zshrc}"
+if command -v zsh &>/dev/null; then
+  touch "$sdkman_zshrc"
+  if [[ -z $(grep 'sdkman-init.sh' "$sdkman_zshrc") ]]; then
+      echo -e "\n$sdkman_init_snippet" >> "$sdkman_zshrc"
+      echo "Updated existing ${sdkman_zshrc}"
+  fi
 fi
 
 
