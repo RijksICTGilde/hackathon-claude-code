@@ -52,11 +52,11 @@ RUN apt-get update && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.17.0 && \
+RUN NODE_VERSION=v24.18.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=ab343a1b747c7cbf3630dfd7dbf818c5423fab2eb4f5ad1afc896f6bd121a917 ;; \
-      arm64) NODE_ARCH=arm64; SHA=67324b9e515e7d13da72571a5dd522bb23145a820f7dde15497897e466759ab3 ;; \
+      amd64) NODE_ARCH=x64;   SHA=55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742 ;; \
+      arm64) NODE_ARCH=arm64; SHA=58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
