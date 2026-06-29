@@ -7,4 +7,4 @@
 # Exact pin op mcp zodat OSV-Scanner (Scorecard Vulnerabilities-check) een
 # resolved versie ziet; een range-spec laat de scanner alle bekende GHSA's
 # voor het package open rapporteren, ongeacht de ondergrens.
-mcp==1.28.0
+mcp==1.28.1
