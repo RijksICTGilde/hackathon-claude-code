@@ -14,6 +14,12 @@ docker exec -tiu claude claude-sandbox bash   # werkt ook vanuit andere director
 
 Daarna kun je claude starten met `claude-danger`.
 
+> **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Start met beide files, bv. op macOS:
+> ```
+> podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate
+> ```
+> Zie [host-agents/maven/podman/README.md](host-agents/maven/podman/README.md) voor de per-OS-matrix (Linux/Tuxedo/macOS). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen.
+
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
 - [Maven MCP-agent (host-side)](docs/maven-mcp-agent.md) — voor Maven-builds die de host-Docker nodig hebben (Testcontainers e.d.).

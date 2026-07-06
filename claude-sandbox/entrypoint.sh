@@ -29,6 +29,21 @@ fi
 # snelheid kun je naar fuse-overlayfs (vereist /dev/fuse) — zie de noot in
 # compose.override.podman-linux.yml. single-uid → ignore_chown_errors.
 if command -v podman >/dev/null 2>&1; then
+    # Guard tegen een silent misconfig: het image is mét podman gebouwd
+    # (INSTALL_PODMAN=true), maar de container kan gestart zijn met ALLEEN
+    # compose.yml — zonder compose.override.podman-*.yml. Dan ontbreken de
+    # runtime-relaxaties (device /dev/net/tun + security_opt) en falen nested/
+    # detached containers pas veel later, losgekoppeld van de start (pasta:
+    # "Failed to open() /dev/net/tun"; en met --network=none "mount proc:
+    # Permission denied"). /dev/net/tun is de betrouwbare tell: beide overrides
+    # (linux + macos) geven het door, geen enkele plain-compose-start doet dat.
+    if [[ ! -e /dev/net/tun ]]; then
+        echo "WAARSCHUWING: podman is geïnstalleerd, maar /dev/net/tun ontbreekt — de sandbox is" \
+             "gestart ZONDER compose.override.podman-*.yml. Nested/detached containers (Testcontainers," \
+             "Quarkus Dev Services) zullen falen. Recreate mét de override, bv. op macOS:" \
+             "podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate" >&2
+    fi
+
     conf_dir="$HOME/.config/containers"
     mkdir -p "$conf_dir"
     storage_conf="$conf_dir/storage.conf"

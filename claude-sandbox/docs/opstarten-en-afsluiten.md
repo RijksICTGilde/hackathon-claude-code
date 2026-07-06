@@ -64,6 +64,13 @@ Start daarna de container met docker compose
 ```
 docker compose up --build --detach
 ```
+
+> **Nested podman (`INSTALL_PODMAN=true`)?** Dit commando gebruikt alleen `compose.yml` en laat de runtime-relaxaties weg die nested/detached containers nodig hebben (device `/dev/net/tun` + security-opts). Start dan met de override erbij, bv. op macOS:
+> ```
+> podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate
+> ```
+> De per-OS-matrix (Linux/Tuxedo/macOS) staat in [`host-agents/maven/podman/README.md`](../host-agents/maven/podman/README.md). Vergeet je de override, dan start de container gewoon, maar waarschuwt de entrypoint bij opstart dat nested containers zullen falen — controleer die log dus na een (her)start.
+
 Je kunt nu connecten met de draaiende container, bijvoorbeeld om een shell (bash, zsh) te starten of om Claude te starten:
 - `docker compose exec claude bash`
 - `docker compose exec claude claude --dangerously-skip-permissions`
