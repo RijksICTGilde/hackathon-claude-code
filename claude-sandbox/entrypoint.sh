@@ -27,7 +27,7 @@ fi
 # elke start, idempotent (alleen schrijven als hij ontbreekt). Default = vfs:
 # veilig, geen /dev/fuse / geen kernel-FUSE-oppervlak (zie spec). Voor meer
 # snelheid kun je naar fuse-overlayfs (vereist /dev/fuse) — zie de noot in
-# compose.override.podman-linux.yml. single-uid → ignore_chown_errors.
+# compose.override.podman-linux.yml. ignore_chown_errors alleen in single-uid.
 if command -v podman >/dev/null 2>&1; then
     # Guard tegen een silent misconfig: het image is mét podman gebouwd
     # (INSTALL_PODMAN=true), maar de container kan gestart zijn met ALLEEN
@@ -44,6 +44,29 @@ if command -v podman >/dev/null 2>&1; then
              "podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate" >&2
     fi
 
+    # Single-uid (default) of multi-uid? De subuid-entry komt uit de image
+    # (PODMAN_MULTIUID=true bij de build). Multi-uid vereist runtime CAP_SYS_ADMIN:
+    # de kernel laat een uid_map-write alleen toe aan wie die capability heeft in
+    # de doel-namespace óf er de eigenaar van is, en newuidmap is setuid-root
+    # (euid 0 ≠ eigenaar 1000). Docker laat CAP_SYS_ADMIN per default uit de
+    # bounding set, dus zonder compose.override.podman-multiuid.yml faalt élke
+    # podman-actie met "newuidmap: write to uid_map failed". Hier vangen we dat
+    # bij de start af i.p.v. veel later in een build.
+    if grep -q "^$(id -un):" /etc/subuid 2>/dev/null; then
+        multiuid=true
+        capbnd=$(awk '/^CapBnd:/ {print $2}' /proc/self/status)
+        if (( 0x$capbnd & (1 << 21) )); then
+            echo "INFO: rootless podman in multi-uid modus (subuid-range + CAP_SYS_ADMIN)"
+        else
+            echo "WAARSCHUWING: de image is gebouwd met PODMAN_MULTIUID=true, maar CAP_SYS_ADMIN" \
+                 "ontbreekt — de sandbox is gestart ZONDER compose.override.podman-multiuid.yml." \
+                 "Podman zal falen met 'newuidmap: write to uid_map failed'. Recreate mét die override" \
+                 "(stapel hem op je platform-override), of herbouw met PODMAN_MULTIUID=false." >&2
+        fi
+    else
+        multiuid=false
+    fi
+
     conf_dir="$HOME/.config/containers"
     mkdir -p "$conf_dir"
     storage_conf="$conf_dir/storage.conf"
@@ -56,17 +79,25 @@ if command -v podman >/dev/null 2>&1; then
         echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER=overlay maar /dev/fuse ontbreekt — terug naar vfs. Uncomment de '/dev/fuse'-device in je podman-override (compose.override.podman-*.yml) en recreate." >&2
         driver="vfs"
     fi
+    # ignore_chown_errors hoort bij single-uid: images die naar een niet-gemapte
+    # uid chownen mogen bij image-extractie niet hard falen. In multi-uid bestaan
+    # die uids wél, en dan zou de optie een echte fout maskeren — dus weglaten.
+    if [[ "$multiuid" == "true" ]]; then
+        chown_opt=""
+    else
+        chown_opt=$'ignore_chown_errors = "true"\n'
+    fi
     case "$driver" in
         overlay)
-            printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nignore_chown_errors = "true"\n' > "$storage_conf" ;;
+            printf '[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\n%s' "$chown_opt" > "$storage_conf" ;;
         vfs)
-            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' > "$storage_conf" ;;
+            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\n%s' "$chown_opt" > "$storage_conf" ;;
         *)
             echo "WAARSCHUWING: PODMAN_STORAGE_DRIVER='$driver' onbekend (verwacht vfs of overlay) — gebruik vfs." >&2
-            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\nignore_chown_errors = "true"\n' > "$storage_conf"
+            printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\n%s' "$chown_opt" > "$storage_conf"
             driver="vfs" ;;
     esac
-    echo "INFO: rootless podman storage.conf → driver=$driver ($storage_conf)"
+    echo "INFO: rootless podman storage.conf → driver=$driver multiuid=$multiuid ($storage_conf)"
     # Podman zet default de sysctl net.ipv4.ping_group_range; crun probeert die te
     # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
     # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.

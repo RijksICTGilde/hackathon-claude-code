@@ -1,0 +1,33 @@
+# Opt-in: multi-uid rootless Podman ín de sandbox. Nodig voor images die naar een
+# tweede uid chownen — postgres, mysql, mariadb en de meeste DB-images. In de
+# default single-uid modus faalt zo'n image met `chown: ...: Invalid argument`.
+#
+# STAPEL BOVENOP je platform-override, niet in plaats daarvan:
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml \
+#                  -f compose.override.podman-multiuid.yml up -d --force-recreate
+# En bouw met PODMAN_MULTIUID=true in .env (zet de subuid-range in de image).
+#
+# WAAROM CAP_SYS_ADMIN
+# Multi-uid vereist `newuidmap`, en de kernel laat een uid_map-write alleen toe
+# aan wie CAP_SYS_ADMIN heeft in de doel-namespace óf er de eigenaar van is
+# (ns->owner == euid). `newuidmap` is setuid-root, dus euid 0 terwijl de
+# namespace van uid 1000 is — de eigenaars-route valt weg en de capability is
+# vereist. Op een gewone host geeft setuid-root die vanzelf; Docker sloopt
+# CAP_SYS_ADMIN uit de bounding set, dus setuid-root kán hem niet krijgen →
+# "newuidmap: write to uid_map failed: Operation not permitted".
+#
+# WAT HET KOST
+# `claude` draait als uid 1000 met CapEff=0 en krijgt CAP_SYS_ADMIN dus niet
+# rechtstreeks in handen; alleen setuid-root-binaries kunnen hem uit de bounding
+# set trekken (hier: newuidmap/newgidmap en sudo, met een sudoers die enkel
+# init-firewall.sh toestaat). Wat je wél vergroot is de impact van een
+# root-escalatie ín de container (mount, pivot_root), boven op de
+# systempaths=unconfined die de podman-override al zet.
+#
+# Die afweging valt per platform anders uit: op Mac/Windows zit er nog een
+# VM-kernelgrens onder, op Linux met bare Docker niet. Zie de security-noot in
+# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
+services:
+  claude:
+    cap_add:
+      - SYS_ADMIN

@@ -13,6 +13,7 @@ ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
 ARG INSTALL_PODMAN=false
+ARG PODMAN_MULTIUID=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -234,10 +235,17 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
 # fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
 # /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
 #
-# SINGLE-UID modus: het `sed` hieronder verwijdert bewust een eventuele
-# subuid/subgid-range voor `claude`. Op gehardende Ubuntu/Tuxedo faalt de
-# privileged newuidmap-range-write (zie spec, blokkade #2); zonder subuid-entry
-# mapt podman alleen de eigen uid als root (count 1) en gebruikt newuidmap niet.
+# SINGLE-UID (default): het `sed` hieronder verwijdert een eventuele
+# subuid/subgid-range voor `claude`. Zonder subuid-entry mapt podman alleen de
+# eigen uid als root (count 1) en gebruikt `newuidmap` niet — die heeft
+# CAP_SYS_ADMIN nodig, en Docker laat die per default uit de bounding set (zie
+# spec, blokkade #2). Prijs: images die naar een tweede uid chownen (postgres,
+# de meeste DB-images) starten niet.
+#
+# MULTI-UID (PODMAN_MULTIUID=true): zet die range juist wél, zodat `newuidmap`
+# een echte range mapt en zulke images werken. Vereist runtime CAP_SYS_ADMIN via
+# compose.override.podman-multiuid.yml — zonder die override faalt podman met
+# "write to uid_map failed"; de entrypoint waarschuwt daarop.
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
 RUN case "$INSTALL_PODMAN" in \
@@ -245,7 +253,13 @@ RUN case "$INSTALL_PODMAN" in \
             apt-get install -y --no-install-recommends \
               podman fuse-overlayfs uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
-            sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ;; \
+            { sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ; } && \
+            case "$PODMAN_MULTIUID" in \
+              true) echo "claude:100000:65536" >> /etc/subuid && \
+                    echo "claude:100000:65536" >> /etc/subgid ;; \
+              false) echo "INFO: PODMAN_MULTIUID=false — single-uid modus" ;; \
+              *) echo "FOUT: PODMAN_MULTIUID='$PODMAN_MULTIUID' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+            esac ;; \
       false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
