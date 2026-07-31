@@ -45,7 +45,7 @@ jobs:
             url: https://get.sdkman.io
             file: vendor/install-scripts/sdkman.sh
           - name: rtk
-            url: https://raw.githubusercontent.com/rtk-ai/rtk/v0.35.0/install.sh
+            url: https://raw.githubusercontent.com/rtk-ai/rtk/v0.44.1/install.sh
             file: vendor/install-scripts/rtk.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

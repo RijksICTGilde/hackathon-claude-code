@@ -186,7 +186,7 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.35.0/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.44.1/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
