@@ -184,8 +184,51 @@ container-AppArmor-profiel, nosuid — allemaal uitgesloten):
 
 2. **Privileged multi-uid `newuidmap`-range-write** faalt met
    `write to uid_map failed: Operation not permitted`, óók met sysctl=0+recreate,
-   terwijl de single-line self-map dan wél werkt. Oorzaak niet sluitend herleid;
-   omzeild door newuidmap helemaal niet te gebruiken (single-uid modus).
+   terwijl de single-line self-map dan wél werkt. Omzeild door newuidmap helemaal
+   niet te gebruiken (single-uid modus).
+
+   **Oorzaak herleid (2026-07-31, op Rancher Desktop/macOS): ontbrekende
+   `CAP_SYS_ADMIN`.** De kernel laat een `uid_map`-write toe aan wie
+   `CAP_SYS_ADMIN` heeft in de doel-namespace óf er de eigenaar van is
+   (`ns->owner == euid`). `newuidmap` is setuid-root, dus euid 0 terwijl de
+   namespace van uid 1000 is — de eigenaars-route valt weg en de capability is
+   vereist. Op een gewone host levert setuid-root die vanzelf; Docker laat
+   `CAP_SYS_ADMIN` per default uit de bounding set (`CapBnd=…a80435fb`, bit 21
+   uit), dus setuid-root kán hem niet krijgen. Dit is **host-onafhankelijk** —
+   het geldt voor elke Docker-container, niet alleen gehardend Ubuntu — en staat
+   los van blokkade #1, die daar bovenop komt.
+
+   Metingen die dit vastpinnen (allemaal in dezelfde container):
+
+   | Probe | Uitkomst |
+   |---|---|
+   | setuid-binary gestart door `claude` | `CapEff` = volledige bounding set → setuid werkt, `NoNewPrivs=0` |
+   | container-userns | `0 0 4294967295`, init-ns, dockerd rootful → geen userns-remap |
+   | `newuidmap` als root op **root's eigen** userns | rc=0 — via de eigenaars-route, niet via de capability |
+   | `newuidmap` als root op **claude's** userns | EPERM — eigenaars-route valt weg |
+   | `newuidmap` als claude, **zonder** `SYS_ADMIN` | EPERM, `uid_map` leeg |
+   | `newuidmap` als claude, **mét** `SYS_ADMIN` | `uid_map: 0 1000 1 \| 1 100000 65536` |
+
+   Let op de derde regel: die lijkt te bewijzen dat het mechanisme werkt, maar
+   test de eigenaars-route. Dat is waarschijnlijk waarom "capabilities" bij de
+   oorspronkelijke eliminatie hierboven als uitgesloten is genoteerd.
+
+   **Gevolg voor het ontwerp.** Single-uid was niet de enige uitweg, wel de
+   uitweg die geen capability kost. Multi-uid is nu opt-in beschikbaar
+   (`PODMAN_MULTIUID=true` + `compose.override.podman-multiuid.yml`) omdat
+   single-uid images die naar een tweede uid chownen niet kan draaien —
+   `chown: ...: Invalid argument` bij postgres, mysql, mariadb. Bevestigd:
+   met multi-uid start postgres wél en levert `select 42` gewoon `42`.
+
+   **Security-afweging bij die opt-in.** `claude` draait als uid 1000 met
+   `CapEff=0` en krijgt `CAP_SYS_ADMIN` dus niet rechtstreeks in handen; alleen
+   setuid-root-binaries kunnen hem uit de bounding set trekken (hier
+   `newuidmap`/`newgidmap` en `sudo`, met een sudoers die enkel
+   `init-firewall.sh` toestaat). Wat wél groeit is de impact van een
+   root-escalatie ín de container (mount, pivot_root), boven op de
+   `systempaths=unconfined` die de podman-override al zet. Op Mac/Windows zit er
+   nog een VM-kernelgrens onder; op Linux met bare Docker niet. Daarom opt-in en
+   niet default.
 
 ### Gevolg voor het ontwerp
 De kernclaim "host-OS maakt niet uit / lichtgewicht" is **gefalsifieerd** voor
@@ -212,7 +255,7 @@ host-setup werkt**. Weinig projecten hebben dit nodig, dus per-setup is acceptab
 |---|---|---|
 | Linux Docker, niet-gehardend (sysctl=0 / oudere kernel) | open | alleen `/dev/fuse` + seccomp + single-uid engine |
 | Gehardend Ubuntu 23.10+ (sysctl=1) | restrictie | **custom AppArmor-`userns`-profiel** (geen host-verzwakking) — voorkeur; of `sysctl=0` permanent (verzwakt host) |
-| Docker Desktop / Rancher (Mac/Win) | VM, rootful | vermoedelijk out-of-the-box; nog te testen |
+| Docker Desktop / Rancher (Mac/Win) | VM, rootful | **Rancher/macOS bevestigd** (2026-07-31): geen AppArmor/SELinux in de Alpine-VM, `max_user_namespaces` open, `/dev/net/tun` + `/dev/fuse` aanwezig. `compose.override.podman-macos.yml` volstaat, via Rancher's `docker compose` — dat stuurt het seccomp-profiel inline mee en dockerd accepteert dat (podman's API weigert het, zie README) |
 
 ### Trade-off van de AppArmor-route (security)
 `flags=(unconfined) { userns, }` = effectief unconfined voor déze container + userns

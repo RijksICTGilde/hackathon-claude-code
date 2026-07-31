@@ -29,9 +29,14 @@ staat in de spec.
 | Gehardend Ubuntu 23.10+ / Tuxedo (`sysctl=1`) | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
 | Linux Docker, niet-gehardend (`sysctl=0`) | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
 | **macOS Podman-machine** (`applehv` → Fedora CoreOS) | **bevestigd** — `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
-| Docker Desktop / Rancher Desktop (Mac/Win) | nog te verifiëren — VM is Linux zonder de Ubuntu-userns-restrictie; macOS-override is een startpunt |
+| **Rancher Desktop op macOS** (Lima → Alpine, moby) | **bevestigd** — `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" hieronder |
+| Docker Desktop (Mac/Win) | nog te verifiëren — zelfde vorm als Rancher Desktop; die route is een startpunt |
 
 Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
+
+**Beperking van de default (single-uid):** images die naar een tweede uid
+chownen starten niet — `chown: ...: Invalid argument`. Dat treft postgres, mysql,
+mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
 
 ## Stappen (op de host)
 
@@ -124,12 +129,70 @@ export TESTCONTAINERS_RYUK_DISABLED=true
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 ```
 
+## Rancher Desktop op macOS
+
+Bevestigd (2026-07-31). Rancher draait een Lima-VM met Alpine en rootful dockerd;
+de container zit in de init-userns. Die VM heeft **geen AppArmor en geen SELinux**
+(`/sys/kernel/security/lsm` → `lockdown,capability,landlock`), geen
+userns-hardening, en `/dev/net/tun` + `/dev/fuse` staan er allebei. Er is dus
+**niets op de host in te stellen** — geen `setup-host.sh`, geen sysctl, geen
+subuid-range op de host.
+
+Gebruik de macOS-override, maar met Rancher's eigen `docker compose`:
+
+```
+cd claude-sandbox
+docker compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate
+```
+
+Twee verschillen met de Podman-machine-route hierboven: `docker compose` stuurt
+het seccomp-profiel **inline** mee en dockerd accepteert dat (podman's API
+weigert het met `file name too long`), en `BUILDAH_FORMAT=docker` is niet nodig
+omdat je met de Docker-builder bouwt. Draai wel vanuit `claude-sandbox/`, want de
+macOS-override gebruikt `${PWD}` in het seccomp-pad.
+
+## Multi-uid (opt-in): DB-images zoals Postgres
+
+In de default single-uid modus is alleen uid 0 gemapt. Het postgres-entrypoint
+chownt `$PGDATA` naar de postgres-uid, die daar niet bestaat → `chown:
+/var/lib/postgresql/data: Invalid argument`, container stopt direct, en
+Testcontainers meldt alleen `Container did not start correctly`.
+`ignore_chown_errors` in `storage.conf` helpt niet: dat dekt image-extractie, niet
+een runtime-chown door een proces ín de container.
+
+Multi-uid lost dat op. Twee dingen aanzetten:
+
+1. `.env`: `PODMAN_MULTIUID=true` (zet de subuid-range in de image) — vereist een
+   rebuild.
+2. `compose.override.podman-multiuid.yml` **stapelen op** je platform-override
+   (geeft `CAP_SYS_ADMIN`):
+   ```
+   docker compose -f compose.yml -f compose.override.podman-macos.yml \
+                  -f compose.override.podman-multiuid.yml up --build -d --force-recreate
+   ```
+
+Vergeet je de override, dan waarschuwt de entrypoint bij de start; zonder
+`CAP_SYS_ADMIN` faalt élke podman-actie met `newuidmap: write to uid_map failed`.
+
+Waarom die capability nodig is en wat hij kost, staat in de kop van
+`compose.override.podman-multiuid.yml`; de meting erachter in de spec, blokkade
+&#35;2. Kort: `newuidmap` is setuid-root en de kernel eist `CAP_SYS_ADMIN` zodra
+je een namespace mapt die je niet zelf bezit — Docker laat die capability per
+default uit de bounding set. `claude` krijgt hem niet rechtstreeks in handen
+(`CapEff=0`), maar een root-escalatie ín de container wordt er wel krachtiger
+van. Op Mac/Windows zit er nog een VM-kernelgrens onder, op Linux met bare Docker
+niet. Daarom opt-in.
+
+`smoke-test.sh` detecteert de modus zelf en draait `PostgresSmokeTest` alleen in
+multi-uid; in single-uid meldt hij die als overgeslagen.
+
 ## Fallbacks als het niet meteen draait
 
 | Symptoom | Oorzaak | Maatregel |
 |---|---|---|
 | `unshare ... uid_map: Operation not permitted` of `podman info` faalt op userns | host-hardening blokkeert userns; profiel niet (goed) geladen | `setup-host.sh` gedraaid? `cat /proc/self/attr/current` in de container → moet `claude-sandbox-podman` zijn. Container ná het laden **recreaten** (`--force-recreate`) — de AppArmor-mediatie klikt vast bij start. |
-| `newuidmap: write to uid_map failed` | je draait toch multi-uid (subuid-entry aanwezig) | image is single-uid (geen subuid). Check `cat /etc/subuid` in de container → geen `claude:`-regel. |
+| `newuidmap: write to uid_map failed: Operation not permitted` | multi-uid (subuid-entry aanwezig) zonder `CAP_SYS_ADMIN` | óf `compose.override.podman-multiuid.yml` meestapelen, óf terug naar single-uid (`PODMAN_MULTIUID=false` + rebuild). Check `cat /etc/subuid` in de container: `claude:`-regel = multi-uid. De entrypoint waarschuwt hier bij de start al voor. |
+| `chown: ...: Invalid argument` bij een DB-image, of Testcontainers meldt `Container did not start correctly` | single-uid: de image chownt naar een uid die niet in de namespace bestaat | multi-uid aanzetten — zie "Multi-uid (opt-in)" hierboven |
 | `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse`-device niet doorgegeven | entrypoint valt automatisch terug op vfs + waarschuwt; uncomment de `/dev/fuse`-device in de override of blijf op `vfs` (default) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
@@ -145,7 +208,9 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
 ## Openstaand
-- Docker Desktop / Rancher Desktop (Mac/Windows) verifiëren.
+- Docker Desktop (Mac/Windows) verifiëren. Rancher Desktop op macOS is bevestigd.
+- Multi-uid is bevestigd op Rancher/macOS; op gehardend Ubuntu nog niet getest
+  (blokkade #1 — de AppArmor-userns-restrictie — staat daar los van en blijft).
 - seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
 
 ## Maximale isolatie (eigen kernel)
