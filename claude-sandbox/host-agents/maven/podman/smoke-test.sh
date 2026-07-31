@@ -18,8 +18,16 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/podman-run-$(id -u)}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 
-echo "== 1. podman info (rootless) =="
-podman info --format 'rootless={{.Host.Security.Rootless}} driver={{.Store.GraphDriverName}}'
+# Single-uid of multi-uid? Bepaalt of PostgresSmokeTest meedraait: die vereist
+# een tweede uid in de namespace (zie de noot in dat bestand).
+if grep -q "^$(id -un):" /etc/subuid 2>/dev/null; then
+    MULTIUID=true
+else
+    MULTIUID=false
+fi
+
+echo "== 1. podman info (rootless, multiuid=$MULTIUID) =="
+podman info --format 'rootless={{.Host.Security.Rootless}} driver={{.Store.GraphDriverName}} uidmap={{.Host.IDMappings.UIDMap}}'
 
 echo "== 2. nested container =="
 podman run --rm alpine:3.20 echo "nested-ok"
@@ -47,6 +55,10 @@ export TESTCONTAINERS_RYUK_DISABLED=true
 # echt project (289+46 tests groen pas mét deze override).
 export TESTCONTAINERS_HOST_OVERRIDE=localhost
 cd "$(dirname "$0")/sample"
-mvn -B --no-transfer-progress test
+mvn -B --no-transfer-progress test "-Dpodman.multiuid=$MULTIUID"
 
-echo "== OK — Testcontainers werkt =="
+if [[ "$MULTIUID" == "true" ]]; then
+    echo "== OK — Testcontainers werkt (incl. Postgres) =="
+else
+    echo "== OK — Testcontainers werkt (single-uid; PostgresSmokeTest overgeslagen) =="
+fi
