@@ -28,7 +28,7 @@ staat in de spec.
 |---|---|
 | Gehardend Ubuntu 23.10+ / Tuxedo (`sysctl=1`) | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
 | Linux Docker, niet-gehardend (`sysctl=0`) | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
-| **macOS Podman-machine** (`applehv` → Fedora CoreOS) | **bevestigd** — `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
+| **macOS Podman-machine** (`applehv` → Fedora CoreOS) | **bevestigd, ook multi-uid** — `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
 | **Rancher Desktop op macOS** (Lima → Alpine, moby) | **bevestigd** — `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" hieronder |
 | Docker Desktop (Mac/Win) | nog te verifiëren — zelfde vorm als Rancher Desktop; die route is een startpunt |
 
@@ -74,6 +74,9 @@ mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
       /home/claude/projects/<repo>/claude-sandbox/host-agents/maven/podman/smoke-test.sh"
    ```
    Pas `<repo>` aan naar waar deze repo in `/home/claude/projects` gemount staat.
+   Staat deze repo niet onder je `PROJECTS_DIR`, kopieer de map dan naar binnen:
+   `docker cp host-agents/maven/podman claude-sandbox:/home/claude/podman-smoke`
+   (of `podman cp`) en draai `/home/claude/podman-smoke/smoke-test.sh`.
 
 Verwacht: het script print `nested-ok` en eindigt met `OK — Testcontainers werkt`.
 
@@ -117,6 +120,13 @@ podman exec claude-sandbox bash -lc \
 
 De `single mapping`/`Additional gid ... not present`-warnings zijn verwacht: de
 image draait bewust single-uid (geen `claude:`-regel in `/etc/subuid`).
+
+Multi-uid (Postgres e.d.) is hier ook bevestigd (2026-07-31): stapel
+`compose.override.podman-multiuid.yml` erbovenop en bouw met
+`PODMAN_MULTIUID=true` — zie "Multi-uid (opt-in)" hieronder. De
+Podman-machine is rootful (`podman machine inspect ... {{.Rootful}}` → `true`),
+dus `cap_add: SYS_ADMIN` komt daadwerkelijk in de bounding set. Op een rootless
+machine is dat niet verifieerd.
 
 ### Eigen build draaien (env-samenvatting)
 Voor een echte Maven-build met Testcontainers in de container:
@@ -186,6 +196,10 @@ niet. Daarom opt-in.
 `smoke-test.sh` detecteert de modus zelf en draait `PostgresSmokeTest` alleen in
 multi-uid; in single-uid meldt hij die als overgeslagen.
 
+Bevestigd op Rancher Desktop/macOS en op een macOS Podman-machine (2026-07-31):
+`PostgresSmokeTest` + `SmokeTest` groen, `postgres:16-alpine` gepulld en gestart
+in de sandbox.
+
 ## Fallbacks als het niet meteen draait
 
 | Symptoom | Oorzaak | Maatregel |
@@ -196,6 +210,7 @@ multi-uid; in single-uid meldt hij die als overgeslagen.
 | `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse`-device niet doorgegeven | entrypoint valt automatisch terug op vfs + waarschuwt; uncomment de `/dev/fuse`-device in de override of blijf op `vfs` (default) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
+| `error creating temporary file: No such file or directory` + `open .../libpod/tmp/pause.pid: no such file or directory` | een handmatig aangepaste `containers.conf` in het `claude-home` volume (bv. met een eigen `tmp_dir`/`static_dir`) — de entrypoint schrijft die alleen aan als hij **ontbreekt**, dus zulke drift blijft staan en schaduwt de bedoelde config | vergelijk met de entrypoint-versie (`[containers] default_sysctls = []` + `[network] firewall_driver = "iptables"`); back-uppen en terugzetten naar die versie, daarna opnieuw `podman info`. Helpt dat niet: `podman system migrate`, in het uiterste geval `podman system reset` |
 | `mount proc: Operation not permitted` | Docker maskeert `/proc`; geneste procfs-mount geweigerd | override staat op `systempaths=unconfined` |
 | `graphOptions: {}` / `ignore_chown_errors` ontbreekt | storage.conf landde niet (bestaand volume schaduwt de baked-in versie) | entrypoint schrijft hem bij start; bij een oud volume eenmalig handmatig: zie `entrypoint.sh`-blok, of recreate met een verse `claude-home` |
 | image-extractie faalt op chown | single-uid kan niet naar andere uids chownen | `ignore_chown_errors=true` staat al in storage.conf; controleer dat het meekwam (`podman info` → graphOptions) |
@@ -209,8 +224,14 @@ multi-uid; in single-uid meldt hij die als overgeslagen.
 
 ## Openstaand
 - Docker Desktop (Mac/Windows) verifiëren. Rancher Desktop op macOS is bevestigd.
-- Multi-uid is bevestigd op Rancher/macOS; op gehardend Ubuntu nog niet getest
-  (blokkade #1 — de AppArmor-userns-restrictie — staat daar los van en blijft).
+- Multi-uid is bevestigd op Rancher/macOS en op een (rootful) macOS
+  Podman-machine; op gehardend Ubuntu nog niet getest (blokkade #1 — de
+  AppArmor-userns-restrictie — staat daar los van en blijft), en op een
+  rootless `podman machine` evenmin.
+- `containers.conf` wordt alleen aangemaakt als hij ontbreekt, `storage.conf`
+  elke start herschreven. Overwegen om beide gelijk te trekken: dat maakt
+  handmatige drift onmogelijk, maar neemt ook de ontsnappingsklep weg om
+  podman-instellingen zelf bij te stellen.
 - seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
 
 ## Maximale isolatie (eigen kernel)

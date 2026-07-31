@@ -256,6 +256,7 @@ host-setup werkt**. Weinig projecten hebben dit nodig, dus per-setup is acceptab
 | Linux Docker, niet-gehardend (sysctl=0 / oudere kernel) | open | alleen `/dev/fuse` + seccomp + single-uid engine |
 | Gehardend Ubuntu 23.10+ (sysctl=1) | restrictie | **custom AppArmor-`userns`-profiel** (geen host-verzwakking) — voorkeur; of `sysctl=0` permanent (verzwakt host) |
 | Docker Desktop / Rancher (Mac/Win) | VM, rootful | **Rancher/macOS bevestigd** (2026-07-31): geen AppArmor/SELinux in de Alpine-VM, `max_user_namespaces` open, `/dev/net/tun` + `/dev/fuse` aanwezig. `compose.override.podman-macos.yml` volstaat, via Rancher's `docker compose` — dat stuurt het seccomp-profiel inline mee en dockerd accepteert dat (podman's API weigert het, zie README) |
+| macOS `podman machine` (applehv → Fedora CoreOS) | VM, rootful | **bevestigd, incl. multi-uid** (2026-07-31): SELinux Enforcing → `label=disable`, geen AppArmor. `compose.override.podman-macos.yml` + `compose.override.podman-multiuid.yml` via `podman-compose`; `cap_add: SYS_ADMIN` landt in de bounding set omdat de machine rootful is. Rootless machine niet getest |
 
 ### Trade-off van de AppArmor-route (security)
 `flags=(unconfined) { userns, }` = effectief unconfined voor déze container + userns
@@ -282,7 +283,12 @@ elk debug-stap voor stap gevonden:
 | 7 | `containers.conf`: `[network] firewall_driver = "iptables"` | netavark roept default `nft` aan (niet in image); iptables-nft is wél aanwezig |
 
 `storage.conf` wordt door `entrypoint.sh` elke start gegenereerd uit
-`PODMAN_STORAGE_DRIVER` (.env); `containers.conf` idempotent geschreven. Beide op
+`PODMAN_STORAGE_DRIVER` (.env); `containers.conf` alleen aangemaakt als hij
+ontbreekt — handmatige aanpassingen blijven dus staan. Keerzijde, gezien op een
+macOS Podman-machine (2026-07-31): een met de hand aangepaste `containers.conf`
+(eigen `tmp_dir`/`static_dir`, zónder `default_sysctls`) blijft stil in het
+volume schaduwen en brak podman met `error creating temporary file` +
+`open .../libpod/tmp/pause.pid: no such file or directory`. Beide op
 het `claude-home` volume (baked-in image-versie wordt door een bestaand named
 volume geschaduwd). Het AppArmor-profiel + de override-`security_opt`/
 `devices` zijn host-/compose-zaken (`setup-host.sh` + `compose.override.podman-linux.yml`).
@@ -315,6 +321,13 @@ voor containers die met de podman-override draaien; een normale sandbox blijft
 ongewijzigd.
 
 ## Bevestigd
+- **Multi-uid op een macOS Podman-machine** (2026-07-31, applehv → Fedora
+  CoreOS, rootful): `compose.override.podman-macos.yml` +
+  `compose.override.podman-multiuid.yml` via `podman-compose`, image gebouwd met
+  `PODMAN_MULTIUID=true`. `podman info` → `uidmap=[{0 1000 1} {1 100000 65536}]`,
+  nested container ok, `smoke-test.sh` groen incl. `PostgresSmokeTest`
+  (`postgres:16-alpine`). Bevestigt de meting bij blokkade #2 op een tweede
+  macOS-runtime.
 - Volledige Testcontainers-build draaide groen in een aparte sessie op een écht
   project: een Quarkus-module met Redis-stack Dev-Services + integratietests,
   **289 + 46 tests groen**, image-pull van `redis/redis-stack-server` (521 MB) en
