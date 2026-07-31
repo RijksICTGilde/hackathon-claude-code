@@ -275,8 +275,10 @@ ongewijzigd.
 - Volledige Testcontainers-build draaide groen in een aparte sessie op een écht
   project: een Quarkus-module met Redis-stack Dev-Services + integratietests,
   **289 + 46 tests groen**, image-pull van `redis/redis-stack-server` (521 MB) en
-  containerstart via podman. Single-uid + `ignore_chown_errors` is in de praktijk
-  geen blokker voor DB-achtige images.
+  containerstart via podman. Single-uid + `ignore_chown_errors` is voor
+  Redis-achtige images geen blokker. **Let op:** dat generaliseert niet naar
+  alle DB-images — zie "Single-uid blokkeert images die van uid wisselen"
+  hieronder; Redis chownt niet bij het opstarten, PostgreSQL wel.
 - **Extra nodig voor containers met port-wait** (Postgres/Redis/Quarkus
   Dev-Services): `TESTCONTAINERS_HOST_OVERRIDE=localhost`. Rootless podman
   publisht gepublishte poorten op localhost, maar Testcontainers resolvet de
@@ -294,6 +296,50 @@ ongewijzigd.
   ```
 - Hiermee is de host-side Maven MCP-agent in deze sandbox **niet meer nodig**
   (wel als fallback op niet-ondersteunde hosts).
+
+## Single-uid blokkeert images die van uid wisselen (2026-07-31)
+
+Gemeten op `moza-poc-fbs-berichtenbox` (Quarkus, PostgreSQL 18 + Redis via Dev
+Services). Redis draaide nested groen; `postgres:18` niet:
+
+```
+chown: changing ownership of '/var/lib/postgresql/18/docker': Invalid argument
+```
+
+Dit is de klem die onzekerheid 3 voorzag ("sommige images verwachten meerdere
+uids en kunnen dan breken"), en hij is binnen single-uid niet te omzeilen:
+
+| Poging | Uitkomst |
+|---|---|
+| kaal `podman run postgres:18` | `chown ...: Invalid argument` (entrypoint chownt naar uid 999) |
+| `--user 0:0` + `PGDATA=/tmp/pgdata` | zelfde chown-fout; als uid 0 neemt de entrypoint altijd de root-tak |
+| `--user 999:999` / `--user 1000:1000` | `potentially insufficient UIDs or GIDs available in user namespace` |
+| `--userns=keep-id:uid=999,gid=999` | `container ID 0 cannot be mapped to a host ID` |
+| `--uidmap 999:0:1 --gidmap 999:0:1` | idem — layers zijn bij extractie op uid 0 gezet, dus uid 0 moet mapbaar blijven |
+
+Fundamenteel: er is precies één uid in de namespace (0), PostgreSQL weigert als
+uid 0 te draaien (vaste check in de server, geen flag), en twee container-uids
+naar dezelfde host-uid mappen verbiedt de kernel. `ignore_chown_errors` helpt
+niet — dat dekt image-extractie, niet de chown die het proces zelf doet.
+
+**Gekozen oplossing: PostgreSQL als proces, niet als container**
+(`host-agents/maven/podman/postgres-lokaal.sh`). `claude` is uid 1000, een
+normale non-root uid. Geen userns, geen setuid-helper, geen subuid-range, dus
+geen enkel effect op de isolatie. Binaries komen als Maven-artifact (Zonky's
+`embedded-postgres-binaries`) omdat `apt install` root vereist. Het `run`-
+subcommando is gedragsgelijk aan Dev Services: verse database per run, vrije
+poort, opruimen bij elke uitgang. Resultaat: volledige reactor **1089 tests
+groen** (was 9 errors + 126 skips).
+
+**Niet gekozen: subuid-range.** Die lost de hele klasse images in één keer op,
+maar zou spec-blokkade #2 opnieuw moeten trotseren én kost isolatie: de
+setuid-helpers `newuidmap`/`newgidmap` komen in het pad, en omdat docker hier
+zonder userns-remap draait (container-uid 1000 = host-uid 1000) schrijven nested
+processen op bind-mounts als host-uids uit de range — bestanden in de repo die
+de gebruiker zonder `sudo` niet meer verwijdert. Hertesten kan met
+`host-agents/maven/podman/test-multiuid.sh`; geen van de destijds uitgesloten
+oorzaken (`NoNewPrivs`, `nosuid`, ontbrekende CAP_SETUID) is in de huidige stand
+nog aanwezig.
 
 ## Hardening-verfijning (geprobeerd / vervolg)
 - **Docker-default seccomp werkt niet** (geverifieerd): `cannot clone: Operation

@@ -136,6 +136,7 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 | `mount proc: Operation not permitted` | Docker maskeert `/proc`; geneste procfs-mount geweigerd | override staat op `systempaths=unconfined` |
 | `graphOptions: {}` / `ignore_chown_errors` ontbreekt | storage.conf landde niet (bestaand volume schaduwt de baked-in versie) | entrypoint schrijft hem bij start; bij een oud volume eenmalig handmatig: zie `entrypoint.sh`-blok, of recreate met een verse `claude-home` |
 | image-extractie faalt op chown | single-uid kan niet naar andere uids chownen | `ignore_chown_errors=true` staat al in storage.conf; controleer dat het meekwam (`podman info` → graphOptions) |
+| `chown: changing ownership of '...': Invalid argument` bij container-**start** (bv. `postgres:18`) | de image chownt bij het opstarten naar een tweede uid; single-uid heeft er maar één. `ignore_chown_errors` dekt alleen image-extractie, niet de runtime-chown | niet op te lossen binnen single-uid (zie "Images die van uid wisselen"). Voor PostgreSQL: `./postgres-lokaal.sh run -- ./mvnw clean test` |
 | syscall/permission errors bij `podman run` of een build | tailored seccomp-blocklist (`seccomp/podman-sandbox.json`) blokkeert een syscall die jouw workload tóch nodig heeft | haal die syscall uit het profiel, of zet tijdelijk `seccomp=unconfined`. Pad is relatief t.o.v. het compose-bestand → draai compose vanuit `claude-sandbox/`. |
 | `opening seccomp profile failed: open {"defaultAction"...}: file name too long` (macOS) | `podman compose` delegeert naar `docker-compose`, dat het profiel inline (als JSON) meestuurt i.p.v. als pad | draai via `podman-compose` (zie macOS-sectie); die geeft het pad door |
 | `opening seccomp profile failed: open ...: no such file or directory` (macOS) | relatief seccomp-pad; podman leest client-side op de Mac | macOS-override gebruikt absoluut pad (`${PWD}/...`); draai compose vanuit `claude-sandbox/` |
@@ -144,9 +145,68 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 | Ryuk-container faalt | reaper in nested rootless | `TESTCONTAINERS_RYUK_DISABLED=true` (staat al in de smoke-test) |
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
+## Images die van uid wisselen (PostgreSQL)
+
+Images die bij het opstarten naar een **tweede** uid chownen of droppen, starten
+niet in single-uid modus. Bevestigd met `postgres:18`:
+
+```
+chown: changing ownership of '/var/lib/postgresql/18/docker': Invalid argument
+```
+
+Dit is geen configuratieprobleem maar een klem: in de namespace bestaat precies
+één uid (0), PostgreSQL wéigert als uid 0 te draaien (vaste check in de server,
+geen flag), en alle omwegen om die ene uid als een andere te presenteren lopen
+vast — `--user 999` en `--user 1000` op `insufficient UIDs or GIDs available in
+user namespace`, `--userns=keep-id:uid=999` en `--uidmap 999:0:1` op `container
+ID 0 cannot be mapped to a host ID` (de layers zijn bij extractie op uid 0
+gezet, dus uid 0 moet mapbaar blijven). Redis raakt dit niet — dat image chownt
+niet, en draait nested prima.
+
+De spec noteerde dit risico al bij onzekerheid 3: "sommige images verwachten
+meerdere uids en kunnen dan breken".
+
+**Oplossing: PostgreSQL als proces, niet als container.** `claude` is uid 1000,
+een doodgewone non-root uid, en daar draait PostgreSQL prima op. Geen userns,
+geen setuid-helper, geen subuid-range — de isolatie van de sandbox verandert
+niet.
+
+```
+./postgres-lokaal.sh run -- ./mvnw clean test
+```
+
+`run` is met opzet gedragsgelijk aan Quarkus Dev Services: verse database per
+run, vrije poort, en opruimen na afloop — ook bij een gefaalde of afgebroken
+build. Het script zet `QUARKUS_DATASOURCE_*` en `…DEVSERVICES_ENABLED=false`, en
+geeft de exit-code van je commando door. De binaries komen als Maven-artifact
+(Zonky's `embedded-postgres-binaries`), want `apt install postgresql` vereist
+root en die is er in de sandbox niet.
+
+Wat anders is dan Dev Services: één PostgreSQL voor de hele reactor in plaats van
+één per module, en de versie staat in `PG_VERSIE` (default 18.0.0) los van
+`quarkus.datasource.devservices.image-name` in het project — die twee kunnen uit
+elkaar lopen.
+
+Bevestigd op `moza-poc-fbs-berichtenbox`: volledige reactor **1089 tests groen**
+(211 + 30 + 295 + 359 + 194), Flyway-migraties en `hibernate-orm.database.
+generation=validate` inbegrepen. Met Dev Services strandde diezelfde suite op
+9 errors en 126 skips in de berichtenmagazijn-module.
+
 ## Openstaand
 - Docker Desktop / Rancher Desktop (Mac/Windows) verifiëren.
 - seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
+- **Subuid-range: generieke oplossing, nog niet getest.** `postgres-lokaal.sh`
+  lost PostgreSQL op, maar de volgende image die van uid wisselt (Elasticsearch,
+  veel Bitnami-images) vraagt opnieuw maatwerk. Een echte subuid-range lost die
+  hele klasse in één keer op, maar botst op spec-blokkade #2 (`write to uid_map
+  failed: Operation not permitted`, oorzaak destijds niet herleid). Geen van de
+  toen uitgesloten oorzaken is in de huidige stand nog aanwezig (`NoNewPrivs=0`,
+  CAP_SETUID in de bounding set, geen `nosuid`), dus hertesten is zinvol:
+  `./test-multiuid.sh` op de host. Weeg wel de prijs: de setuid-helpers
+  `newuidmap`/`newgidmap` komen in het pad, en omdat docker hier zonder
+  userns-remap draait (container-uid 1000 = host-uid 1000) schrijven nested
+  processen op bind-mounts dan als host-uids uit de range — bestanden in je repo
+  die je zonder `sudo` niet meer weg krijgt.
 
 ## Maximale isolatie (eigen kernel)
 Deze opzet deelt de host-kernel (restrisico: kernel-escape). Wil je die laag óók
