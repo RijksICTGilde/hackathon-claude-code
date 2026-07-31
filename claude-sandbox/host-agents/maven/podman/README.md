@@ -128,16 +128,23 @@ Podman-machine is rootful (`podman machine inspect ... {{.Rootful}}` → `true`)
 dus `cap_add: SYS_ADMIN` komt daadwerkelijk in de bounding set. Op een rootless
 machine is dat niet verifieerd.
 
-### Eigen build draaien (env-samenvatting)
-Voor een echte Maven-build met Testcontainers in de container:
-```
-export XDG_RUNTIME_DIR="/tmp/podman-run-$(id -u)"; mkdir -p "$XDG_RUNTIME_DIR"
-podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" &
-export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
-export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="$XDG_RUNTIME_DIR/podman/podman.sock"
-export TESTCONTAINERS_RYUK_DISABLED=true
-export TESTCONTAINERS_HOST_OVERRIDE=localhost
-```
+### Eigen build draaien
+Niets voorbereiden: `./mvnw test` werkt. De entrypoint start bij container-start
+de podman-socket op `/tmp/podman-run-1000/podman/podman.sock`, en de
+podman-override zet `DOCKER_HOST`, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`,
+`TESTCONTAINERS_RYUK_DISABLED` en `TESTCONTAINERS_HOST_OVERRIDE` op
+container-niveau — dus elk proces erft ze, ook een kale `bash -c`.
+
+**Start niet zelf een tweede `podman system service` op datzelfde pad.** Die kan
+niet binden en ruimt bij het afsluiten de socket van de eerste op; daarna faalt
+Testcontainers met `Could not find a valid Docker environment` (het valt terug op
+`/var/run/docker.sock`).
+
+Waarom de entrypoint dit doet in plaats van jij per build: het éérste
+podman-commando maakt het pause-proces aan dat de user-namespace vastlegt, en
+alles daarna joint dat proces. Lukt die eerste aanmaak niet met de volledige
+subuid-range, dan blijft de hele container in single-uid hangen — ook nadat de
+oorzaak weg is. Zie de `no_new_privs`-rij in de fallback-tabel.
 
 ## Rancher Desktop op macOS
 
@@ -210,6 +217,8 @@ in de sandbox.
 | `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse`-device niet doorgegeven | entrypoint valt automatisch terug op vfs + waarschuwt; uncomment de `/dev/fuse`-device in de override of blijf op `vfs` (default) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
+| `podman info` toont `uidmap=[{0 1000 1}]` terwijl `/etc/subuid` een `claude:`-regel heeft én `CAP_SYS_ADMIN` er is; DB-images falen op `chown: Invalid argument` | een pause-proces dat single-uid is aangemaakt. Alle latere podman-commando's joinen dat proces, dus de degradatie plakt vast. Ontstaat als het éérste podman-commando `newuidmap` niet kon gebruiken — bv. onder `no_new_privs`, waar een setuid-root-binary geen privileges meer wint (reproduceerbaar met `setpriv --no-new-privs podman info`) | `podman system migrate` en de podman-socket herstarten; of simpelweg de container recreaten — de entrypoint zet de namespace bij de start goed. Draait er een gezond pause-proces, dan joinen ook `no_new_privs`-aanroepen dát en gaat het weer goed |
+| Testcontainers: `Could not find a valid Docker environment ... NoSuchFileException (/var/run/docker.sock)` terwijl `DOCKER_HOST` gezet is | er is een tweede `podman system service` op hetzelfde socket-pad gestart; die kan niet binden en verwijdert bij het afsluiten de socket van de eerste | gebruik de socket die de entrypoint al draait (zie "Eigen build draaien"); controleer met `ls -l /tmp/podman-run-1000/podman/podman.sock` en recreate de container als hij weg is |
 | `error creating temporary file: No such file or directory` + `open .../libpod/tmp/pause.pid: no such file or directory` | een handmatig aangepaste `containers.conf` in het `claude-home` volume (bv. met een eigen `tmp_dir`/`static_dir`) — de entrypoint schrijft die alleen aan als hij **ontbreekt**, dus zulke drift blijft staan en schaduwt de bedoelde config | vergelijk met de entrypoint-versie (`[containers] default_sysctls = []` + `[network] firewall_driver = "iptables"`); back-uppen en terugzetten naar die versie, daarna opnieuw `podman info`. Helpt dat niet: `podman system migrate`, in het uiterste geval `podman system reset` |
 | `mount proc: Operation not permitted` | Docker maskeert `/proc`; geneste procfs-mount geweigerd | override staat op `systempaths=unconfined` |
 | `graphOptions: {}` / `ignore_chown_errors` ontbreekt | storage.conf landde niet (bestaand volume schaduwt de baked-in versie) | entrypoint schrijft hem bij start; bij een oud volume eenmalig handmatig: zie `entrypoint.sh`-blok, of recreate met een verse `claude-home` |

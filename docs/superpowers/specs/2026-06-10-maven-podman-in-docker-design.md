@@ -321,6 +321,28 @@ voor containers die met de podman-override draaien; een normale sandbox blijft
 ongewijzigd.
 
 ## Bevestigd
+- **Het pause-proces bepaalt de namespace voor de hele container** (2026-07-31).
+  Het eerste podman-commando maakt het pause-proces aan dat de user-namespace
+  vastlegt; alles daarna joint dat proces. Komt dat proces single-uid op, dan
+  blijft de container single-uid — ook nadat de oorzaak weg is — en falen
+  DB-images op `chown: Invalid argument`, met een `podman info` die
+  `uidmap=[{0 1000 1}]` toont terwijl subuid-range én `CAP_SYS_ADMIN` er gewoon
+  zijn. Herstel: `podman system migrate`.
+
+  Eén bewezen manier waarop dat gebeurt is `no_new_privs`: `newuidmap` is
+  setuid-root en wint onder die vlag geen privileges meer, dus de range-write
+  faalt met dezelfde EPERM als bij een ontbrekende `CAP_SYS_ADMIN`. Meting:
+  `setpriv --no-new-privs podman info` reproduceert het één op één, en met een
+  gezond pause-proces geeft diezelfde aanroep wél de volledige mapping — joinen
+  vergt de capability niet, aanmaken wel.
+
+  **Gevolg voor het ontwerp:** `entrypoint.sh` zet de podman-socket bij
+  container-start op, in een schone omgeving vóór er iets anders draait, en
+  waarschuwt als de mapping dan tóch single-uid is. De client-env (`DOCKER_HOST`,
+  `TESTCONTAINERS_*`) staat in de podman-overrides op container-niveau: een
+  shell-profiel zou het mis doen, want `/etc/profile.d` geldt alleen voor
+  login-shells en `~/.bashrc` alleen voor interactieve — een build die via
+  `bash -c` start, krijgt uit geen van beide iets mee.
 - **Multi-uid op een macOS Podman-machine** (2026-07-31, applehv → Fedora
   CoreOS, rootful): `compose.override.podman-macos.yml` +
   `compose.override.podman-multiuid.yml` via `podman-compose`, image gebouwd met

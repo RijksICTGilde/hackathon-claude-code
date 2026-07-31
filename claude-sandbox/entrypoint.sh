@@ -111,6 +111,51 @@ if command -v podman >/dev/null 2>&1; then
         printf '[containers]\ndefault_sysctls = []\n\n[network]\nfirewall_driver = "iptables"\n' > "$containers_conf"
         echo "INFO: rootless podman containers.conf aangemaakt op $containers_conf"
     fi
+
+    # De podman-socket hier starten i.p.v. per build-sessie. Het eerste
+    # podman-commando maakt het pause-proces aan dat de user-namespace vastlegt,
+    # en álles daarna joint dat proces. Lukt die eerste aanmaak níet met de
+    # volledige subuid-range, dan blijft de hele container in single-uid hangen —
+    # ook nadat de oorzaak weg is — en falen DB-images op "chown: Invalid
+    # argument". Dat gebeurt bijvoorbeeld als het eerste commando onder
+    # no_new_privs draait: newuidmap is setuid-root en wint onder die vlag geen
+    # privileges meer ("write to uid_map failed"). Door de socket hier op te
+    # zetten, in een schone omgeving vóór er iets anders draait, joinen latere
+    # aanroepen een gezonde namespace — ook die onder no_new_privs.
+    # De socket geeft geen nieuwe rechten: alles wat als `claude` draait kon al
+    # podman aanroepen.
+    if [[ -e /dev/net/tun ]]; then
+        # Komt normaal uit de podman-override (zelfde pad als DOCKER_HOST daar);
+        # de fallback houdt dit blok zelfstandig werkend. In /tmp en niet onder
+        # $HOME: dat is een persistent volume, en libpod-runtime-state die een
+        # herstart overleeft (pause.pid, alive) laat podman naar processen wijzen
+        # die niet meer bestaan.
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/podman-run-$(id -u)}"
+        mkdir -p "$XDG_RUNTIME_DIR"
+        chmod 700 "$XDG_RUNTIME_DIR"
+        podman_sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+        # podman maakt de map van de socket niet zelf aan.
+        mkdir -p "$(dirname "$podman_sock")"
+        # Ruimt state op die van een vorige container-instantie in het volume
+        # kan zijn blijven staan (bv. via een eigen XDG_RUNTIME_DIR).
+        podman system migrate >/dev/null 2>&1 || true
+        setsid podman system service --time=0 "unix://$podman_sock" \
+            </dev/null >/tmp/podman-service.log 2>&1 &
+        for _ in $(seq 1 20); do [[ -S "$podman_sock" ]] && break; sleep 0.5; done
+        if [[ -S "$podman_sock" ]]; then
+            echo "INFO: podman-socket draait op $podman_sock (DOCKER_HOST staat in de podman-override)"
+        else
+            echo "WAARSCHUWING: de podman-socket kwam niet op — zie /tmp/podman-service.log. Testcontainers/Dev Services zullen falen op DOCKER_HOST." >&2
+        fi
+        # Vangt de degradatie af die dit blok juist moet voorkomen, zodat je hem
+        # bij de start ziet i.p.v. veel later als een chown-fout in een build.
+        if [[ "$multiuid" == "true" ]]; then
+            uidmap=$(podman info --format '{{.Host.IDMappings.UIDMap}}' 2>/dev/null || true)
+            if [[ "$uidmap" != *"} {"* ]]; then
+                echo "WAARSCHUWING: podman mapt maar één uid ($uidmap) terwijl multi-uid aan staat. Images die naar een tweede uid chownen (postgres, mysql) zullen falen. Herstel: 'podman system migrate' en herstart de socket." >&2
+            fi
+        fi
+    fi
 fi
 
 # Geïnstalleerde marketplaces verversen zodat plugin-bundels up-to-date blijven

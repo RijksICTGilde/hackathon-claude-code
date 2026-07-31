@@ -9,6 +9,25 @@ services:
       # Storage-driver, via .env. vfs (default, veilig) of overlay (fuse-overlayfs,
       # sneller). Entrypoint genereert storage.conf hieruit.
       - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
+      # Client-env voor Testcontainers. Op containerniveau en niet in een
+      # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
+      # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
+      # Vaste uid 1000: de image draait als `claude`.
+      #
+      # XDG_RUNTIME_DIR in /tmp en niet onder $HOME: dat is een persistent volume,
+      # en libpod-runtime-state die een container-herstart overleeft (pause.pid,
+      # alive) laat podman naar processen wijzen die niet meer bestaan.
+      - XDG_RUNTIME_DIR=/tmp/podman-run-1000
+      # De socket die entrypoint.sh bij de start opzet.
+      - DOCKER_HOST=unix:///tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/tmp/podman-run-1000/podman/podman.sock
+      # Ryuk (resource-reaper) is in nested rootless setups instabiel.
+      - TESTCONTAINERS_RYUK_DISABLED=true
+      # Rootless podman publisht gepublishte poorten op localhost, maar
+      # Testcontainers resolvet de container-host default als de netavark
+      # bridge-gateway (bv. 10.88.0.1) → port-wait timeouts op alles dat op een
+      # poort wacht (Postgres, Redis, Quarkus Dev Services).
+      - TESTCONTAINERS_HOST_OVERRIDE=localhost
     devices:
       # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
       # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.

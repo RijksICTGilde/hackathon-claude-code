@@ -29,18 +29,38 @@ fi
 echo "== 1. podman info (rootless, multiuid=$MULTIUID) =="
 podman info --format 'rootless={{.Host.Security.Rootless}} driver={{.Store.GraphDriverName}} uidmap={{.Host.IDMappings.UIDMap}}'
 
+if [[ "$MULTIUID" == "true" ]]; then
+    # Een gedegradeerd pause-proces laat podman single-uid draaien terwijl de
+    # subuid-range er gewoon is. Dat faalt pas veel later, als een onbegrijpelijke
+    # `chown: Invalid argument` in een DB-image — dus hier hard afvangen.
+    podman info --format '{{.Host.IDMappings.UIDMap}}' | grep -q '} {' || {
+        echo "FOUT: multi-uid staat aan, maar podman mapt maar één uid. Stale pause-proces:" \
+             "draai 'podman system migrate' en herstart de podman-socket." >&2
+        exit 1
+    }
+fi
+
 echo "== 2. nested container =="
 podman run --rm alpine:3.20 echo "nested-ok"
 
-echo "== 3. podman socket service =="
-SOCK="$XDG_RUNTIME_DIR/podman/podman.sock"
-mkdir -p "$(dirname "$SOCK")"
-podman system service --time=0 "unix://$SOCK" &
-SVC=$!
-trap 'kill "$SVC" 2>/dev/null || true' EXIT
-# Wachten tot de socket er is (max ~10s)
-for _ in $(seq 1 20); do [ -S "$SOCK" ] && break; sleep 0.5; done
-[ -S "$SOCK" ] || { echo "FOUT: podman-socket kwam niet op" >&2; exit 1; }
+echo "== 3. podman socket =="
+SOCK="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-$XDG_RUNTIME_DIR/podman/podman.sock}"
+# De entrypoint start de socket al bij container-start (en legt daarmee de
+# user-namespace vast). Draait hij, dan die gebruiken: een tweede service op
+# hetzelfde pad kan niet binden én verwijdert bij het afsluiten de socket van de
+# eerste, waarna Testcontainers terugvalt op /var/run/docker.sock en faalt.
+if [ -S "$SOCK" ]; then
+    echo "bestaande socket: $SOCK"
+else
+    echo "geen socket gevonden, zelf starten: $SOCK"
+    mkdir -p "$(dirname "$SOCK")"
+    podman system service --time=0 "unix://$SOCK" &
+    SVC=$!
+    trap 'kill "$SVC" 2>/dev/null || true' EXIT
+    # Wachten tot de socket er is (max ~10s)
+    for _ in $(seq 1 20); do [ -S "$SOCK" ] && break; sleep 0.5; done
+    [ -S "$SOCK" ] || { echo "FOUT: podman-socket kwam niet op" >&2; exit 1; }
+fi
 
 echo "== 4. Maven + Testcontainers =="
 export DOCKER_HOST="unix://$SOCK"

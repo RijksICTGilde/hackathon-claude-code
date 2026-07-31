@@ -15,6 +15,16 @@ services:
   claude:
     environment:
       - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
+      # Client-env voor Testcontainers. Op containerniveau en niet in een
+      # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
+      # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
+      # Vaste uid 1000: de image draait als `claude`. Zie de motivatie per
+      # variabele in compose.override.podman-linux.yml.
+      - XDG_RUNTIME_DIR=/tmp/podman-run-1000
+      - DOCKER_HOST=unix:///tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_RYUK_DISABLED=true
+      - TESTCONTAINERS_HOST_OVERRIDE=localhost
     devices:
       # /dev/net/tun is in de Fedora CoreOS VM al aanwezig (pasta/slirp4netns tap).
       - "/dev/net/tun"
