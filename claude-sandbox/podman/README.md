@@ -233,6 +233,10 @@ in de sandbox.
 
 ## Fallbacks als het niet meteen draait
 
+> Wil je verifiëren dat de sandbox-hardening werkt (de escape dicht, de sandbox
+> intact)? Zie [`../docs/hardening-verificatie.md`](../docs/hardening-verificatie.md)
+> — een testprotocol met negatieve tests, te draaien op een echte host.
+
 | Symptoom | Oorzaak | Maatregel |
 |---|---|---|
 | `unshare ... uid_map: Operation not permitted` of `podman info` faalt op userns | host-hardening blokkeert userns; profiel niet (goed) geladen | `setup-host.sh` gedraaid? `cat /proc/self/attr/current` in de container → moet `claude-sandbox-podman` zijn. Container ná het laden **recreaten** (`--force-recreate`) — de AppArmor-mediatie klikt vast bij start. |

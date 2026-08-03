@@ -413,3 +413,15 @@ override, geen `CAP_SYS_ADMIN`/`--privileged`/socket, host-userns-hardening blij
 voor al het andere aan), niet in het wegpoetsen van de relaxaties. Een tailored
 seccomp-profiel is de enige verfijning met noemenswaardige winst en staat als
 vervolg genoteerd.
+
+## Openstaand onderzoek na de hardening (2026-08-03)
+
+De hardening-PR (zie ADR 0001 en `claude-sandbox/docs/hardening-verificatie.md`)
+liet drie vragen open die een echte host nodig hebben. Elk levert óf een
+codewijziging, óf een regel hieronder met de conclusie waarom het niet kan.
+
+| Vraag | Waarom het uitmaakt | Uitkomst |
+|---|---|---|
+| Werkt de geneste proc-mount zonder `systempaths=unconfined`, of met een smallere unmask? | `systempaths=unconfined` heft alle masked en read-only /proc-paden op. Kan het smaller, dan wordt de outer container fors minder blootgesteld | nog te meten |
+| Wat doet userns-remap op de outer container met deze opzet? | Met userns-remap is container-root niet langer host-root-uid, waarmee de hele klasse escapes via host-globale sysctls vervalt | nog te meten |
+| Kan `NET_ADMIN`/`NET_RAW` uit de bounding set bij de drop naar `claude`? | De firewall is dan al opgezet. `compose.override.podman-linux.yml` stelt echter dat pasta `NET_ADMIN` nodig heeft voor de tap op `/dev/net/tun` | nog te meten |
