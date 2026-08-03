@@ -7,19 +7,31 @@ rootless-userns-children. Dit is de enige ondersteunde route: de Maven
 host-agent is verwijderd, omdat die per ontwerp een container→host
 code-execution-bridge was (issue #44, ADR 0001).
 
+## Migratie vanaf de host-agent
+
+Draaide je eerder de host-agent? Die code is uit de repo, maar dat stopt geen
+proces of registratie op je eigen machine. Ruim die eenmalig op:
+
+1. Stop een draaiende `run.sh` en controleer dat er niets meer op poort 7777
+   luistert: `ss -ltnp | grep 7777` (leeg = goed). Die listener bond auth-loos
+   op `0.0.0.0`.
+2. Verwijder de MCP-registratie in de container:
+   `docker exec -u claude claude-sandbox claude mcp remove maven`. Die
+   registratie zit in het `claude-home` volume en overleeft een rebuild.
+3. Had je alleen voor de host-agent een `compose.override.yml` met
+   `host.docker.internal`? Die is niet meer nodig.
+
 ## Ondersteunde platforms
 
-| Platform | Status |
-|---|---|
-| Gehardend Ubuntu 23.10+ / Tuxedo (`apparmor_restrict_unprivileged_userns=1`) | bevestigd |
-| Linux Docker, niet-gehardend | bevestigd |
-| Rancher Desktop op macOS (Lima → Alpine, moby) | bevestigd |
-| macOS `podman machine` (applehv → Fedora CoreOS, rootful) | bevestigd, ook multi-uid |
+| Platform | Status | Wat je nodig hebt |
+|---|---|---|
+| Gehardend Ubuntu 23.10+ / Tuxedo (`apparmor_restrict_unprivileged_userns=1`) | bevestigd | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
+| Linux Docker, niet-gehardend (`sysctl=0`) | bevestigd | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
+| Rancher Desktop op macOS (Lima → Alpine, moby) | bevestigd | `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" |
+| macOS `podman machine` (applehv → Fedora CoreOS, rootful) | bevestigd, ook multi-uid | `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" |
+| Docker Desktop Mac/Windows, rootless `podman machine`, WSL2 | **niet ondersteund** | niet bevestigd; geen terugvaloptie meer — bevestig eerst zelf met `setup-host.sh` + `smoke-test.sh` |
 
-Niet bevestigd en daarmee **niet ondersteund**: Docker Desktop op Mac/Windows,
-rootless `podman machine`, WSL2. Wie op zo'n platform Testcontainers nodig
-heeft, zal de opzet daar eerst moeten bevestigen — er is geen terugvaloptie
-meer.
+Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
 
 Ontwerp, bevindingen en security-balans:
 `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md` en
@@ -36,25 +48,14 @@ modus** (geen `newuidmap`) en regelt userns via een **custom AppArmor-profiel**
 i.p.v. de host systeembreed te verzwakken. De volledige keten van aanpassingen
 staat in de spec.
 
-## Per-setup matrix
-
-Welke status elk platform heeft, staat hierboven in "Ondersteunde platforms".
-Deze tabel gaat alleen over wat je per setup nodig hebt.
-
-| Host-setup | Wat nodig is |
-|---|---|
-| Gehardend Ubuntu 23.10+ / Tuxedo (`sysctl=1`) | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
-| Linux Docker, niet-gehardend (`sysctl=0`) | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
-| macOS Podman-machine (`applehv` → Fedora CoreOS) | `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
-| Rancher Desktop op macOS (Lima → Alpine, moby) | `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" hieronder |
-
-Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
-
 **Beperking van de default (single-uid):** images die naar een tweede uid
 chownen starten niet — `chown: ...: Invalid argument`. Dat treft postgres, mysql,
 mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
 
 ## Stappen (op de host)
+
+Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
+`docs/` zijn vanaf de repo-root.
 
 1. In `.env` zetten (vóór de build):
    ```
@@ -68,7 +69,9 @@ mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
    ```
    Dit installeert `claude-sandbox-podman` in `/etc/apparmor.d/` en laadt het.
    De override verwijst ernaar; zonder dit faalt de container-start met
-   "AppArmor profile not found".
+   "AppArmor profile not found". **Vereist sudo op de host** (installeert een
+   profiel in `/etc/apparmor.d/` en laadt de kernelmodules `fuse`/`tun`) — op
+   een beheerde werkplek zonder lokale admin lukt deze stap niet.
 3. Image bouwen + starten met de runtime-override (seccomp, apparmor, netwerk):
    ```
    cd claude-sandbox
@@ -248,8 +251,6 @@ in de sandbox.
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
 ## Openstaand
-- Welke platforms nog bevestigd moeten worden, staat in "Ondersteunde
-  platforms" bovenaan. Dat is de enige plek waar die status wordt bijgehouden.
 - Multi-uid is niet getest op gehardend Ubuntu. Blokkade #1 — de
   AppArmor-userns-restrictie — staat daar los van en blijft gelden.
 - `containers.conf` wordt alleen aangemaakt als hij ontbreekt, `storage.conf`
