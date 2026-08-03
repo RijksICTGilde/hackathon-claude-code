@@ -2,9 +2,12 @@
 
 **Status:** Geaccepteerd — host-agent verwijderd. — 2026-08-03
 (voorgesteld 2026-06-10)
+**Bekrachtigd:** via de PR die de host-agent verwijdert, in het kader van issue
+[#44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44).
 **Context-issue:** [#44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 **Zie ook:** `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`
-(ontwerp, bevindingen, volledige werkende config, security-balans).
+— historisch ontwerpdocument (2026-06-10) met de meetresultaten en werkende
+config; de security-balans hieronder is leidend.
 
 ## Context
 
@@ -19,9 +22,6 @@ Waarom dat moest (uit #44): Claude beheerst `pom.xml` en `mvnw` in de gedeelde
 `run.sh` startte. Draaide die user in de `docker`-group of met sudo, dan was
 host-escalatie mogelijk. Op Linux bond de agent bovendien auth-loos op
 `0.0.0.0:7777`.
-
-**Niet doen:** een runner-container mét gemounte Docker-socket (= host-root,
-reproduceert exact de rondgaande Copilot-bug).
 
 ## Beslissing
 
@@ -40,13 +40,25 @@ tailored seccomp-blocklist, `systempaths=unconfined`, `firewall_driver=iptables`
 default + aparte `compose.override.podman-linux.yml`).
 Geverifieerd: echte Quarkus/Redis-build 289+46 tests groen.
 
-### Optie C (sysbox) / D (microVM)
-Out-of-scope als default. Voor wie de kernel-escape-laag tóch wil sluiten (écht
-onvertrouwde / multi-tenant code): op **Linux-native** het makkelijkst door de
-sandbox in een **VM** te draaien (podman in Lima/Multipass) — zie
+### Sysbox / microVM (out-of-scope als default)
+Voor wie de kernel-escape-laag tóch wil sluiten (écht onvertrouwde /
+multi-tenant code): op **Linux-native** het makkelijkst door de sandbox in een
+**VM** te draaien (podman in Lima/Multipass) — zie
 `docs/maximale-isolatie-linux.md` (met Kata/gVisor als alternatieven). Op
 **Mac/Windows is die kernel-grens er al** (Docker Desktop/Rancher/`podman machine`
 draaien in een VM), dus daar is niets te doen.
+
+## Overwogen en verworpen
+
+- **Host-side Maven-agent** (de vorige oplossing). Verworpen als
+  container→host code-execution-bridge (zie Context). Ook géén aantrekkelijk
+  *alternatief* voor wie de outer-sandbox-relaxaties wil mijden: die relaxaties
+  verbreden het kernel-oppervlak van de *container* (een escape vereist nog een
+  kernel-exploit), terwijl de host-agent code **direct op de host** uitvoert als
+  de host-user. Voor wie beducht is op container-escape is dat juist een
+  zwakker, niet sterker model. Daarom niet bewaard als terugvaloptie.
+- **Runner-container met gemounte Docker-socket.** Verworpen: dat is host-root
+  en reproduceert exact de rondgaande Copilot-bug.
 
 ## Security-balans (podman-in-docker)
 
@@ -56,20 +68,32 @@ draaien in een VM), dus daar is niets te doen.
   `open_by_handle_at`/`userfaultfd`/`io_uring_*`/NUMA/`kcmp`/`pidfd_getfd`/…;
   `ptrace` bewust toegestaan), AppArmor (`userns`-profiel, effectief ~unconfined
   voor deze container), `systempaths=unconfined` (masked/RO `/proc` weg, nodig
-  voor de geneste proc-mount), en op SELinux-hosts `label=disable`. **Géén**
-  `CAP_SYS_ADMIN`, `--privileged` of socket; de host-userns-hardening blijft
-  systeembreed aan; opt-in + aparte override houden de blast-radius klein.
+  voor de geneste proc-mount), en op SELinux-hosts `label=disable`. Geen
+  `--privileged` en geen Docker-socket. `CAP_SYS_ADMIN` zit **niet** in de
+  default-stand, maar **wél** in de bounding set zodra je de multi-uid opt-in
+  (`compose.override.podman-multiuid.yml`) meestapelt — `claude` heeft
+  `CapEff=0` en krijgt hem alleen via setuid-root `newuidmap`/`newgidmap`. De
+  host-userns-hardening blijft systeembreed aan; opt-in + aparte override houden
+  de blast-radius klein.
 - **Weging:** geschikt voor het reële #44-dreigingsbeeld (Claude rogue /
   prompt-injectie, semi-vertrouwd). Niet geschikt voor volledig vijandige,
-  kernel-exploit-capabele code → daar horen Optie C/D.
+  kernel-exploit-capabele code → daar hoort de sysbox/microVM-route.
+
+> Deze balans wordt in de opvolgende hardening-PR aangevuld: de route van uid
+> 1000 naar container-root (de `init-firewall`-sudoers-regel) wordt gesloten en
+> het AppArmor-profiel gaat daadwerkelijk mediëren i.p.v. `flags=(unconfined)`.
 
 ## Consequenties
 
 - Projecten die Testcontainers nodig hebben: gebruik de podman-set
   (`claude-sandbox/podman/README.md`).
-- **Host-agent verwijderd.** Hosts waar podman-in-de-sandbox niet bevestigd is,
-  hebben geen Testcontainers-route meer. Dat is een bewuste afweging: het
-  risico van een container→host code-execution-bridge weegt zwaarder dan de
-  dekking, en er zijn geen gebruikers op die platforms. Welke platforms
-  bevestigd zijn, staat in `claude-sandbox/podman/README.md`.
-- Beslissing C/D: uitgesteld, niet nu.
+- **Host-agent verwijderd.** Hosts waar podman-in-de-sandbox niet bevestigd is —
+  Docker Desktop op Mac/Windows, WSL2, rootless `podman machine` — hebben geen
+  Testcontainers-route meer. Dat is een bewuste afweging: het risico van een
+  container→host code-execution-bridge weegt zwaarder dan de dekking, en
+  **binnen dit team** zijn er geen gebruikers op die platforms. Een hergebruiker
+  met wél zulke werkplekken (Windows/WSL2 is bij veel overheidsorganisaties de
+  standaard) moet deze afweging opnieuw maken en de opzet daar eerst bevestigen
+  met `podman/setup-host.sh` + `podman/smoke-test.sh`. Welke platforms bevestigd
+  zijn, staat in `claude-sandbox/podman/README.md`.
+- Sysbox/microVM: uitgesteld, niet nu.
