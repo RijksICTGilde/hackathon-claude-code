@@ -320,7 +320,7 @@ RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh
 # zsh (root leest dan /root/.zshrc, niet .bashrc) en een systeembreed rc-bestand
 # dekt bash én zsh, login én non-login.
 RUN mkdir -p /etc/zsh && { \
-      echo 'if [ -t 1 ]; then'; \
+      echo 'if [ -t 1 ] && [ "$(id -u)" -eq 0 ]; then'; \
       echo '  echo "LET OP: je bent root in de sandbox. Claude en projectcode horen als claude te draaien."'; \
       echo '  echo "Gebruik: docker exec -tiu claude claude-sandbox zsh"'; \
       echo 'fi'; \
