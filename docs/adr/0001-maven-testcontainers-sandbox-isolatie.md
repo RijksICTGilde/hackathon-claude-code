@@ -101,9 +101,10 @@ setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
 - Relaxaties op de *outer* container: seccomp is een blocklist en geen allowlist
   (een allowlist zet `clone`/`unshare`/`mount`/`setns` achter `CAP_SYS_ADMIN` en
   breekt rootless podman; de blocklist re-blokkeert wél module-load/kexec/reboot/
-  bpf/perf/`open_by_handle_at`/`userfaultfd`/`io_uring_*`/kernel-keyring/quotactl
-  — `ptrace` bewust toegestaan), `systempaths=unconfined` staat nog aan, en op
-  SELinux-hosts `label=disable`.
+  bpf/perf/`open_by_handle_at`/`userfaultfd`/`io_uring_*`/quotactl/syslog
+  — `ptrace` en de kernel-keyring bewust toegestaan, want crun maakt bij
+  container-start een session-keyring), `systempaths=unconfined` staat nog aan,
+  en op SELinux-hosts `label=disable`.
 - In de multi-uid opt-in staat `CAP_SYS_ADMIN` in de bounding set. `claude` heeft
   `CapEff=0` en krijgt hem niet rechtstreeks; alleen setuid-root
   `newuidmap`/`newgidmap` trekken hem eruit (en die geven geen shell). Maar er is

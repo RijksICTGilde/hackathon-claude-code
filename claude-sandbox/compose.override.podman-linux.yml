@@ -44,7 +44,10 @@ services:
       # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak
       # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
       # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
-      # bpf, perf_event_open, open_by_handle_at, kernel-keyring, quotactl).
+      # bpf, perf_event_open, open_by_handle_at, quotactl, syslog, legacy-io).
+      # De kernel-keyring-syscalls (keyctl/add_key/request_key) staan bewust WEL
+      # toe: crun maakt bij container-start een session-keyring, net als
+      # docker-default die toestaat — blokkeren breekt geneste podman.
       # Strikt veiliger dan unconfined.
       # Compose leest dit profiel client-side en resolvet een relatief pad tegen
       # de PROJECTDIRECTORY: de map van het eerste -f-bestand (te overrulen met

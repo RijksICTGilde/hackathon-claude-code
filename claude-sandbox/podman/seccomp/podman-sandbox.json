@@ -5,7 +5,6 @@
       "names": [
         "_sysctl",
         "acct",
-        "add_key",
         "bpf",
         "clock_adjtime",
         "clock_adjtime64",
@@ -25,7 +24,6 @@
         "kcmp",
         "kexec_file_load",
         "kexec_load",
-        "keyctl",
         "lookup_dcookie",
         "mbind",
         "migrate_pages",
@@ -43,7 +41,6 @@
         "query_module",
         "quotactl",
         "reboot",
-        "request_key",
         "set_mempolicy",
         "settimeofday",
         "stime",
