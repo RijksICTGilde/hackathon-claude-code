@@ -83,8 +83,11 @@ draaien in een VM), dus daar is niets te doen.
   `/proc/sys`-denies. Deze deny is *padgebonden* aan `/proc`; een verse
   proc-mount elders zou hem omzeilen, maar dat vereist `CAP_SYS_ADMIN`, en juist
   de setuid-strip hierboven sluit de weg daarheen. `entrypoint-root.sh` faalt
-  bovendien hard als het profiel in complain-modus staat, zodat de deny niet
-  stil onafgedwongen kan blijven.
+  bovendien hard als het profiel in *complain*-modus staat, zodat het niet stil
+  in complain onafgedwongen blijft. (Het geval "profiel helemaal niet toegepast"
+  op een Linux-host wordt door de runtime-check niet gedekt — daar is
+  `unconfined` niet te onderscheiden van de legitieme macOS-stand; het
+  handmatige testprotocol vangt dat wel.)
 
 **Waarom geen `--no-new-privs`.** Dat lijkt gratis hardening, maar setuid-root
 `newuidmap` wint er geen privileges meer mee, waarna multi-uid rootless podman
@@ -117,13 +120,15 @@ setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
   sysbox/microVM-route.
 
 **Welke laag welke escape sluit.** De root-entrypoint plus de setuid-strip
-sluiten het *bereiken* van container-root met `CAP_SYS_ADMIN`. Het
-AppArmor-profiel sluit de `/proc/sys`-usermode-helper-escapeklasse (`core_pattern`
-en verwanten) die container-root anders zou gebruiken — niet elke
-container-root-capability. Die twee lagen zijn onafhankelijk voor déze
-escapeklasse: de entrypoint/setuid-laag houdt ook als AppArmor faalt, en
-omgekeerd. Zet het AppArmor-profiel dus niet terug op `flags=(unconfined)`, en
-lever de image niet zonder de setuid-strip.
+sluiten het *bereiken* van container-root met `CAP_SYS_ADMIN` — dat is de
+dragende laag. Het AppArmor-profiel sluit daar bovenop het *directe*
+`/proc/sys`-usermode-helper-pad (`core_pattern` en verwanten). De twee zijn niet
+symmetrisch: de setuid-laag houdt óók als AppArmor faalt, maar AppArmor alléén
+is niet voldoende tegen een CAP_SYS_ADMIN-houder — die zou de padgebonden
+`/proc/sys`-deny omzeilen via een verse proc-mount (zie de Open-sectie). AppArmor
+is dus defense-in-depth voor het directe pad, geen zelfstandige vervanger van de
+setuid-strip. Zet het profiel dus niet terug op `flags=(unconfined)`, en lever de
+image niet zonder de setuid-strip.
 
 **Verificatie.** `claude-sandbox/docs/hardening-verificatie.md` bevat het
 testprotocol, inclusief de negatieve tests die aantonen dat de escape dicht is.

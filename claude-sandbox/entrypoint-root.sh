@@ -31,21 +31,28 @@ if ! /usr/local/bin/init-firewall.sh; then
 fi
 
 # Borg dat de AppArmor-laag die de /proc/sys-escape sluit ook echt afdwingt.
-# In de multi-uid opt-in (CAP_SYS_ADMIN in de bounding set) is dat profiel de
-# laatste verdediging tegen de core_pattern→host-root-escape. Ons eigen
-# debug-recept raadt `aa-complain` aan; blijft het profiel daarna in
-# complain-modus staan, dan worden de denies niet afgedwongen en staat de escape
-# stil weer open. Faal dan hard i.p.v. de sandbox met een gat te laten starten.
+# In de multi-uid opt-in (CAP_SYS_ADMIN in de bounding set) is dat profiel een
+# defense-in-depth-laag voor het directe core_pattern-pad; blijft het profiel in
+# complain-modus staan (bv. na een aa-complain-debugsessie), dan worden de denies
+# niet afgedwongen. Faal dan hard i.p.v. de sandbox met een gat te laten starten.
 # Alleen ons profiel checken: op macOS/Rancher is apparmor=unconfined (geen
 # match) en zit er een VM-kernelgrens onder, dus daar niet falen.
+#
+# ALLOW_APPARMOR_COMPLAIN=true degradeert de fatal tot een waarschuwing, zodat je
+# het profiel bewust in complain kunt draaien om een AppArmor-denial te
+# reproduceren (zie hardening-verificatie.md sectie 4). Alleen de operator kan
+# die env zetten bij container-start, vóór de drop naar claude — `claude` bereikt
+# deze fase niet.
 aa_current="$(cat /proc/self/attr/current 2>/dev/null || true)"
 case "$aa_current" in
     *"claude-sandbox-podman (complain)"*)
-        echo "FATAL: het AppArmor-profiel claude-sandbox-podman staat in complain-modus." \
-             "In die modus worden de /proc/sys-denies niet afgedwongen en staat de" \
-             "core_pattern-escape naar host-root open. Zet enforce met" \
-             "'sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman' en recreate de container." >&2
-        exit 1 ;;
+        msg="het AppArmor-profiel claude-sandbox-podman staat in complain-modus. In die modus worden de /proc/sys-denies niet afgedwongen. Zet enforce met 'sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman' en recreate de container."
+        if [[ "${ALLOW_APPARMOR_COMPLAIN:-false}" == "true" ]]; then
+            echo "WAARSCHUWING: $msg (toegestaan via ALLOW_APPARMOR_COMPLAIN=true — alleen voor debug)" >&2
+        else
+            echo "FATAL: $msg" >&2
+            exit 1
+        fi ;;
 esac
 
 # HOME expliciet zetten: de container draait nu als root, dus Docker zet HOME op
