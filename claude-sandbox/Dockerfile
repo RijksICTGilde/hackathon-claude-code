@@ -25,7 +25,6 @@ RUN apt-get update && \
     curl \
     ca-certificates \
     procps \
-    sudo \
     fzf \
     zsh \
     man-db \
@@ -222,9 +221,10 @@ RUN case "$INSTALL_JVM" in \
 USER root
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
-  echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
-  chmod 0440 /etc/sudoers.d/claude-firewall
+# Geen sudoers-regel: de firewall draait in de root-fase van de entrypoint, vóór
+# de drop naar `claude`. Een NOPASSWD-regel met SETENV was hier eerder een
+# directe route van uid 1000 naar container-root — zie entrypoint-root.sh.
+RUN chmod +x /usr/local/bin/init-firewall.sh
 
 # Optioneel: rootless Podman voor Maven+Testcontainers ín de container.
 # Bediening: claude-sandbox/podman/README.md. Ontwerp en meetresultaten:
@@ -278,10 +278,34 @@ RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
         > /home/claude/.config/containers/storage.conf ; \
     fi
 
-# Startup script voor firewall
-COPY --chown=claude:claude entrypoint.sh /opt/entrypoint.sh
-RUN chmod +x /opt/entrypoint.sh
+# De container start als root zodat de firewall kan worden opgezet;
+# entrypoint-root.sh dropt daarna naar `claude`. Gevolg voor bediening: `docker
+# exec` zonder -u geeft een root-shell. Gebruik `docker exec -u claude` — de
+# root-shell waarschuwt daar zelf ook voor.
+USER root
+
+# Beide entrypoints zijn root-eigendom en niet schrijfbaar voor `claude`. Dat is
+# geen detail: entrypoint-root.sh draait als root bij elke container-start, dus
+# een door `claude` schrijfbaar bestand zou een privilege-escalatie zijn die bij
+# de volgende herstart afgaat.
+#
+# Geen COPY --chown/--chmod: die vlaggen vergen een recente BuildKit- of
+# buildah-frontend, en op macOS bouwen gebruikers met podman-compose. Een kale
+# COPY landt sowieso als root:root; de chmod doen we expliciet.
+COPY entrypoint-root.sh /opt/entrypoint-root.sh
+COPY entrypoint.sh /opt/entrypoint.sh
+RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh
+
+# Vangnet tegen de footgun hierboven: wie per ongeluk als root de container in
+# exec't, krijgt het te zien in plaats van ongemerkt als root te werken en
+# root-eigendom achter te laten in het claude-home volume.
+RUN { \
+      echo 'if [ -t 1 ]; then'; \
+      echo '  echo "LET OP: je bent root in de sandbox. Claude en projectcode horen als claude te draaien."'; \
+      echo '  echo "Gebruik: docker exec -tiu claude claude-sandbox zsh"'; \
+      echo 'fi'; \
+    } | tee -a /root/.bashrc >> /root/.profile
 
 WORKDIR /home/claude/projects
 
-ENTRYPOINT ["/opt/entrypoint.sh"]
+ENTRYPOINT ["/opt/entrypoint-root.sh"]

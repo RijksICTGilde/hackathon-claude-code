@@ -1,18 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# Start firewall
-echo "entrypoint OPEN_HTTPS: ${OPEN_HTTPS:-false}"
-echo "entrypoint ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}"
-if ! sudo -E /usr/local/bin/init-firewall.sh; then
-    {
-        echo "FATAL: Firewall-initialisatie mislukt."
-        echo "Veelvoorkomende oorzaken:"
-        echo "  - OPEN_HTTPS heeft geen waarde 'true' of 'false'"
-        echo "  - Container mist NET_ADMIN/NET_RAW (controleer cap_add in compose.yml)"
-        echo "  - iptables/ipset modules niet beschikbaar op host-kernel"
-        echo "Zie de output hierboven voor het concrete iptables/ipset-commando dat faalde."
-    } >&2
+# Draait als `claude`, gestart door /opt/entrypoint-root.sh nadat die de firewall
+# heeft opgezet en naar deze user is gedropt. Hier is geen root meer bereikbaar:
+# er is geen sudo en geen sudoers-regel. Zie entrypoint-root.sh voor het waarom.
+if [[ "$(id -u)" -eq 0 ]]; then
+    echo "FATAL: entrypoint.sh draait als root. Dit script hoort als 'claude' te draaien," \
+         "gestart via /opt/entrypoint-root.sh. Start de container via de ENTRYPOINT," \
+         "niet door dit script rechtstreeks aan te roepen." >&2
     exit 1
 fi
 
