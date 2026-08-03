@@ -53,6 +53,22 @@ if ! command -v apparmor_parser >/dev/null 2>&1; then
     exit 0
 fi
 
+# Valideer wat we straks als root in de kernel laden. `apparmor_parser -r`
+# vervangt élk profiel dat in het bestand gedeclareerd staat, op naam. Een
+# toegevoegde stanza `profile docker-default flags=(unconfined) { }` zou dus
+# stilletjes de AppArmor-afscherming van alle containers op deze host slopen.
+# Een kwaadaardige bewerking in een .sh valt op bij review; een extra stanza in
+# een configbestand niet.
+profile_count="$(grep -c '^profile ' "$PROFILE_SRC" || true)"
+if [[ "$profile_count" -ne 1 ]] || ! grep -q '^profile claude-sandbox-podman ' "$PROFILE_SRC"; then
+    echo "✗ $PROFILE_SRC declareert niet precies één profiel 'claude-sandbox-podman'." >&2
+    echo "  Gevonden:" >&2
+    grep '^profile ' "$PROFILE_SRC" >&2 || echo "  (geen enkele profile-regel)" >&2
+    echo "  Geweigerd: apparmor_parser -r vervangt profielen op naam, dus dit kan" >&2
+    echo "  andere profielen op deze host overschrijven." >&2
+    exit 1
+fi
+
 echo "→ profiel laden: $PROFILE_SRC → $PROFILE_DST"
 sudo install -m 0644 "$PROFILE_SRC" "$PROFILE_DST"
 if ! sudo apparmor_parser -r -W "$PROFILE_DST" 2>/tmp/aa-err; then
@@ -73,4 +89,10 @@ echo "✓ profiel 'claude-sandbox-podman' geladen."
 echo
 echo "Start nu de sandbox met de podman-override:"
 echo "  docker compose -f compose.yml -f compose.override.podman-linux.yml up -d --force-recreate"
+echo
+echo "Breekt podman hierna op een AppArmor-weigering, zet het profiel dan tijdelijk"
+echo "in klaagmodus en kijk wat er geweigerd wordt:"
+echo "  sudo aa-complain $PROFILE_DST"
+echo "  sudo dmesg | grep -i 'apparmor.*DENIED'"
+echo "  sudo aa-enforce $PROFILE_DST"
 echo "== klaar =="
