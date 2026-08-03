@@ -61,11 +61,13 @@ export LOGNAME=claude
 claude_uid="$(id -u claude)"
 claude_gid="$(id -g claude)"
 
-# GEEN --no-new-privs. Dat lijkt gratis hardening, maar PR #76 heeft gemeten dat
-# setuid-root `newuidmap` er precies op stukloopt ("newuidmap: write to uid_map
-# failed"), waarna podman naar single-uid degradeert en DB-images falen met
-# "chown: Invalid argument". Zie de meettabel in
+# GEEN --no-new-privs. Dat lijkt gratis hardening, maar setuid-root `newuidmap`
+# loopt er precies op stuk ("newuidmap: write to uid_map failed"), waarna podman
+# naar single-uid degradeert en DB-images falen met "chown: Invalid argument".
+# Gemeten; zie de meettabel in
 # docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
+# De weg naar euid 0 die --no-new-privs zou blokkeren is in plaats daarvan
+# gesloten door het strippen van de setuid-bits in de Dockerfile.
 #
 # --inh-caps=-all leegt de inheritable set. De bounding set blijft staan, want
 # setuid-root newuidmap moet daar in multi-uid CAP_SYS_ADMIN uit kunnen trekken.

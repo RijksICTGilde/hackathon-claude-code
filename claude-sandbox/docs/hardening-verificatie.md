@@ -1,6 +1,6 @@
 # Hardening verifiëren
 
-De hardening uit PR B doet twee dingen die je niet op het woord moet geloven:
+Deze hardening doet twee dingen die je niet op het woord moet geloven:
 hij sluit een escape, en hij mag de sandbox niet breken. Dit protocol test
 allebei. Draai het op een echte host, ná `docker compose … up --build -d
 --force-recreate` met de podman-override.
@@ -23,16 +23,27 @@ docker exec -tiu claude claude-sandbox bash
 | `command -v sudo` | geen output, exit 1 |
 | `ls /etc/sudoers.d/` | leeg, of geen `claude-firewall` |
 | `echo test > /proc/sys/kernel/core_pattern` | `Permission denied` |
-| `cat /proc/self/status \| grep CapEff` | `0000000000000000` |
+| `cat /proc/self/status \| grep CapEff` | `CapEff: 0000000000000000` |
+| `cat /proc/self/attr/current` | `claude-sandbox-podman (enforce)` op een gehardende Linux-host; `unconfined` op macOS/Rancher (VM-grens eronder). **Nooit `(complain)`** — de entrypoint hoort daar al op te falen |
+| `find / -xdev -perm -4000 -o -perm -2000 2>/dev/null` | alleen `newuidmap`, `newgidmap`, `fusermount3` — geen `su`/`mount`/`passwd`/… |
 
-De laatste twee zijn de kern. Slaagt de `core_pattern`-write wél, dan
-mediateert het AppArmor-profiel niet — controleer of de container met
-`--security-opt apparmor=claude-sandbox-podman` draait en of het profiel in
-enforce-modus staat:
+De `core_pattern`-write, het enforce-profiel en de setuid-enumeratie zijn de
+kern. Die drie lagen sluiten de escape onafhankelijk: de setuid-strip sluit de
+weg naar `CAP_SYS_ADMIN`, het enforce-profiel sluit de `/proc/sys`-write. Slaagt
+de `core_pattern`-write wél, dan mediateert het AppArmor-profiel niet —
+controleer of de container met `--security-opt apparmor=claude-sandbox-podman`
+draait en of het profiel in enforce-modus staat:
 
 ```
 sudo aa-status | grep claude-sandbox-podman
 ```
+
+Draai je multi-uid, controleer dan dat `CAP_SYS_ADMIN` (bit 21) wél in de
+bounding set zit maar níét effectief is — dat is de bewuste trade-off:
+
+| Commando | Verwacht |
+|---|---|
+| `grep Cap /proc/self/status` | `CapEff: 0000000000000000`, `CapBnd` met bit 21 gezet (bevat `...a82425fb` of vergelijkbaar) |
 
 ## 2. De egress-allowlist mag niet meer self-service zijn
 
@@ -52,14 +63,14 @@ Nog steeds als `claude`:
 | `echo $HOME` | `/home/claude` |
 | `ls -la /home/claude/.config/containers/storage.conf` | bestaat, eigendom `claude` |
 | `podman info --format '{{.Host.Security.Rootless}}'` | `true` |
-| `./podman/smoke-test.sh` | groen |
+| `cd /home/claude/projects/<repo>/claude-sandbox && ./podman/smoke-test.sh` | groen |
 
 Draai je multi-uid, dan hoort de smoke-test ook `PostgresSmokeTest` te doen:
 
 | Commando | Verwacht |
 |---|---|
 | `podman info --format '{{.Host.IDMappings.UIDMap}}'` | twee mappings, bv. `[{0 1000 1} {1 100000 65536}]` |
-| `./podman/smoke-test.sh` | `Tests run: 2, Failures: 0, Errors: 0` |
+| `cd claude-sandbox && ./podman/smoke-test.sh` | `Tests run: 2, Failures: 0, Errors: 0` |
 
 Eén mapping in plaats van twee betekent dat setuid-root `newuidmap` geen
 privileges meer wint. Controleer dan of er ergens `no_new_privs` is

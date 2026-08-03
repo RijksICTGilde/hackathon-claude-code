@@ -26,12 +26,11 @@
 # Draaien:  docker ... --security-opt apparmor=claude-sandbox-podman
 #
 # ITEREREN ALS PODMAN BREEKT
-# Te strak en podman start geen geneste containers meer. Diagnose:
-#   sudo aa-complain /etc/apparmor.d/claude-sandbox-podman   # klaagmodus
-#   sudo dmesg | grep -i 'apparmor.*DENIED'                  # wat wordt geweigerd
-#   sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman    # terug naar enforce
-# Verruim gericht op basis van die output; val niet terug op flags=(unconfined),
-# want dan is de escape hierboven weer open.
+# Te strak en podman start geen geneste containers meer. Het aa-complain/dmesg/
+# aa-enforce-diagnoserecept staat in claude-sandbox/docs/hardening-verificatie.md
+# (sectie 4). Verruim gericht op basis van de DENIED-regels; val niet terug op
+# flags=(unconfined), want dan is de escape hierboven weer open. Let op: laat het
+# profiel niet in complain staan — entrypoint-root.sh faalt daar bij de start op.
 #
 # abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
 # parser, dan strijkt setup-host.sh deze regel er automatisch uit.

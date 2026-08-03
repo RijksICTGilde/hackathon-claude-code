@@ -365,12 +365,12 @@ host-agent, `--privileged` of Docker-socket. Ontwerp:
    ```
 3. In de container een JDK+Maven regelen (eenmalig):
    ```
-   docker compose exec claude bash -lc \
+   docker compose exec -u claude claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && sdk install java && sdk install maven"
    ```
 4. Smoke-test draaien:
    ```
-   docker compose exec claude bash -lc \
+   docker compose exec -u claude claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && \
       podman/smoke-test.sh"
    ```
