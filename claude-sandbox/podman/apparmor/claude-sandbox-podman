@@ -1,22 +1,76 @@
-# AppArmor-profiel dat de sandbox-container userns laat gebruiken op gehardende
-# Ubuntu/Tuxedo (kernel.apparmor_restrict_unprivileged_userns=1), ZONDER die
-# host-hardening systeembreed uit te zetten. Alleen containers die expliciet
-# onder dit profiel draaien krijgen userns; al het andere blijft docker-default.
+# AppArmor-profiel voor de sandbox-container met rootless Podman.
 #
-# Installeren op de HOST:  ./setup-host.sh   (of zie README)
+# Afgeleid van docker-default, met drie afwijkingen:
+#   1. `userns,` toegevoegd. Nodig op gehardende Ubuntu/Tuxedo
+#      (kernel.apparmor_restrict_unprivileged_userns=1) zodat alleen deze
+#      container userns mag gebruiken, zonder de host-hardening systeembreed uit
+#      te zetten.
+#   2. docker-defaults `deny mount,` weggelaten en mount/umount/pivot_root
+#      expliciet toegestaan. Geneste rootless podman kan niet zonder.
+#   3. De rest van docker-defaults deny-regels blijft staan — met name de
+#      /proc/sys-denies.
+#
+# WAAROM DIE /proc/sys-DENIES HIER HET WERK DOEN
+# De podman-override zet `systempaths=unconfined`, waardoor Docker's masked en
+# read-only /proc-paden vervallen en /proc/sys read-write gemount is. Er is geen
+# userns-remap, dus container-root is host-root-uid, en
+# /proc/sys/kernel/core_pattern is enkel DAC-beschermd (0644 root:root): geen
+# capability-check. Wie root wordt in de container kan daar een usermode-helper
+# in schrijven en die draait bij de eerstvolgende core-dump als echte host-root,
+# buiten alle namespaces.
+# AppArmor mediateert dat schrijfpad los van de vraag of de mount read-only is.
+# Deze regels zijn dus de laatste laag die de escape sluit, ook als
+# systempaths=unconfined blijft staan.
+#
+# Installeren op de HOST:  ./podman/setup-host.sh
 # Draaien:  docker ... --security-opt apparmor=claude-sandbox-podman
 #
-# flags=(unconfined): deze container is verder onbeperkt (gelijk aan
-# apparmor=unconfined) — de MAC-laag vervalt voor déze container, maar Docker's
-# masked paths, capability-set en namespaces blijven. De `userns,` regel is wat
-# de Ubuntu-restrictie nodig heeft om userns toe te staan. Zie de security-noot
-# in de spec.
+# ITEREREN ALS PODMAN BREEKT
+# Te strak en podman start geen geneste containers meer. Diagnose:
+#   sudo aa-complain /etc/apparmor.d/claude-sandbox-podman   # klaagmodus
+#   sudo dmesg | grep -i 'apparmor.*DENIED'                  # wat wordt geweigerd
+#   sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman    # terug naar enforce
+# Verruim gericht op basis van die output; val niet terug op flags=(unconfined),
+# want dan is de escape hierboven weer open.
 #
 # abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
-# AppArmor (parser kent abi 4.0 niet), verwijder dan de eerste regel.
+# parser, dan strijkt setup-host.sh deze regel er automatisch uit.
 abi <abi/4.0>,
 include <tunables/global>
 
-profile claude-sandbox-podman flags=(unconfined) {
+profile claude-sandbox-podman flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Geneste rootless podman heeft deze nodig; docker-default weigert mount.
+  mount,
+  pivot_root,
   userns,
+
+  signal (receive) peer=unconfined,
+  signal (send,receive) peer=claude-sandbox-podman,
+
+  # /proc-afscherming, overgenomen uit docker-default. Zie de noot hierboven.
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^1-9],[^1-9s][^1-9y][^1-9s],[^1-9][^1-9][^1-9][^1-9]*}/** w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  # /sys-afscherming, overgenomen uit docker-default. De patronen laten
+  # /sys/fs/cgroup met rust, dat heeft de container nodig.
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  ptrace (trace,read,tracedby,readby) peer=claude-sandbox-podman,
 }
