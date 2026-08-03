@@ -129,6 +129,18 @@ if [ "$OPEN_HTTPS" != "true" ]; then
         "get.sdkman.io"
         "broker.sdkman.io"
     )
+    # Container-registries voor Testcontainers — alleen toevoegen als rootless
+    # podman in de image zit. Dan pullt Testcontainers images van docker.io en
+    # moeten die registries door de strikte whitelist. Zonder podman verbreedt
+    # dit de whitelist niet. (Bij OPEN_HTTPS=true is deze hele lijst een no-op.)
+    if command -v podman >/dev/null 2>&1; then
+        DOMAINS+=(
+            "registry-1.docker.io"
+            "auth.docker.io"
+            "production.cloudflare.docker.com"
+            "docker.io"
+        )
+    fi
     if [ -n "${ALLOWED_DOMAINS:-}" ]; then
         IFS=',' read -ra EXTRA <<< "$ALLOWED_DOMAINS"
         DOMAINS+=("${EXTRA[@]}")
