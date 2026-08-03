@@ -44,7 +44,8 @@ services:
       # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak
       # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
       # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
-      # bpf, perf_event_open, open_by_handle_at). Strikt veiliger dan unconfined.
+      # bpf, perf_event_open, open_by_handle_at, kernel-keyring, quotactl).
+      # Strikt veiliger dan unconfined.
       # Compose leest dit profiel client-side en resolvet een relatief pad tegen
       # de PROJECTDIRECTORY: de map van het eerste -f-bestand (te overrulen met
       # --project-directory), niet tegen CWD en niet tegen dit bestand. Omdat
