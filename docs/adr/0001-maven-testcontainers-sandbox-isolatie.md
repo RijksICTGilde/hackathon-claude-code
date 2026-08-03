@@ -66,17 +66,32 @@ draaien in een VM), dus daar is niets te doen.
 
 - De container→host code-execution-bridge van #44. Er is geen host-agent meer
   en geen Docker-socket; alle projectcode draait in de sandbox.
-- De route van uid 1000 naar container-root. De firewall draait in de root-fase
-  van de entrypoint en dropt daarna met `setpriv` naar `claude`; de
-  NOPASSWD-sudoers-regel met de SETENV-tag is weg, evenals `sudo` zelf. Die tag
-  liet `BASH_ENV` de `env_reset` van sudo overleven.
+- De route van uid 1000 naar container-root, via twee gesloten paden. (a) De
+  sudo-route: de firewall draait in de root-fase van de entrypoint en dropt
+  daarna met `setpriv` naar `claude`; de NOPASSWD-sudoers-regel met de
+  SETENV-tag is weg, evenals `sudo` zelf. Die tag liet `BASH_ENV` de `env_reset`
+  van sudo overleven. (b) De setuid-route: de drop laat bewust `--no-new-privs`
+  weg (nodig voor `newuidmap`, zie hieronder) en houdt de bounding set, dus
+  zónder maatregel kon `claude` euid 0 + bounding-set-caps winnen via elke
+  setuid-root-binary. De Dockerfile stript daarom de setuid-bits behalve
+  `newuidmap`/`newgidmap`/`fusermount3` — geen setuid-shell, geen setuid-`mount`.
 - De egress-allowlist als self-service. `OPEN_HTTPS` en `ALLOWED_DOMAINS` worden
   alleen nog gelezen vóór de drop, dus `claude` kan de firewall niet meer
   heropenen.
-- Schrijven naar `/proc/sys` vanuit de container, ook met
-  `systempaths=unconfined`. Het AppArmor-profiel is afgeleid van docker-default
-  en behoudt de `/proc/sys`-denies, waarmee de `core_pattern`-route naar
-  host-root dicht is.
+- De `core_pattern`→host-root-escapeklasse, ook met `systempaths=unconfined`.
+  Het AppArmor-profiel is afgeleid van docker-default en behoudt de
+  `/proc/sys`-denies. Deze deny is *padgebonden* aan `/proc`; een verse
+  proc-mount elders zou hem omzeilen, maar dat vereist `CAP_SYS_ADMIN`, en juist
+  de setuid-strip hierboven sluit de weg daarheen. `entrypoint-root.sh` faalt
+  bovendien hard als het profiel in complain-modus staat, zodat de deny niet
+  stil onafgedwongen kan blijven.
+
+**Waarom geen `--no-new-privs`.** Dat lijkt gratis hardening, maar setuid-root
+`newuidmap` wint er geen privileges meer mee, waarna multi-uid rootless podman
+degradeert naar single-uid en DB-images falen op `chown: Invalid argument`.
+Gemeten; zie de meettabel in
+`docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`. De
+setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
 
 **Open.**
 
@@ -88,22 +103,31 @@ draaien in een VM), dus daar is niets te doen.
   SELinux-hosts `label=disable`.
 - In de multi-uid opt-in staat `CAP_SYS_ADMIN` in de bounding set. `claude` heeft
   `CapEff=0` en krijgt hem niet rechtstreeks; alleen setuid-root
-  `newuidmap`/`newgidmap` trekken hem eruit. Maar er is geen userns-remap, dus
-  áls er ooit tóch een escalatie naar container-root is, is dat host-root-uid.
+  `newuidmap`/`newgidmap` trekken hem eruit (en die geven geen shell). Maar er is
+  geen userns-remap, dus áls er ooit tóch een escalatie naar container-root met
+  `CAP_SYS_ADMIN` is, is dat host-root-uid.
+- Het AppArmor-profiel staat `mount,`, `pivot_root,`, `capability,` en `file,`
+  toe (geneste podman heeft mount nodig). Het sluit dus de
+  `/proc/sys`-usermode-helper-escapeklasse, niet elke capability van
+  container-root. Blokkeren van de proc-mount-bypass in het profiel zelf vergt
+  vermoedelijk een child-profiel voor de nested runtime — zie de onderzoeksbucket
+  in de spec.
 - Kernel-escapes blijven buiten bereik van deze maatregelen. Wie volledig
   vijandige, kernel-exploit-capabele code moet draaien, hoort bij de
   sysbox/microVM-route.
 
-**Welke laag welke escape sluit.** De root-entrypoint sluit het *bereiken* van
-container-root. Het AppArmor-profiel sluit wat container-root zou *kunnen* áls
-dat tóch lukt. Die twee lagen zijn onafhankelijk: elk sluit de escape op
-zichzelf. Zet het AppArmor-profiel dus niet terug op `flags=(unconfined)` omdat
-"de sudo-route toch al dicht is".
+**Welke laag welke escape sluit.** De root-entrypoint plus de setuid-strip
+sluiten het *bereiken* van container-root met `CAP_SYS_ADMIN`. Het
+AppArmor-profiel sluit de `/proc/sys`-usermode-helper-escapeklasse (`core_pattern`
+en verwanten) die container-root anders zou gebruiken — niet elke
+container-root-capability. Die twee lagen zijn onafhankelijk voor déze
+escapeklasse: de entrypoint/setuid-laag houdt ook als AppArmor faalt, en
+omgekeerd. Zet het AppArmor-profiel dus niet terug op `flags=(unconfined)`, en
+lever de image niet zonder de setuid-strip.
 
 **Verificatie.** `claude-sandbox/docs/hardening-verificatie.md` bevat het
 testprotocol, inclusief de negatieve tests die aantonen dat de escape dicht is.
-Drie vragen staan nog open (`systempaths` versmallen, userns-remap, de bounding
-set); die staan in de meettabel van
+De openstaande onderzoeksvragen staan in de meettabel van
 `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`.
 
 **Weging.** Geschikt voor het reële #44-dreigingsbeeld (Claude rogue /

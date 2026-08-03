@@ -25,11 +25,13 @@
 #
 # Wat je wél vergroot is de impact áls die escalatie er ooit tóch is. Er is geen
 # userns-remap, dus container-root is host-root-uid — niet container-breed maar
-# host-breed. Met CAP_SYS_ADMIN erbij kan container-root dan ook
-# `mount -o remount,rw /proc/sys` doen, waarmee de escape niet meer afhangt van
-# systempaths=unconfined. Het AppArmor-profiel is de laag die dat sluit: het
-# weigert schrijven naar /proc/sys ongeacht de mount-opties. Draai deze opt-in
-# dus niet met een profiel dat op flags=(unconfined) staat.
+# host-breed. Met CAP_SYS_ADMIN erbij zou container-root de padgebonden
+# /proc/sys-afscherming van AppArmor kunnen omzeilen via een verse proc-mount.
+# Twee lagen sluiten dat: (1) de Dockerfile stript de setuid-bits behalve
+# newuidmap/newgidmap, zodat er geen setuid-route meer is waarlangs de sandbox-
+# user CAP_SYS_ADMIN in handen krijgt; (2) het AppArmor-profiel weigert de
+# /proc/sys-write. Draai deze opt-in dus niet met een profiel dat op
+# flags=(unconfined) staat, en niet met een image zonder de setuid-strip.
 #
 # Die afweging valt per platform anders uit: op Mac/Windows zit er nog een
 # VM-kernelgrens onder, op Linux met bare Docker niet. Zie de security-balans in
