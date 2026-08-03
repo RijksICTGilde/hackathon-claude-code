@@ -83,12 +83,15 @@ Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
    vereist eenmalig `podman system reset` in de container.
 4. JDK+Maven in de container (eenmalig, blijft in het claude-home volume):
    ```
-   docker compose exec claude bash -lc \
+   docker compose exec -u claude claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && sdk install java && sdk install maven"
    ```
+   `-u claude`: de container start als root (firewall) en dropt daarna naar
+   `claude`. Zonder `-u claude` draait dit als root; de eerste `claude` is de
+   user, de tweede de service-naam.
 5. Verificatie (sample Testcontainers-build):
    ```
-   docker compose exec claude bash -lc \
+   docker compose exec -u claude claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && \
       /home/claude/projects/<repo>/claude-sandbox/podman/smoke-test.sh"
    ```
@@ -128,11 +131,13 @@ cd claude-sandbox
 # .env: INSTALL_PODMAN=true  (OPEN_HTTPS=true laat docker.io-pulls over 443 toe)
 BUILDAH_FORMAT=docker podman-compose -f compose.yml -f compose.override.podman-macos.yml \
   up --build -d --force-recreate
-# JDK + Maven (eenmalig, blijft in het claude-home volume)
-podman exec claude-sandbox bash -lc \
+# JDK + Maven (eenmalig, blijft in het claude-home volume). -u claude: de
+# container start als root (firewall) en dropt daarna naar claude; zonder -u
+# draait dit als root.
+podman exec -u claude claude-sandbox bash -lc \
   "source ~/.sdkman/bin/sdkman-init.sh && sdk install java && sdk install maven"
 # verificatie
-podman exec claude-sandbox bash -lc \
+podman exec -u claude claude-sandbox bash -lc \
   "source ~/.sdkman/bin/sdkman-init.sh && \
    /home/claude/projects/<repo>/claude-sandbox/podman/smoke-test.sh"
 ```
