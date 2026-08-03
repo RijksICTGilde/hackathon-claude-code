@@ -9,8 +9,12 @@
 # apparmor=unconfined i.p.v. apparmor=claude-sandbox-podman, en setup-host.sh
 # overslaan. SELinux staat in deze VM WEL op Enforcing → label=disable blijft nodig.
 #
-# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml):
-#   podman compose -f compose.yml -f compose.override.macos.yml up --build -d
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml). Gebruik
+# podman-compose, NIET `podman compose`: dat laatste delegeert naar docker-compose
+# dat het seccomp-profiel inline meestuurt, waarna podman afkapt met "file name
+# too long" (zie de fallback-tabel in podman/README.md):
+#   BUILDAH_FORMAT=docker podman-compose -f compose.yml \
+#     -f compose.override.podman-macos.yml up --build -d --force-recreate
 services:
   claude:
     environment:
@@ -38,7 +42,9 @@ services:
       # `podman --security-opt seccomp=...`, en de podman-client leest het profiel
       # CLIENT-side (op de Mac) — een relatief pad resolvet daar niet betrouwbaar.
       # Draai compose dus vanuit claude-sandbox/, dan wijst ${PWD} naar deze map.
-      - "seccomp=${PWD}/podman/seccomp/podman-sandbox.json"
+      # ${PWD:?...}: is PWD niet gezet, dan faalt compose hard i.p.v. stil een pad
+      # vanaf filesystem-root te vormen (consistent met de :? -guards in compose.yml).
+      - "seccomp=${PWD:?draai compose vanuit claude-sandbox/}/podman/seccomp/podman-sandbox.json"
       # Geen AppArmor in de Fedora CoreOS VM → unconfined (het Linux-profiel
       # claude-sandbox-podman bestaat hier niet en zou de container-start breken).
       - "apparmor=unconfined"

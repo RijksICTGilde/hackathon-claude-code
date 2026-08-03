@@ -45,10 +45,13 @@ services:
       # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
       # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
       # bpf, perf_event_open, open_by_handle_at). Strikt veiliger dan unconfined.
-      # De Docker-CLI leest dit profiel client-side en resolvet het pad tegen de
-      # huidige werkdirectory, niet tegen dit compose-bestand: draai compose dus
-      # vanuit claude-sandbox/. Ontbreekt het bestand, dan faalt de start hard —
-      # er is geen stille terugval naar unconfined.
+      # Compose leest dit profiel client-side en resolvet een relatief pad tegen
+      # de PROJECTDIRECTORY: de map van het eerste -f-bestand (te overrulen met
+      # --project-directory), niet tegen CWD en niet tegen dit bestand. Omdat
+      # compose.yml in claude-sandbox/ staat, klopt het pad zolang je compose.yml
+      # als eerste -f meegeeft; draai bij voorkeur vanuit claude-sandbox/.
+      # Ontbreekt het bestand, dan faalt de start hard (os.ReadFile) — er is geen
+      # stille terugval naar unconfined.
       # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
       # zet tijdelijk "seccomp=unconfined".
       - "seccomp=podman/seccomp/podman-sandbox.json"
