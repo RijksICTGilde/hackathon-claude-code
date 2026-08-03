@@ -29,12 +29,10 @@ jobs:
   # vendored bestand vervangt — de PR-diff toont meteen de echte wijziging in
   # het script (wat ook nodig is voor review).
   #
-  # rtk hoort hier bewust NIET bij. Deze twee scripts hebben een
-  # ongeversioneerde upstream-URL, dus een sha256-vergelijking detecteert daar
-  # een wijziging. rtk wordt per release-tag gevendord: die URL wijzigt nooit
-  # van inhoud, waardoor deze job er altijd 'changed=false' op gaf en de pin
-  # negen releases achterliep zonder signaal. rtk zit daarom in de
-  # rtk-version-job hieronder, die tag, script en binary-pin samen bumpt.
+  # Alleen scripts met een ongeversioneerde upstream-URL horen hier: daar
+  # detecteert een sha256-vergelijking een wijziging. Een script dat per
+  # release-tag wordt gevendord (rtk) heeft een inhoudelijk onveranderlijke URL
+  # en hoort in de rtk-version-job hieronder.
   vendored-scripts:
     name: "vendored-scripts (${{ matrix.name }})"
     runs-on: ubuntu-latest
@@ -252,13 +250,11 @@ jobs:
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
-  # Job 2c: rtk — release-tracking voor zowel het vendored install-script als de
-  # binary-pin. Anders dan claude/sdkman wordt rtk per release-tag gevendord, dus
-  # een sha256-diff tegen die tag-URL detecteert nooit iets (zie job 1). Deze job
-  # kijkt naar de release zelf en bumpt de drie plekken die samen moeten
-  # verschuiven: het vendored script, de herkomst-URL en RTK_VERSION.
-  # Een aparte SHA-pin voor de binary is niet nodig: het install-script
-  # verifieert die zelf tegen de checksums.txt van dezelfde release.
+  # Job 2c: rtk — volgt de release-tag zelf, omdat het script per tag wordt
+  # gevendord en een sha256-diff tegen die URL dus nooit iets detecteert.
+  # Bumpt de drie plekken die samen moeten verschuiven: het vendored script, de
+  # herkomst-URL en RTK_VERSION. Een aparte SHA-pin voor de binary is niet
+  # nodig: het script verifieert die tegen de checksums.txt van dezelfde release.
   rtk-version:
     name: rtk-version
     runs-on: ubuntu-latest
@@ -276,8 +272,7 @@ jobs:
           set -euo pipefail
           latest=$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name)
           # De tag komt uit een repository van derden en belandt hieronder in
-          # curl- en sed-argumenten. Alleen een strikte semver-tag toelaten,
-          # zodat een vreemde of vijandige tagnaam niet verder komt.
+          # curl- en sed-argumenten: alleen strikte semver toelaten.
           case "$latest" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "FOUT: onverwachte rtk-tag '$latest' (verwacht: vX.Y.Z)" >&2; exit 1;;
@@ -295,8 +290,8 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Het vendored script vervangen door de kopie uit de nieuwe tag. Blijft
-          # byte-identiek aan upstream, zodat de herkomst controleerbaar blijft.
+          # Byte-identiek aan de upstream-tag houden, zodat de herkomst
+          # controleerbaar blijft.
           curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
             -o vendor/install-scripts/rtk.sh
           # Binary-pin, herkomst-URL in de Dockerfile en de versie in de README.

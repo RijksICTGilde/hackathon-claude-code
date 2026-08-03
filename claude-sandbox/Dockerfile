@@ -188,12 +188,9 @@ RUN case "$INSTALL_CAVEMAN" in \
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
 # afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.44.1/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
-# RTK_VERSION pint de te installeren binary. Zonder pin volgt de installer
-# 'latest' en levert dezelfde Dockerfile op twee momenten een andere image op;
-# bovendien breekt een upstream-release de build dan direct. Bumps komen via de
-# rtk-version-job in check-upstream.yml. Een losse SHA-pin (zoals bij Node.js en
-# git-delta) is hier niet nodig: het install-script verifieert de binary zelf
-# tegen de checksums.txt van dezelfde release.
+# RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
+# image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
+# het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
       true) RTK_VERSION=v0.44.1 sh /tmp/rtk-install.sh && \
