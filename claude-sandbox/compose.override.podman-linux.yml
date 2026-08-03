@@ -45,10 +45,13 @@ services:
       # hierop met "cannot clone"), met ERRNO-deny op de echt gevaarlijke
       # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
       # bpf, perf_event_open, open_by_handle_at). Strikt veiliger dan unconfined.
-      # Pad is relatief t.o.v. dit compose-bestand (draai compose vanuit claude-sandbox/).
+      # De Docker-CLI leest dit profiel client-side en resolvet het pad tegen de
+      # huidige werkdirectory, niet tegen dit compose-bestand: draai compose dus
+      # vanuit claude-sandbox/. Ontbreekt het bestand, dan faalt de start hard —
+      # er is geen stille terugval naar unconfined.
       # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
       # zet tijdelijk "seccomp=unconfined".
-      - "seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json"
+      - "seccomp=podman/seccomp/podman-sandbox.json"
       # AppArmor: custom profiel dat userns toestaat op gehardende Ubuntu/Tuxedo
       # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
       # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh

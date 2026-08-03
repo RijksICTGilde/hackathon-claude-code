@@ -38,7 +38,7 @@ services:
       # `podman --security-opt seccomp=...`, en de podman-client leest het profiel
       # CLIENT-side (op de Mac) — een relatief pad resolvet daar niet betrouwbaar.
       # Draai compose dus vanuit claude-sandbox/, dan wijst ${PWD} naar deze map.
-      - "seccomp=${PWD}/host-agents/maven/podman/seccomp/podman-sandbox.json"
+      - "seccomp=${PWD}/podman/seccomp/podman-sandbox.json"
       # Geen AppArmor in de Fedora CoreOS VM → unconfined (het Linux-profiel
       # claude-sandbox-podman bestaat hier niet en zou de container-start breken).
       - "apparmor=unconfined"
