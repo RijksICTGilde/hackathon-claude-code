@@ -1,22 +1,23 @@
 # ADR 0001 — Isolatie voor Maven/Testcontainers-builds in de sandbox
 
-**Status:** Voorgesteld — werkend op Linux, in review (PR). Breekt door zodra
-breed bevestigd (collega-tests); dan kan de host-agent vervallen. — 2026-06-10
+**Status:** Geaccepteerd — host-agent verwijderd. — 2026-08-03
+(voorgesteld 2026-06-10)
 **Context-issue:** [#44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 **Zie ook:** `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`
 (ontwerp, bevindingen, volledige werkende config, security-balans).
 
 ## Context
 
-De sandbox-container bevat geen Docker-daemon, dus Maven-builds met Testcontainers
-werken niet rechtstreeks. De bestaande oplossing is een **host-side Maven
-MCP-agent** (`claude-sandbox/host-agents/maven/`) die `mvn` op de host draait
-namens Claude — per ontwerp een container→host code-execution-bridge.
+De sandbox-container bevat geen Docker-daemon, dus Maven-builds met
+Testcontainers werken niet rechtstreeks. De oplossing wás een **host-side Maven
+MCP-agent** die `mvn` op de host draaide namens Claude — per ontwerp een
+container→host code-execution-bridge. Die agent is met deze beslissing
+verwijderd.
 
-Risico (uit #44): Claude controleert `pom.xml`/`mvnw` in de gedeelde
-`projects`-map, en `mvn` voert die plugins ongezien uit als de host-user die
-`run.sh` startte. Draait die user in de `docker`-group of met sudo, dan is
-host-escalatie mogelijk. Op Linux bindt de agent bovendien auth-loos op
+Waarom dat moest (uit #44): Claude beheerst `pom.xml` en `mvnw` in de gedeelde
+`projects`-map, en `mvn` voerde die plugins ongezien uit als de host-user die
+`run.sh` startte. Draaide die user in de `docker`-group of met sudo, dan was
+host-escalatie mogelijk. Op Linux bond de agent bovendien auth-loos op
 `0.0.0.0:7777`.
 
 **Niet doen:** een runner-container mét gemounte Docker-socket (= host-root,
@@ -24,9 +25,7 @@ reproduceert exact de rondgaande Copilot-bug).
 
 ## Beslissing
 
-Twee sporen, gekozen naar dreigingsbeeld:
-
-### 1. Podman-in-Docker — voorkeur waar mogelijk (nieuw)
+### Podman-in-de-sandbox
 Rootless Podman **ín** de sandbox draait Testcontainers genest. Geen host-bridge,
 geen Docker-socket, geen `--privileged`. `mvn`/pom-plugins draaien in de sandbox
 (non-root `claude`); Testcontainers-children zijn geneste rootless-userns-children.
@@ -40,18 +39,6 @@ tailored seccomp-blocklist, `systempaths=unconfined`, `firewall_driver=iptables`
 `TESTCONTAINERS_HOST_OVERRIDE=localhost`. **Opt-in** (`INSTALL_PODMAN=false`
 default + aparte `compose.override.podman-linux.yml`).
 Geverifieerd: echte Quarkus/Redis-build 289+46 tests groen.
-
-### 2. Host-agent — blijft als fallback
-Voor hosts waar podman-in-docker (nog) niet kan: geen userns/`/dev/fuse`/
-AppArmor-mogelijkheid, dichtgetimmerde kernels, of Docker/Rancher Desktop op
-Mac/Windows (nog te verifiëren). Met de goedkope hardening hieronder.
-
-> **Niet** als "veiliger alternatief voor wie de outer-sandbox-relaxaties
-> mijdt": die relaxaties verbreden het kernel-oppervlak van de *container*
-> (escape vereist nog een kernel-exploit). De host-agent voert daarentegen code
-> **direct op de host** uit als de host-user — dat is voor een op container-escape
-> beduchte gebruiker juist een zwakker, niet sterker model. De host-agent is een
-> *dekkings*-fallback (waar podman niet kan), geen security-upgrade.
 
 ### Optie C (sysbox) / D (microVM)
 Out-of-scope als default. Voor wie de kernel-escape-laag tóch wil sluiten (écht
@@ -76,22 +63,13 @@ draaien in een VM), dus daar is niets te doen.
   prompt-injectie, semi-vertrouwd). Niet geschikt voor volledig vijandige,
   kernel-exploit-capabele code → daar horen Optie C/D.
 
-## Goedkope hardening host-agent (indien gebruikt)
-
-- Draai `run.sh` als **dedicated least-privilege host-user** — niet in de
-  `docker`-group, geen sudo.
-- Houd host-maven-projecten **buiten** de gedeelde `projects`-map (Claude kan dan
-  geen `pom.xml`/`mvnw` schrijven die de host draait).
-- Linux: bind op `127.0.0.1` of firewall poort 7777; draai niet op een onvertrouwd
-  netwerk.
-
 ## Consequenties
 
 - Projecten die Testcontainers nodig hebben: gebruik de podman-set
-  (`host-agents/maven/podman/README.md`).
-- **Intentie: de host-agent vervangen.** De host-agent blijft tijdelijk
-  beschikbaar (gedocumenteerd als fallback in `docs/maven-mcp-agent.md`) totdat
-  de podman-opzet breed bevestigd is (collega-tests, en Mac/Windows
-  geverifieerd). Lukt dat en is de oplossing objectief beter → host-agent
-  verwijderen. Lukt het niet → dan is dit geen oplossing en gaat de PR niet door.
+  (`claude-sandbox/podman/README.md`).
+- **Host-agent verwijderd.** Hosts waar podman-in-de-sandbox niet bevestigd is,
+  hebben geen Testcontainers-route meer. Dat is een bewuste afweging: het
+  risico van een container→host code-execution-bridge weegt zwaarder dan de
+  dekking, en er zijn geen gebruikers op die platforms. Welke platforms
+  bevestigd zijn, staat in `claude-sandbox/podman/README.md`.
 - Beslissing C/D: uitgesteld, niet nu.
