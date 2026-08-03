@@ -30,6 +30,24 @@ if ! /usr/local/bin/init-firewall.sh; then
     exit 1
 fi
 
+# Borg dat de AppArmor-laag die de /proc/sys-escape sluit ook echt afdwingt.
+# In de multi-uid opt-in (CAP_SYS_ADMIN in de bounding set) is dat profiel de
+# laatste verdediging tegen de core_pattern→host-root-escape. Ons eigen
+# debug-recept raadt `aa-complain` aan; blijft het profiel daarna in
+# complain-modus staan, dan worden de denies niet afgedwongen en staat de escape
+# stil weer open. Faal dan hard i.p.v. de sandbox met een gat te laten starten.
+# Alleen ons profiel checken: op macOS/Rancher is apparmor=unconfined (geen
+# match) en zit er een VM-kernelgrens onder, dus daar niet falen.
+aa_current="$(cat /proc/self/attr/current 2>/dev/null || true)"
+case "$aa_current" in
+    *"claude-sandbox-podman (complain)"*)
+        echo "FATAL: het AppArmor-profiel claude-sandbox-podman staat in complain-modus." \
+             "In die modus worden de /proc/sys-denies niet afgedwongen en staat de" \
+             "core_pattern-escape naar host-root open. Zet enforce met" \
+             "'sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman' en recreate de container." >&2
+        exit 1 ;;
+esac
+
 # HOME expliciet zetten: de container draait nu als root, dus Docker zet HOME op
 # /root. setpriv laat de omgeving ongemoeid, en entrypoint.sh schrijft
 # podman-config naar $HOME/.config/containers — zonder deze regel belandt die op

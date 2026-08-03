@@ -265,6 +265,23 @@ RUN case "$INSTALL_PODMAN" in \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
+# Strip setuid/setgid-bits, behalve op de helpers die rootless podman echt nodig
+# heeft: newuidmap/newgidmap (multi-uid uid-mapping) en fusermount3 (de optionele
+# fuse-overlayfs-storage). Waarom: de privilege-drop in entrypoint-root.sh laat
+# bewust --no-new-privs weg (dat breekt newuidmap), dus zonder deze strip kan
+# `claude` na de drop euid 0 winnen via élke setuid-root-binary (su, mount, passwd,
+# ...). De kernel vult bij zo'n setuid-exec de permitted caps uit de bounding set —
+# in de multi-uid opt-in inclusief CAP_SYS_ADMIN — waarmee de root-entrypoint-fix
+# te omzeilen zou zijn (mount van een verse procfs → core_pattern → host-root).
+# Dit maakt de root-entrypoint-laag onafhankelijk van de AppArmor-laag. De strip
+# raakt ook de setuid `mount`/`umount`, wat de proc-remount-bypass op binary-niveau
+# dichtzet; rootless podman mount via de syscall in zijn eigen userns, niet via
+# deze binaries. Geverifieerd worden gestript: su, mount, umount, passwd, chsh,
+# chfn, chage, expiry, gpasswd, newgrp, ssh-agent, ssh-keysign, unix_chkpwd.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
+      ! -name newuidmap ! -name newgidmap ! -name fusermount3 \
+      -exec chmod -s {} + 2>/dev/null || true
+
 USER claude
 
 # Rootless storage-config (vfs + single-uid). Komt mee via de claude-home volume
@@ -298,13 +315,16 @@ RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh
 
 # Vangnet tegen de footgun hierboven: wie per ongeluk als root de container in
 # exec't, krijgt het te zien in plaats van ongemerkt als root te werken en
-# root-eigendom achter te laten in het claude-home volume.
-RUN { \
+# root-eigendom achter te laten in het claude-home volume. Systeembreed
+# (/etc/{bash.bashrc,zsh/zshrc}) en niet per-user, want de aangeraden shell is
+# zsh (root leest dan /root/.zshrc, niet .bashrc) en een systeembreed rc-bestand
+# dekt bash én zsh, login én non-login.
+RUN mkdir -p /etc/zsh && { \
       echo 'if [ -t 1 ]; then'; \
       echo '  echo "LET OP: je bent root in de sandbox. Claude en projectcode horen als claude te draaien."'; \
       echo '  echo "Gebruik: docker exec -tiu claude claude-sandbox zsh"'; \
       echo 'fi'; \
-    } | tee -a /root/.bashrc >> /root/.profile
+    } | tee -a /etc/bash.bashrc >> /etc/zsh/zshrc
 
 WORKDIR /home/claude/projects
 
