@@ -19,14 +19,21 @@
 # WAT HET KOST
 # `claude` draait als uid 1000 met CapEff=0 en krijgt CAP_SYS_ADMIN dus niet
 # rechtstreeks in handen; alleen setuid-root-binaries kunnen hem uit de bounding
-# set trekken (hier: newuidmap/newgidmap en sudo, met een sudoers die enkel
-# init-firewall.sh toestaat). Wat je wél vergroot is de impact van een
-# root-escalatie ín de container (mount, pivot_root), boven op de
-# systempaths=unconfined die de podman-override al zet.
+# set trekken (hier: newuidmap/newgidmap). Sinds de hardening is er geen sudo en
+# geen sudoers-regel meer, dus de bekende route van uid 1000 naar container-root
+# is dicht.
+#
+# Wat je wél vergroot is de impact áls die escalatie er ooit tóch is. Er is geen
+# userns-remap, dus container-root is host-root-uid — niet container-breed maar
+# host-breed. Met CAP_SYS_ADMIN erbij kan container-root dan ook
+# `mount -o remount,rw /proc/sys` doen, waarmee de escape niet meer afhangt van
+# systempaths=unconfined. Het AppArmor-profiel is de laag die dat sluit: het
+# weigert schrijven naar /proc/sys ongeacht de mount-opties. Draai deze opt-in
+# dus niet met een profiel dat op flags=(unconfined) staat.
 #
 # Die afweging valt per platform anders uit: op Mac/Windows zit er nog een
-# VM-kernelgrens onder, op Linux met bare Docker niet. Zie de security-noot in
-# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
+# VM-kernelgrens onder, op Linux met bare Docker niet. Zie de security-balans in
+# docs/adr/0001-maven-testcontainers-sandbox-isolatie.md.
 services:
   claude:
     cap_add:

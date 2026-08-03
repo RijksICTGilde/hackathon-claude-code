@@ -60,28 +60,55 @@ draaien in een VM), dus daar is niets te doen.
 - **Runner-container met gemounte Docker-socket.** Verworpen: dat is host-root
   en reproduceert exact de rondgaande Copilot-bug.
 
-## Security-balans (podman-in-docker)
+## Security-balans
 
-- **Dicht:** container→host code-execution van #44.
-- **Open:** relaxaties op de *outer* sandbox-container — seccomp (tailored
-  blocklist i.p.v. unconfined: re-blokkeert module-load/kexec/reboot/bpf/perf/
-  `open_by_handle_at`/`userfaultfd`/`io_uring_*`/NUMA/`kcmp`/`pidfd_getfd`/…;
-  `ptrace` bewust toegestaan), AppArmor (`userns`-profiel, effectief ~unconfined
-  voor deze container), `systempaths=unconfined` (masked/RO `/proc` weg, nodig
-  voor de geneste proc-mount), en op SELinux-hosts `label=disable`. Geen
-  `--privileged` en geen Docker-socket. `CAP_SYS_ADMIN` zit **niet** in de
-  default-stand, maar **wél** in de bounding set zodra je de multi-uid opt-in
-  (`compose.override.podman-multiuid.yml`) meestapelt — `claude` heeft
-  `CapEff=0` en krijgt hem alleen via setuid-root `newuidmap`/`newgidmap`. De
-  host-userns-hardening blijft systeembreed aan; opt-in + aparte override houden
-  de blast-radius klein.
-- **Weging:** geschikt voor het reële #44-dreigingsbeeld (Claude rogue /
-  prompt-injectie, semi-vertrouwd). Niet geschikt voor volledig vijandige,
-  kernel-exploit-capabele code → daar hoort de sysbox/microVM-route.
+**Dicht.**
 
-> Deze balans wordt in de opvolgende hardening-PR aangevuld: de route van uid
-> 1000 naar container-root (de `init-firewall`-sudoers-regel) wordt gesloten en
-> het AppArmor-profiel gaat daadwerkelijk mediëren i.p.v. `flags=(unconfined)`.
+- De container→host code-execution-bridge van #44. Er is geen host-agent meer
+  en geen Docker-socket; alle projectcode draait in de sandbox.
+- De route van uid 1000 naar container-root. De firewall draait in de root-fase
+  van de entrypoint en dropt daarna met `setpriv` naar `claude`; de
+  NOPASSWD-sudoers-regel met de SETENV-tag is weg, evenals `sudo` zelf. Die tag
+  liet `BASH_ENV` de `env_reset` van sudo overleven.
+- De egress-allowlist als self-service. `OPEN_HTTPS` en `ALLOWED_DOMAINS` worden
+  alleen nog gelezen vóór de drop, dus `claude` kan de firewall niet meer
+  heropenen.
+- Schrijven naar `/proc/sys` vanuit de container, ook met
+  `systempaths=unconfined`. Het AppArmor-profiel is afgeleid van docker-default
+  en behoudt de `/proc/sys`-denies, waarmee de `core_pattern`-route naar
+  host-root dicht is.
+
+**Open.**
+
+- Relaxaties op de *outer* container: seccomp is een blocklist en geen allowlist
+  (een allowlist zet `clone`/`unshare`/`mount`/`setns` achter `CAP_SYS_ADMIN` en
+  breekt rootless podman; de blocklist re-blokkeert wél module-load/kexec/reboot/
+  bpf/perf/`open_by_handle_at`/`userfaultfd`/`io_uring_*`/kernel-keyring/quotactl
+  — `ptrace` bewust toegestaan), `systempaths=unconfined` staat nog aan, en op
+  SELinux-hosts `label=disable`.
+- In de multi-uid opt-in staat `CAP_SYS_ADMIN` in de bounding set. `claude` heeft
+  `CapEff=0` en krijgt hem niet rechtstreeks; alleen setuid-root
+  `newuidmap`/`newgidmap` trekken hem eruit. Maar er is geen userns-remap, dus
+  áls er ooit tóch een escalatie naar container-root is, is dat host-root-uid.
+- Kernel-escapes blijven buiten bereik van deze maatregelen. Wie volledig
+  vijandige, kernel-exploit-capabele code moet draaien, hoort bij de
+  sysbox/microVM-route.
+
+**Welke laag welke escape sluit.** De root-entrypoint sluit het *bereiken* van
+container-root. Het AppArmor-profiel sluit wat container-root zou *kunnen* áls
+dat tóch lukt. Die twee lagen zijn onafhankelijk: elk sluit de escape op
+zichzelf. Zet het AppArmor-profiel dus niet terug op `flags=(unconfined)` omdat
+"de sudo-route toch al dicht is".
+
+**Verificatie.** `claude-sandbox/docs/hardening-verificatie.md` bevat het
+testprotocol, inclusief de negatieve tests die aantonen dat de escape dicht is.
+Drie vragen staan nog open (`systempaths` versmallen, userns-remap, de bounding
+set); die staan in de meettabel van
+`docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md`.
+
+**Weging.** Geschikt voor het reële #44-dreigingsbeeld (Claude rogue /
+prompt-injectie, semi-vertrouwd). Niet geschikt voor volledig vijandige,
+kernel-exploit-capabele code → daar hoort de sysbox/microVM-route.
 
 ## Consequenties
 
