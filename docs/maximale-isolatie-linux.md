@@ -5,7 +5,7 @@ zijn distro-/versie-afhankelijk; verifieer op je eigen host.
 
 ## Waarom (en alleen op Linux nodig)
 
-De podman-in-docker-opzet (zie `host-agents/maven/podman/README.md`) draait
+De podman-in-docker-opzet (zie `claude-sandbox/podman/README.md`) draait
 Testcontainers genest in de sandbox, maar deelt de **host-kernel**. Het dominante
 restrisico is daarom een kernel-exploit: een escape uit de (bewust versoepelde)
 outer container landt op de host-kernel — bij rootless beperkt tot je

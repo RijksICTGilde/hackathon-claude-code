@@ -18,11 +18,11 @@ Daarna kun je claude starten met `claude-danger`.
 > ```
 > podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate
 > ```
-> Zie [host-agents/maven/podman/README.md](host-agents/maven/podman/README.md) voor de per-OS-matrix (Linux/Tuxedo/macOS). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen.
+> Zie [podman/README.md](podman/README.md) voor de per-OS-matrix (Linux/Tuxedo/macOS). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen.
 
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
-- [Maven MCP-agent (host-side)](docs/maven-mcp-agent.md) — voor Maven-builds die de host-Docker nodig hebben (Testcontainers e.d.).
+- [Maven en Testcontainers via podman](podman/README.md) — Testcontainers draait ín de sandbox, via rootless podman. Er is geen host-side agent meer.
 - [Firewall](#firewall) — netwerk-beperkingen van de container.
 
 > **LET OP**: Bij wijziging in environment variabelen moet ook het volume verwijderd en opnieuw aangemaakt worden. Dit

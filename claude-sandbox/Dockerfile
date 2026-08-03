@@ -226,9 +226,10 @@ RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
   chmod 0440 /etc/sudoers.d/claude-firewall
 
-# Optioneel: rootless Podman voor Maven+Testcontainers ín de container
-# (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
-# 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
+# Optioneel: rootless Podman voor Maven+Testcontainers ín de container.
+# Bediening: claude-sandbox/podman/README.md. Ontwerp en meetresultaten:
+# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
+# Default uit — alleen nodig als
 # je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime de
 # seccomp/apparmor-stand uit compose.override.podman.yml. Storage =
 # vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.

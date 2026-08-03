@@ -1,12 +1,25 @@
 # Maven + Testcontainers via rootless Podman-in-Docker
 
 Draai Testcontainers **ín** de sandbox via rootless Podman — zonder host-agent,
-`--privileged` of Docker-socket. Hiermee vervalt de container→host
-code-execution-bridge van de Maven host-agent (issue #44): `mvn`/pom-plugins
-draaien in de sandbox (non-root `claude`), Testcontainers-containers zijn geneste
-rootless-userns-children. Dit **beoogt de Maven host-agent te vervangen**: als
-deze opzet breed bevestigd is (zie "Openstaand"), kan de host-agent weg. Tot die
-tijd blijft de host-agent beschikbaar (zie ADR 0001).
+`--privileged` of Docker-socket. `mvn` en pom-plugins draaien in de sandbox als
+non-root `claude`, Testcontainers-containers zijn geneste
+rootless-userns-children. Dit is de enige ondersteunde route: de Maven
+host-agent is verwijderd, omdat die per ontwerp een container→host
+code-execution-bridge was (issue #44, ADR 0001).
+
+## Ondersteunde platforms
+
+| Platform | Status |
+|---|---|
+| Gehardend Ubuntu 23.10+ / Tuxedo (`apparmor_restrict_unprivileged_userns=1`) | bevestigd |
+| Linux Docker, niet-gehardend | bevestigd |
+| Rancher Desktop op macOS (Lima → Alpine, moby) | bevestigd |
+| macOS `podman machine` (applehv → Fedora CoreOS, rootful) | bevestigd, ook multi-uid |
+
+Niet bevestigd en daarmee **niet ondersteund**: Docker Desktop op Mac/Windows,
+rootless `podman machine`, WSL2. Wie op zo'n platform Testcontainers nodig
+heeft, zal de opzet daar eerst moeten bevestigen — er is geen terugvaloptie
+meer.
 
 Ontwerp, bevindingen en security-balans:
 `docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md` en
@@ -24,13 +37,16 @@ i.p.v. de host systeembreed te verzwakken. De volledige keten van aanpassingen
 staat in de spec.
 
 ## Per-setup matrix
+
+Welke status elk platform heeft, staat hierboven in "Ondersteunde platforms".
+Deze tabel gaat alleen over wat je per setup nodig hebt.
+
 | Host-setup | Wat nodig is |
 |---|---|
 | Gehardend Ubuntu 23.10+ / Tuxedo (`sysctl=1`) | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
 | Linux Docker, niet-gehardend (`sysctl=0`) | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
-| **macOS Podman-machine** (`applehv` → Fedora CoreOS) | **bevestigd, ook multi-uid** — `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
-| **Rancher Desktop op macOS** (Lima → Alpine, moby) | **bevestigd** — `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" hieronder |
-| Docker Desktop (Mac/Win) | nog te verifiëren — zelfde vorm als Rancher Desktop; die route is een startpunt |
+| macOS Podman-machine (`applehv` → Fedora CoreOS) | `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" hieronder |
+| Rancher Desktop op macOS (Lima → Alpine, moby) | `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" hieronder |
 
 Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
 
@@ -48,7 +64,7 @@ mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
    ```
 2. **AppArmor-profiel laden** (gehardende host; onschadelijk elders):
    ```
-   ./host-agents/maven/podman/setup-host.sh
+   ./podman/setup-host.sh
    ```
    Dit installeert `claude-sandbox-podman` in `/etc/apparmor.d/` en laadt het.
    De override verwijst ernaar; zonder dit faalt de container-start met
@@ -71,11 +87,11 @@ mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
    ```
    docker compose exec claude bash -lc \
      "source ~/.sdkman/bin/sdkman-init.sh && \
-      /home/claude/projects/<repo>/claude-sandbox/host-agents/maven/podman/smoke-test.sh"
+      /home/claude/projects/<repo>/claude-sandbox/podman/smoke-test.sh"
    ```
    Pas `<repo>` aan naar waar deze repo in `/home/claude/projects` gemount staat.
    Staat deze repo niet onder je `PROJECTS_DIR`, kopieer de map dan naar binnen:
-   `docker cp host-agents/maven/podman claude-sandbox:/home/claude/podman-smoke`
+   `docker cp podman claude-sandbox:/home/claude/podman-smoke`
    (of `podman cp`) en draai `/home/claude/podman-smoke/smoke-test.sh`.
 
 Verwacht: het script print `nested-ok` en eindigt met `OK — Testcontainers werkt`.
@@ -115,7 +131,7 @@ podman exec claude-sandbox bash -lc \
 # verificatie
 podman exec claude-sandbox bash -lc \
   "source ~/.sdkman/bin/sdkman-init.sh && \
-   /home/claude/projects/<repo>/claude-sandbox/host-agents/maven/podman/smoke-test.sh"
+   /home/claude/projects/<repo>/claude-sandbox/podman/smoke-test.sh"
 ```
 
 De `single mapping`/`Additional gid ... not present`-warnings zijn verwacht: de
@@ -232,11 +248,10 @@ in de sandbox.
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
 ## Openstaand
-- Docker Desktop (Mac/Windows) verifiëren. Rancher Desktop op macOS is bevestigd.
-- Multi-uid is bevestigd op Rancher/macOS en op een (rootful) macOS
-  Podman-machine; op gehardend Ubuntu nog niet getest (blokkade #1 — de
-  AppArmor-userns-restrictie — staat daar los van en blijft), en op een
-  rootless `podman machine` evenmin.
+- Welke platforms nog bevestigd moeten worden, staat in "Ondersteunde
+  platforms" bovenaan. Dat is de enige plek waar die status wordt bijgehouden.
+- Multi-uid is niet getest op gehardend Ubuntu. Blokkade #1 — de
+  AppArmor-userns-restrictie — staat daar los van en blijft gelden.
 - `containers.conf` wordt alleen aangemaakt als hij ontbreekt, `storage.conf`
   elke start herschreven. Overwegen om beide gelijk te trekken: dat maakt
   handmatige drift onmogelijk, maar neemt ook de ontsnappingsklep weg om

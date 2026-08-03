@@ -104,9 +104,9 @@ Testcontainers kan draaien, zonder `--privileged` en zonder socket-mount.
 |---|---|
 | `claude-sandbox/Dockerfile` | `ARG INSTALL_PODMAN=false`; bij `true`: `podman fuse-overlayfs uidmap passt slirp4netns` installeren, subuid/subgid-regel voor `claude` **verwijderd** (single-uid), rootless `storage.conf` (vfs) |
 | `claude-sandbox/compose.override.podman-linux.yml` | `devices: [/dev/net/tun]` (+ uitgecommentarieerde `/dev/fuse` voor overlay), `security_opt: [seccomp=<profiel>, apparmor=<profiel>, systempaths=unconfined, label=disable]`, `PODMAN_STORAGE_DRIVER`-env |
-| `claude-sandbox/host-agents/maven/podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
-| `claude-sandbox/host-agents/maven/podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
-| `claude-sandbox/host-agents/maven/podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
+| `claude-sandbox/podman/smoke-test.sh` | in de container: `podman info`; `podman run --rm` smoke; daarna `mvn test` op het sample-project |
+| `claude-sandbox/podman/sample/` | minimaal Maven-project: `pom.xml` + één Testcontainers-test (lichte image, bv. `alpine` via `GenericContainer`) |
+| `claude-sandbox/podman/README.md` | exacte run-stappen + benodigde `ALLOWED_DOMAINS` + `.env`-flag |
 
 ## Oorspronkelijke onzekerheden (inmiddels opgelost — zie Bevindingen)
 
@@ -390,7 +390,7 @@ ongewijzigd.
   `process_vm_writev`, `process_madvise`, `fanotify_init`, `kcmp`, `pidfd_getfd`,
   `acct`, `_sysctl`, `vm86*`, `nfsservctl`, `lookup_dcookie`. Strikt veiliger dan
   `unconfined`. Override verwijst ernaar via
-  `seccomp=host-agents/maven/podman/seccomp/podman-sandbox.json`.
+  `seccomp=podman/seccomp/podman-sandbox.json`.
   Breekt een build op een geblokkeerde syscall → uit de blocklist halen.
   **Bewust níét geblokkeerd:** `ptrace` (Docker-default láát het toe; sommige
   JVM-tooling gebruikt het) — kan als verdere tightening alsnog toegevoegd.
