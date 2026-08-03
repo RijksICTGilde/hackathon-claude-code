@@ -52,6 +52,19 @@ staat in de spec.
 chownen starten niet — `chown: ...: Invalid argument`. Dat treft postgres, mysql,
 mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
 
+**Netwerk: pasta, niet bridge.** De entrypoint zet `netns = "pasta"` in
+`containers.conf`, zodat álle geneste containers (ook die Testcontainers via de
+podman-Docker-API start) op pasta draaien. Reden: voor een netavark-**bridge**
+zet podman een IPv6-sysctl op een interface in de outer container-netns, en dat
+faalt met `netavark: failed to set autoconf sysctl: Permission denied` — die
+netns wordt door de host geowned (geen userns-remap), dus rootless podman mag er
+`/proc/sys/net` niet schrijven. Pasta geeft elke container een eigen netwerk met
+port-forwarding naar `localhost` en omzeilt dat. **Werkt** voor containers die
+via een published port met je test praten (het gros: DB, wiremock, Redis, …).
+**Werkt niet** voor tests die containers over een gedeeld netwerk met elkáár
+laten praten (Testcontainers `Network`); dat vereist userns-remap op de outer
+container — een openstaande spike (zie issue #44).
+
 ## Stappen (op de host)
 
 Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar

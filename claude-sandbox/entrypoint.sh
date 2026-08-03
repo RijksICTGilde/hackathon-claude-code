@@ -97,14 +97,28 @@ if command -v podman >/dev/null 2>&1; then
     # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
     # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.
     # default_sysctls=[]: zie ping_group_range hierboven.
+    # netns="pasta": default-netwerkmodus voor álle containers, óók die via de
+    # podman-Docker-API (Testcontainers). Zonder dit zet netavark voor een
+    # bridge-netwerk een IPv6-sysctl op het interface in de outer container-netns,
+    # wat faalt met "netavark: failed to set autoconf sysctl: Permission denied":
+    # die netns wordt door init_user_ns geowned (geen userns-remap), dus rootless
+    # podman mag er /proc/sys/net niet schrijven. pasta geeft elke container een
+    # eigen netwerk met port-forwarding naar localhost en vermijdt de bridge —
+    # precies genoeg voor Testcontainers met published ports. Beperking:
+    # container-naar-container over netwerknamen (Testcontainers `Network`) werkt
+    # dan niet; dat vereist userns-remap (zie issue #44 / de userns-remap-spike).
     # firewall_driver=iptables: netavark roept default `nft` aan voor bridge-
-    # netwerken (Testcontainers), maar die binary zit niet in de image. De
-    # iptables-driver gebruikt iptables-nft (al aanwezig) en heeft de nft-binary
-    # niet nodig.
+    # netwerken, maar die binary zit niet in de image. De iptables-driver gebruikt
+    # iptables-nft (al aanwezig) en heeft de nft-binary niet nodig.
     containers_conf="$conf_dir/containers.conf"
     if [[ ! -f "$containers_conf" ]]; then
-        printf '[containers]\ndefault_sysctls = []\n\n[network]\nfirewall_driver = "iptables"\n' > "$containers_conf"
+        printf '[containers]\nnetns = "pasta"\ndefault_sysctls = []\n\n[network]\nfirewall_driver = "iptables"\n' > "$containers_conf"
         echo "INFO: rootless podman containers.conf aangemaakt op $containers_conf"
+    elif ! grep -q '^netns' "$containers_conf"; then
+        # Migratie voor volumes van vóór de pasta-default: netns-regel bijplaatsen
+        # zonder de rest van een handmatig aangepaste config te overschrijven.
+        sed -i '/^\[containers\]/a netns = "pasta"' "$containers_conf"
+        echo "INFO: netns=\"pasta\" toegevoegd aan bestaande containers.conf (nested-bridge-fix)"
     fi
 
     # De podman-socket hier starten i.p.v. per build-sessie. Het eerste
