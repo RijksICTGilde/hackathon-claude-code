@@ -1,5 +1,11 @@
 # Maven Podman-in-Docker PoC Implementation Plan
 
+> **Historisch document (2026-06-10).** Dit uitvoeringsplan beschrijft de PoC
+> tijdens de uitwerking en noemt de host-agent nog als bestaand. Die is inmiddels
+> verwijderd; de actuele stand staat in
+> `docs/adr/0001-maven-testcontainers-sandbox-isolatie.md` en
+> `claude-sandbox/podman/README.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Sandbox-container optioneel uitrusten met rootless Podman zodat Maven+Testcontainers ín de container draait, zonder host-bridge, `--privileged` of Docker-socket.

@@ -1,10 +1,12 @@
 # Maven via rootless Podman-in-Docker (ontwerp + bevindingen)
 
 **Datum:** 2026-06-10
-**Status:** Werkend op Linux (gehardende Tuxedo/Ubuntu, sysctl=1) — voorgesteld als
-vervanger van de Maven host-agent, in review (PR). Testcontainers-build bevestigd
-op een echt project (289+46 tests groen). Mac/Windows nog te verifiëren. Zie
-"Bevindingen" + "Werkende configuratie" onderaan.
+**Status:** Historisch ontwerpdocument. De host-agent is inmiddels verwijderd;
+het besluit en de actuele stand staan in
+`docs/adr/0001-maven-testcontainers-sandbox-isolatie.md` en
+`claude-sandbox/podman/README.md`. Dit document bewaart het ontwerp, de
+bevindingen en de meetresultaten; passages die de host-agent als bestaand of als
+fallback beschrijven, zijn achterhaald.
 **Context:** [issue #44](https://github.com/RijksICTGilde/hackathon-claude-code/issues/44)
 
 > De ontwerp-secties hieronder ("Oorspronkelijke scope/onzekerheden",
@@ -370,8 +372,7 @@ ongewijzigd.
   export TESTCONTAINERS_RYUK_DISABLED=true
   export TESTCONTAINERS_HOST_OVERRIDE=localhost
   ```
-- Hiermee is de host-side Maven MCP-agent in deze sandbox **niet meer nodig**
-  (wel als fallback op niet-ondersteunde hosts).
+- Hiermee is de host-side Maven MCP-agent in deze sandbox **niet meer nodig**.
 
 ## Hardening-verfijning (geprobeerd / vervolg)
 - **Docker-default seccomp werkt niet** (geverifieerd): `cannot clone: Operation
