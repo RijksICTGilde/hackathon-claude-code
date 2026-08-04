@@ -35,6 +35,9 @@ services:
       # macOS-stand (beide tonen 'unconfined') en zou stil fail-open starten.
       # Zet je hieronder bewust apparmor=unconfined (host zonder AppArmor), zet
       # dan óók deze flag op false, anders weigert de container terecht te starten.
+      # Bewust een literal, GEEN ${SANDBOX_EXPECT_APPARMOR:-true}: compose gebruikt
+      # .env alleen voor ${}-interpolatie, dus een agent-geschreven .env kan een
+      # literal niet naar false overrulen. Maak dit dus niet interpolatable.
       - SANDBOX_EXPECT_APPARMOR=true
     devices:
       # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
