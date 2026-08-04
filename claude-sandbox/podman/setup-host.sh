@@ -54,46 +54,33 @@ if ! command -v apparmor_parser >/dev/null 2>&1; then
     exit 0
 fi
 
-# Valideer wat we straks als root in de kernel laden. `apparmor_parser -r`
-# vervangt élk profiel dat in het bestand gedeclareerd staat, op naam.
+# Valideer wat we straks als root in de kernel laden tegen een GEPINDE HASH.
+# `apparmor_parser -r` vervangt élk profielblok in het bestand op naam — een
+# toegevoegd blok kan een ander host-profiel vervangen, een weggehaalde deny-regel
+# opent onze eigen /proc/sys-escape. Structuur-greps vangen dat niet volledig: het
+# is een flex/bison-grammatica, geen regex, en drie ronden hardening lieten elk
+# een nieuwe randvorm door (keyword-loos blok, mode zonder flags=, blok op één
+# regel, verwijderde deny). Een hash sluit ze allemaal in één keer: hij garandeert
+# "dit is exact het gereviewde profiel".
 #
-# LET OP — dit is defense-in-depth, geen volledige controle. Ligt dit bestand
-# (of dit script zelf) in een map die de sandbox kan schrijven — bv. de repo
-# uitgecheckt onder PROJECTS_DIR — dan kan de agent gewoon dít script bewerken,
-# dat jij met sudo draait. Draai `setup-host.sh` daarom vanuit een checkout die
-# de sandbox NIET kan schrijven, of review de diff vóór elke run. Zie de
-# security-noot in docs/adr/0001-...md.
+# LET OP — dit blijft defense-in-depth. Ligt dit script (of het profiel) in een
+# map die de sandbox kan schrijven (bv. de repo onder PROJECTS_DIR), dan kan de
+# agent zowel het profiel ALS deze gepinde hash aanpassen. De sluitende maatregel
+# is setup-host.sh vanuit een niet-agent-schrijfbare checkout draaien (zie de
+# security-noot in docs/adr/0001-...md). De hash verhoogt wél de zichtbaarheid:
+# een gewijzigde hash in de diff is een expliciet signaal; een weggehaalde
+# deny-regel is dat niet.
 #
-# De checks werken op de BLOK-OPENERS (regels die een `{` openen), want
-# apparmor_parser -r laadt élk profielblok — zowel `profile <naam> {` als de
-# keyword-loze attachment-vorm `/pad {`. Grep is geen AppArmor-parser, dus dit
-# blijft best-effort; de check op de headerregel (niet het hele bestand) vermijdt
-# false-positives op comments en op de legitieme `peer=unconfined` signal-regel.
-#   - precies één profielblok, en dat is `profile claude-sandbox-podman …`
-#     (een tweede blok — ook keyword-loos — kan via -r een ander host-profiel
-#     vervangen/verzwakken);
-#   - de header draait niet in (unconfined)/(complain), met of zonder flags=
-#     (dat zet de /proc/sys-denies uit en heropent de core_pattern-escape);
-#   - geen onbekende (#)include (alleen tunables/global en abstractions/base).
-headers="$(grep -E '\{[[:space:]]*$' "$PROFILE_SRC" | grep -vE '^[[:space:]]*#' || true)"
-header_count="$(printf '%s' "$headers" | grep -c . || true)"
-reject=""
-if [[ "$header_count" -ne 1 ]]; then
-    reject="niet precies één profielblok (gevonden: $header_count)"
-elif ! printf '%s\n' "$headers" | grep -qE '^[[:space:]]*profile[[:space:]]+claude-sandbox-podman[[:space:]]'; then
-    reject="het profielblok is niet 'profile claude-sandbox-podman' (of gebruikt de keyword-loze /pad-vorm)"
-elif printf '%s\n' "$headers" | grep -qwE 'unconfined|complain'; then
-    reject="de profielheader draait in (unconfined)/(complain) — dat zet de denies uit"
-elif grep -E '^[[:space:]]*#?include\b' "$PROFILE_SRC" \
-        | grep -qvE '<(tunables/global|abstractions/base)>'; then
-    reject="onbekende include-regel (alleen tunables/global en abstractions/base toegestaan)"
-fi
-if [[ -n "$reject" ]]; then
-    echo "✗ $PROFILE_SRC geweigerd: $reject." >&2
-    echo "  profielblok-headers gevonden:" >&2
-    printf '%s\n' "$headers" | grep -E '\S' >&2 || echo "  (geen)" >&2
-    echo "  Let op: dit is best-effort. De echte borging is setup-host.sh vanuit" >&2
-    echo "  een niet-agent-schrijfbare checkout draaien (zie ADR 0001)." >&2
+# BEWUSTE PROFIELWIJZIGING? Werk PROFILE_SHA hieronder bij en commit het profiel
+# én de hash in dezelfde commit, zodat de wijziging in review zichtbaar is.
+PROFILE_SHA="f1eeda5a9ed27e234794d483edc7bcfb9364ae7c71c0f198901c6a4f083314a9"
+actual_sha="$(sha256sum "$PROFILE_SRC" | cut -d' ' -f1)"
+if [[ "$actual_sha" != "$PROFILE_SHA" ]]; then
+    echo "✗ $PROFILE_SRC wijkt af van de gepinde, gereviewde versie." >&2
+    echo "  Verwacht: $PROFILE_SHA" >&2
+    echo "  Gevonden: $actual_sha" >&2
+    echo "  Bewust gewijzigd? Werk PROFILE_SHA in dit script bij en commit beide samen." >&2
+    echo "  Zo niet: het profiel is buiten review om aangepast — laad het NIET." >&2
     exit 1
 fi
 
