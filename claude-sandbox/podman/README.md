@@ -63,7 +63,13 @@ port-forwarding naar `localhost` en omzeilt dat. **Werkt** voor containers die
 via een published port met je test praten (het gros: DB, wiremock, Redis, …).
 **Werkt niet** voor tests die containers over een gedeeld netwerk met elkáár
 laten praten (Testcontainers `Network`); dat vereist userns-remap op de outer
-container — een openstaande spike (zie issue #44).
+container — een openstaande spike (issue #82).
+
+> Nevenwinst voor de egress-controle: pasta-verkeer is user-mode en lokaal
+> gegenereerd in de sandbox-netns, dus nested egress passeert de OUTPUT-chain van
+> de firewall en valt onder dezelfde domein-allowlist als de sandbox zelf. Een
+> netavark-bridge routeerde nested verkeer via de FORWARD-chain, waar de allowlist
+> niet zit — pasta sluit dat gat.
 
 ## Stappen (op de host)
 
@@ -259,7 +265,7 @@ in de sandbox.
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
 | `podman info` toont `uidmap=[{0 1000 1}]` terwijl `/etc/subuid` een `claude:`-regel heeft én `CAP_SYS_ADMIN` er is; DB-images falen op `chown: Invalid argument` | een pause-proces dat single-uid is aangemaakt. Alle latere podman-commando's joinen dat proces, dus de degradatie plakt vast. Ontstaat als het éérste podman-commando `newuidmap` niet kon gebruiken — bv. onder `no_new_privs`, waar een setuid-root-binary geen privileges meer wint (reproduceerbaar met `setpriv --no-new-privs podman info`) | `podman system migrate` en de podman-socket herstarten; of simpelweg de container recreaten — de entrypoint zet de namespace bij de start goed. Draait er een gezond pause-proces, dan joinen ook `no_new_privs`-aanroepen dát en gaat het weer goed |
 | Testcontainers: `Could not find a valid Docker environment ... NoSuchFileException (/var/run/docker.sock)` terwijl `DOCKER_HOST` gezet is | er is een tweede `podman system service` op hetzelfde socket-pad gestart; die kan niet binden en verwijdert bij het afsluiten de socket van de eerste | gebruik de socket die de entrypoint al draait (zie "Eigen build draaien"); controleer met `ls -l /tmp/podman-run-1000/podman/podman.sock` en recreate de container als hij weg is |
-| `error creating temporary file: No such file or directory` + `open .../libpod/tmp/pause.pid: no such file or directory` | een handmatig aangepaste `containers.conf` in het `claude-home` volume (bv. met een eigen `tmp_dir`/`static_dir`) — de entrypoint schrijft die alleen aan als hij **ontbreekt**, dus zulke drift blijft staan en schaduwt de bedoelde config | vergelijk met de entrypoint-versie (`[containers] default_sysctls = []` + `[network] firewall_driver = "iptables"`); back-uppen en terugzetten naar die versie, daarna opnieuw `podman info`. Helpt dat niet: `podman system migrate`, in het uiterste geval `podman system reset` |
+| `error creating temporary file: No such file or directory` + `open .../libpod/tmp/pause.pid: no such file or directory` | een handmatig aangepaste `containers.conf` in het `claude-home` volume (bv. met een eigen `tmp_dir`/`static_dir`) — de entrypoint plaatst wél de `netns`-regel bij als die ontbreekt, maar laat overige handmatige drift staan, dus die kan de bedoelde config schaduwen | vergelijk met de entrypoint-versie (`[containers] netns = "pasta"` + `default_sysctls = []` + `[network] firewall_driver = "iptables"`); back-uppen en terugzetten naar die versie, daarna opnieuw `podman info`. Helpt dat niet: `podman system migrate`, in het uiterste geval `podman system reset` |
 | `mount proc: Operation not permitted` | Docker maskeert `/proc`; geneste procfs-mount geweigerd | override staat op `systempaths=unconfined` |
 | `graphOptions: {}` / `ignore_chown_errors` ontbreekt | storage.conf landde niet (bestaand volume schaduwt de baked-in versie) | entrypoint schrijft hem bij start; bij een oud volume eenmalig handmatig: zie `entrypoint.sh`-blok, of recreate met een verse `claude-home` |
 | image-extractie faalt op chown | single-uid kan niet naar andere uids chownen | `ignore_chown_errors=true` staat al in storage.conf; controleer dat het meekwam (`podman info` → graphOptions) |
@@ -272,12 +278,16 @@ in de sandbox.
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
 ## Openstaand
+- **Container-naar-container over een gedeeld netwerk** (Testcontainers
+  `Network`, containers die elkáár via netwerknamen bereiken) werkt niet met de
+  pasta-default; pasta isoleert elke container met alleen port-forwarding naar de
+  host. Dat vereist userns-remap op de outer container — spike, issue #82.
 - Multi-uid is niet getest op gehardend Ubuntu. Blokkade #1 — de
   AppArmor-userns-restrictie — staat daar los van en blijft gelden.
-- `containers.conf` wordt alleen aangemaakt als hij ontbreekt, `storage.conf`
-  elke start herschreven. Overwegen om beide gelijk te trekken: dat maakt
-  handmatige drift onmogelijk, maar neemt ook de ontsnappingsklep weg om
-  podman-instellingen zelf bij te stellen.
+- `containers.conf` wordt aangemaakt als hij ontbreekt en krijgt eenmalig de
+  `netns`-regel bijgeplaatst; `storage.conf` wordt elke start herschreven.
+  Overige handmatige aanpassingen in `containers.conf` blijven staan (bewuste
+  ontsnappingsklep) — die drift is de prijs daarvan.
 - seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
 
 ## Maximale isolatie (eigen kernel)

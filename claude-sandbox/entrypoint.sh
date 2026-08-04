@@ -104,21 +104,38 @@ if command -v podman >/dev/null 2>&1; then
     # die netns wordt door init_user_ns geowned (geen userns-remap), dus rootless
     # podman mag er /proc/sys/net niet schrijven. pasta geeft elke container een
     # eigen netwerk met port-forwarding naar localhost en vermijdt de bridge —
-    # precies genoeg voor Testcontainers met published ports. Beperking:
-    # container-naar-container over netwerknamen (Testcontainers `Network`) werkt
-    # dan niet; dat vereist userns-remap (zie issue #44 / de userns-remap-spike).
+    # precies genoeg voor Testcontainers met published ports. Bonus: nested egress
+    # loopt met pasta als lokaal verkeer via de OUTPUT-chain en valt dus onder de
+    # egress-allowlist van init-firewall.sh — anders dan bij de bridge, die via
+    # FORWARD routeerde en de allowlist kon omzeilen. Beperking: container-naar-
+    # container over netwerknamen (Testcontainers `Network`) werkt niet; dat
+    # vereist userns-remap op de outer container (spike, issue #82).
     # firewall_driver=iptables: netavark roept default `nft` aan voor bridge-
     # netwerken, maar die binary zit niet in de image. De iptables-driver gebruikt
-    # iptables-nft (al aanwezig) en heeft de nft-binary niet nodig.
+    # iptables-nft (al aanwezig) en heeft de nft-binary niet nodig. Met de
+    # pasta-default is dit alleen nog relevant als iemand expliciet een
+    # bridge-netwerk aanmaakt.
     containers_conf="$conf_dir/containers.conf"
     if [[ ! -f "$containers_conf" ]]; then
         printf '[containers]\nnetns = "pasta"\ndefault_sysctls = []\n\n[network]\nfirewall_driver = "iptables"\n' > "$containers_conf"
         echo "INFO: rootless podman containers.conf aangemaakt op $containers_conf"
-    elif ! grep -q '^netns' "$containers_conf"; then
+    elif ! grep -qE '^[[:space:]]*netns[[:space:]]*=' "$containers_conf"; then
         # Migratie voor volumes van vóór de pasta-default: netns-regel bijplaatsen
-        # zonder de rest van een handmatig aangepaste config te overschrijven.
-        sed -i '/^\[containers\]/a netns = "pasta"' "$containers_conf"
-        echo "INFO: netns=\"pasta\" toegevoegd aan bestaande containers.conf (nested-bridge-fix)"
+        # zonder de rest van een handmatig aangepaste config te overschrijven. De
+        # grep matcht ook een ingesprongen netns, zodat we geen duplicaat-key maken
+        # (podman's TOML-parser breekt daarop).
+        if grep -q '^\[containers\]' "$containers_conf"; then
+            sed -i '/^\[containers\]/a netns = "pasta"' "$containers_conf"
+        else
+            # Config zonder [containers]-sectie: append de sectie i.p.v. een sed
+            # die niets zou matchen (en stil zou falen).
+            printf '\n[containers]\nnetns = "pasta"\n' >> "$containers_conf"
+        fi
+        if grep -qE '^[[:space:]]*netns[[:space:]]*=' "$containers_conf"; then
+            echo "INFO: netns=\"pasta\" toegevoegd aan bestaande containers.conf (nested-bridge-fix)"
+        else
+            echo "WAARSCHUWING: netns=\"pasta\" niet kunnen toevoegen aan $containers_conf — zet het handmatig onder [containers], anders faalt Testcontainers op de netavark-bridge." >&2
+        fi
     fi
 
     # De podman-socket hier starten i.p.v. per build-sessie. Het eerste
