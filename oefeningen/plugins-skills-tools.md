@@ -7,7 +7,7 @@ Deze categorie gaat over de skills, plugins en CLI-tools die in de container zit
 Iedere oefening hieronder bevat een "probeer zelf"-stap waarin je het verschil ervaart tussen *met* en *zonder* een plugin. Dat kan op twee manieren:
 
 - **Snel (per plugin, runtime, omkeerbaar):** `claude plugin disable <naam>` schakelt één plugin uit zonder rebuild. Je commando's en skill-discovery werken meteen alsof de plugin er niet is. Terugzetten met `claude plugin enable <naam>`. Vanuit een lopende Claude-sessie kan dit ook via het slash-commando `/plugin` (opent een interactief menu waar je plugins in- en uitschakelt). Dit is in vrijwel alle gevallen afdoende.
-- **Diep (per groep, build-time):** een `INSTALL_*`-toggle op `false` in `.env` plus image-rebuild en volume-recreate (zie [README claude-sandbox](../../claude-sandbox/README.md#optionele-componenten)). Pas nodig als je écht wil zien hoe de container draait zonder dat de plugin ooit geïnstalleerd is — bijvoorbeeld om autoload-effecten of disk-footprint te onderzoeken.
+- **Diep (per groep, build-time):** een `INSTALL_*`-toggle op `false` in `.env` plus image-rebuild en volume-recreate (zie [README claude-sandbox](../claude-sandbox/README.md#optionele-componenten)). Pas nodig als je écht wil zien hoe de container draait zonder dat de plugin ooit geïnstalleerd is — bijvoorbeeld om autoload-effecten of disk-footprint te onderzoeken.
 
 > **Granulariteit:** de build-time toggles zijn grof. `INSTALL_OVERHEID_PLUGINS=false` haalt alle DON-plugins ineens weg, `INSTALL_ANTHROPIC_PLUGINS=false` alle Anthropic-plugins. De runtime-disable lost dat op: je kunt één enkele plugin uitzetten zonder de rest te raken.
 

@@ -30,14 +30,14 @@ Heb je een pijnpunt gevonden maar nog geen uitgewerkte oplossing? Open een issue
 
 > Probleem: ..., Voorgestelde oplossing: ..., Waarom dit nuttig is voor de hackathon: ...
 
-Issues vind je via [../../issues](../../issues).
+Issues vind je via [issues](https://github.com/RijksICTGilde/hackathon-claude-code/issues).
 
 ### Pull request
 
-Heb je iets uitgewerkt dat de container beter maakt? Een pull request is welkom voor: een nieuwe oefencategorie, een aanpassing aan de Dockerfile of container-configuratie, of een nieuwe skill of plugin in de bundel. Kijk voor de scope-overwegingen in de [verantwoording](../verantwoording.md) — die beschrijft bewuste keuzes die bepalend zijn voor wat er wel en niet in de container hoort. Dat bespaart je een ronde feedback achteraf.
+Heb je iets uitgewerkt dat de container beter maakt? Een pull request is welkom voor: een nieuwe oefencategorie, een aanpassing aan de Dockerfile of container-configuratie, of een nieuwe skill of plugin in de bundel. Kijk voor de scope-overwegingen in de [verantwoording](../docs/verantwoording.md) — die beschrijft bewuste keuzes die bepalend zijn voor wat er wel en niet in de container hoort. Dat bespaart je een ronde feedback achteraf.
 
 ### Wat past wel/niet in deze container
 
 De scope van deze container is *hackathon-leeromgeving*, niet productie. Dat betekent dat de lat voor "is dit nuttig?" lager ligt dan in een productiesysteem, maar dat productie-gerichte voorzieningen buiten scope vallen.
 
-Voorbeelden van wat past: een nieuwe skill die concreet werk in de hackathon versnelt, een Dockerfile-flag waarmee een feature aan- of uitgezet kan worden, een nieuwe oefencategorie die iets tastbaars laat ervaren. Voorbeelden van wat niet past: secrets-management voor productie, supply-chain-policies voor release-pipelines, een formele logging-stack. De sectie "Doel en toepassingsgebied" in de [verantwoording](../verantwoording.md) legt dit verder uit.
+Voorbeelden van wat past: een nieuwe skill die concreet werk in de hackathon versnelt, een Dockerfile-flag waarmee een feature aan- of uitgezet kan worden, een nieuwe oefencategorie die iets tastbaars laat ervaren. Voorbeelden van wat niet past: secrets-management voor productie, supply-chain-policies voor release-pipelines, een formele logging-stack. De sectie "Doel en toepassingsgebied" in de [verantwoording](../docs/verantwoording.md) legt dit verder uit.

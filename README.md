@@ -8,7 +8,7 @@ Een sandboxed Docker-container met Claude Code voor hackathons en coding challen
 
 ## Voor wie?
 
-Deelnemers met verschillende instapniveaus die willen leren hoe je een AI-assistant aanstuurt voor softwareontwikkeling. Of je nu voor het eerst met een AI-coding-tool werkt of al ervaring hebt met Claude Code — de [oefeningen](docs/oefeningen.md) zijn opgesplitst in vier categorieën zodat je kunt instappen op je eigen niveau.
+Deelnemers met verschillende instapniveaus die willen leren hoe je een AI-assistant aanstuurt voor softwareontwikkeling. Of je nu voor het eerst met een AI-coding-tool werkt of al ervaring hebt met Claude Code — de [oefeningen](oefeningen/) zijn opgesplitst in vier categorieën zodat je kunt instappen op je eigen niveau.
 
 ## Veiliger experimenteren met `--dangerously-skip-permissions`
 
@@ -17,7 +17,7 @@ In deze container kun je Claude desgewenst met `--dangerously-skip-permissions` 
 ## Onderdelen
 
 - **[claude-sandbox](claude-sandbox/README.md)** — de container zelf (Dockerfile, firewall, plugins, skills). Lees daar hoe je hem opstart.
-- **[docs/oefeningen.md](docs/oefeningen.md)** — wat je in de container kunt doen: vier categorieën onderzoeksvragen.
+- **[oefeningen](oefeningen/)** — wat je in de container kunt doen: vier categorieën onderzoeksvragen.
 - **[docs/verantwoording.md](docs/verantwoording.md)** — toetsing aan het Overheidsbreed Standpunt Generatieve AI.
 - **[DISCLAIMER.md](DISCLAIMER.md)** — risico's en aansprakelijkheid.
 - **[SECURITY.md](SECURITY.md)** — verantwoorde melding van kwetsbaarheden (volgt MinBZK-beleid).
