@@ -79,9 +79,14 @@ Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
 1. In `.env` zetten (vóór de build):
    ```
    INSTALL_PODMAN=true
-   # Firewall whitelist bevat geen registries; Testcontainers pullt van docker.io.
-   ALLOWED_DOMAINS=registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,docker.io
    ```
+   De docker.io-registries die Testcontainers pullt komen automatisch mee:
+   `init-firewall.sh` voegt ze aan de whitelist toe zodra podman in de image
+   zit. Handmatig in `ALLOWED_DOMAINS` zetten is niet meer nodig. Gebruik je een
+   eigen of interne registry (Harbor, Nexus, een mirror), zet die dan wél in
+   `ALLOWED_DOMAINS`. Dit speelt sowieso alleen bij `OPEN_HTTPS=false` (strikte
+   whitelist); bij de default `OPEN_HTTPS=true` is al het uitgaand HTTPS
+   toegestaan en is de allowlist een no-op.
 2. **AppArmor-profiel laden** (gehardende host; onschadelijk elders):
    ```
    ./podman/setup-host.sh
@@ -273,7 +278,7 @@ in de sandbox.
 | `opening seccomp profile failed: open {"defaultAction"...}: file name too long` (macOS) | `podman compose` delegeert naar `docker-compose`, dat het profiel inline (als JSON) meestuurt i.p.v. als pad | draai via `podman-compose` (zie macOS-sectie); die geeft het pad door |
 | `opening seccomp profile failed: open ...: no such file or directory` (macOS) | relatief seccomp-pad; podman leest client-side op de Mac | macOS-override gebruikt absoluut pad (`${PWD}/...`); draai compose vanuit `claude-sandbox/` |
 | `/bin/sh: [[: not found` / `SHELL is not supported for OCI image format` (podman build) | podman's builder bouwt OCI-formaat en negeert de `SHELL`-bash-instructie | bouw met `BUILDAH_FORMAT=docker` |
-| image-pull hangt/timeout | firewall blokkeert registry | `ALLOWED_DOMAINS` uit stap 1 toevoegen en container herstarten |
+| image-pull hangt/timeout | firewall blokkeert registry (alleen bij `OPEN_HTTPS=false`) | `init-firewall.sh` whitelist de docker.io-registries al automatisch als podman in de image zit; controleer dat `INSTALL_PODMAN=true` was bij de build en herstart de container. Overige registries: aan `ALLOWED_DOMAINS` toevoegen |
 | Ryuk-container faalt | reaper in nested rootless | `TESTCONTAINERS_RYUK_DISABLED=true` (staat al in de smoke-test) |
 | `Timed out waiting for container port to open` (host bv. `10.88.0.1`) | rootless podman publisht op localhost; Testcontainers resolvet de netavark bridge-gateway | `TESTCONTAINERS_HOST_OVERRIDE=localhost` (staat in de smoke-test; zet hem ook in je eigen build-env) |
 
