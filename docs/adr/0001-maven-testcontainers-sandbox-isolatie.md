@@ -128,6 +128,21 @@ setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
 - Kernel-escapes blijven buiten bereik van deze maatregelen. Wie volledig
   vijandige, kernel-exploit-capabele code moet draaien, hoort bij de
   sysbox/microVM-route.
+- **Agent-schrijfbare sandboxconfig bij dogfooding.** Staat de repo zélf
+  uitgecheckt onder `PROJECTS_DIR` (de opstelling waarin je de sandbox met de
+  sandbox ontwikkelt), dan zijn `setup-host.sh`, het AppArmor-profiel, het
+  seccomp-profiel en de compose-bestanden schrijfbaar voor `claude` (uid 1000).
+  De agent kan dan (a) `setup-host.sh` bewerken, dat jij met sudo op de host
+  draait → host-root, of (b) het seccomp-profiel/compose verzwakken, dat bij de
+  volgende start/build geldt. Voor een *normale* gebruiker (project ≠ deze repo)
+  staat die config in de image / een aparte clone en speelt dit niet.
+  **Mitigatie (operationeel):** draai host-side scripts (`setup-host.sh`, de
+  build) vanuit een checkout die de sandbox niet kan schrijven, of review de diff
+  vóór elke run. Technische backstops sluiten een deel: de setup-host-validatie
+  weigert een verzwakt/vervangen profiel (witruimte-tolerant, `flags=(unconfined)`
+  overal geweigerd), en `entrypoint-root.sh` weigert te starten als ons profiel
+  niet in enforce draait — maar `setup-host.sh` zelf en de seccomp/compose-route
+  blijven een host-side integriteitsvraag die alleen de mount-scheiding sluit.
 
 **Welke laag welke escape sluit.** De root-entrypoint plus de setuid-strip
 sluiten het *bereiken* van container-root met `CAP_SYS_ADMIN` — dat is de

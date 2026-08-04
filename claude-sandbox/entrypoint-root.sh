@@ -56,10 +56,18 @@ fi
 # reproduceren (zie hardening-verificatie.md sectie 4). Alleen de operator kan
 # die env zetten bij container-start, vóór de drop naar claude — `claude` bereikt
 # deze fase niet.
+# Positieve check: staat óns profiel geladen, dan MOET het enforce zijn. Zo vangen
+# we niet alleen complain (na een aa-complain-debugsessie) maar ook een profiel
+# dat in-place naar flags=(unconfined) is verzwakt — beide zetten de /proc/sys-
+# denies uit en heropenen de core_pattern-escape. Toont attr/current geen
+# claude-sandbox-podman (macOS/Rancher: apparmor=unconfined, VM-grens eronder),
+# dan is er niks van ons te handhaven en gaan we door.
 aa_current="$(/usr/bin/cat /proc/self/attr/current 2>/dev/null || true)"
 case "$aa_current" in
-    *"claude-sandbox-podman (complain)"*)
-        msg="het AppArmor-profiel claude-sandbox-podman staat in complain-modus. In die modus worden de /proc/sys-denies niet afgedwongen. Zet enforce met 'sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman' en recreate de container."
+    *"claude-sandbox-podman (enforce)"*)
+        : ;; # correct — het profiel dwingt af
+    *"claude-sandbox-podman"*)
+        msg="het AppArmor-profiel claude-sandbox-podman draait niet in enforce-modus (${aa_current}). De /proc/sys-denies worden dan niet afgedwongen en de core_pattern-escape staat open. Herstel enforce ('sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman'), controleer dat het profiel niet naar flags=(unconfined) is aangepast, en recreate de container."
         if [[ "${ALLOW_APPARMOR_COMPLAIN:-false}" == "true" ]]; then
             echo "WAARSCHUWING: $msg (toegestaan via ALLOW_APPARMOR_COMPLAIN=true — alleen voor debug)" >&2
         else

@@ -2,9 +2,10 @@
 # Host-setup voor rootless Podman-in-Docker (issue #44).
 # Laadt een AppArmor-profiel dat ALLEEN de sandbox-container userns laat
 # gebruiken, zodat de host-hardening (apparmor_restrict_unprivileged_userns)
-# systeembreed aan kan blijven. Op niet-gehardende hosts is het profiel
-# onschadelijk (flags=(unconfined)) — we laden het altijd zodat de compose-
-# override consistent naar `apparmor=claude-sandbox-podman` kan verwijzen.
+# systeembreed aan kan blijven. Het profiel is afgeleid van docker-default
+# (flags=(attach_disconnected,mediate_deleted)) en mediateert dus echt; op
+# niet-gehardende hosts is het onschadelijk maar we laden het altijd zodat de
+# compose-override consistent naar `apparmor=claude-sandbox-podman` kan verwijzen.
 #
 # Draai dit op de HOST (niet in de container). Vereist sudo.
 set -euo pipefail
@@ -54,18 +55,37 @@ if ! command -v apparmor_parser >/dev/null 2>&1; then
 fi
 
 # Valideer wat we straks als root in de kernel laden. `apparmor_parser -r`
-# vervangt élk profiel dat in het bestand gedeclareerd staat, op naam. Een
-# toegevoegde stanza `profile docker-default flags=(unconfined) { }` zou dus
-# stilletjes de AppArmor-afscherming van alle containers op deze host slopen.
-# Een kwaadaardige bewerking in een .sh valt op bij review; een extra stanza in
-# een configbestand niet.
-profile_count="$(grep -c '^profile ' "$PROFILE_SRC" || true)"
-if [[ "$profile_count" -ne 1 ]] || ! grep -q '^profile claude-sandbox-podman ' "$PROFILE_SRC"; then
-    echo "✗ $PROFILE_SRC declareert niet precies één profiel 'claude-sandbox-podman'." >&2
-    echo "  Gevonden:" >&2
-    grep '^profile ' "$PROFILE_SRC" >&2 || echo "  (geen enkele profile-regel)" >&2
-    echo "  Geweigerd: apparmor_parser -r vervangt profielen op naam, dus dit kan" >&2
-    echo "  andere profielen op deze host overschrijven." >&2
+# vervangt élk profiel dat in het bestand gedeclareerd staat, op naam.
+#
+# LET OP — dit is defense-in-depth, geen volledige controle. Ligt dit bestand
+# (of dit script zelf) in een map die de sandbox kan schrijven — bv. de repo
+# uitgecheckt onder PROJECTS_DIR — dan kan de agent gewoon dít script bewerken,
+# dat jij met sudo draait. Draai `setup-host.sh` daarom vanuit een checkout die
+# de sandbox NIET kan schrijven, of review de diff vóór elke run. Zie de
+# security-noot in docs/adr/0001-...md.
+#
+# De checks hieronder (witruimte-tolerant, want de AppArmor-parser is dat ook):
+#   - precies één profile-stanza, met de naam claude-sandbox-podman
+#     (een tweede stanza kan via -r een ander host-profiel overschrijven);
+#   - nergens flags=(unconfined) — dat maakt óns profiel inert en heropent de
+#     core_pattern-escape (zie het profiel-comment);
+#   - geen onbekende include (alleen tunables/global en abstractions/base).
+reject=""
+if [[ "$(grep -cE '^[[:space:]]*profile[[:space:]]' "$PROFILE_SRC" || true)" -ne 1 ]]; then
+    reject="niet precies één profile-stanza"
+elif ! grep -qE '^[[:space:]]*profile[[:space:]]+claude-sandbox-podman([[:space:]]|$)' "$PROFILE_SRC"; then
+    reject="de profile-stanza heet niet claude-sandbox-podman"
+elif grep -qE 'flags[[:space:]]*=[[:space:]]*\([^)]*unconfined' "$PROFILE_SRC"; then
+    reject="bevat flags=(unconfined) — dat zet de /proc/sys-denies uit"
+elif grep -qE '^[[:space:]]*include\b' "$PROFILE_SRC" \
+     && grep -E '^[[:space:]]*include\b' "$PROFILE_SRC" \
+        | grep -qvE '<(tunables/global|abstractions/base)>'; then
+    reject="onbekende include-regel (alleen tunables/global en abstractions/base toegestaan)"
+fi
+if [[ -n "$reject" ]]; then
+    echo "✗ $PROFILE_SRC geweigerd: $reject." >&2
+    echo "  profile-regels gevonden:" >&2
+    grep -E '^[[:space:]]*profile[[:space:]]' "$PROFILE_SRC" >&2 || echo "  (geen)" >&2
     exit 1
 fi
 
