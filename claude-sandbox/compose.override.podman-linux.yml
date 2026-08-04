@@ -46,8 +46,11 @@ services:
       # kernel-escape-syscalls (module-load, kexec, reboot, raw-IO, klok-zetten,
       # bpf, perf_event_open, open_by_handle_at, quotactl, syslog, legacy-io).
       # De kernel-keyring-syscalls (keyctl/add_key/request_key) staan bewust WEL
-      # toe: crun maakt bij container-start een session-keyring, net als
-      # docker-default die toestaat — blokkeren breekt geneste podman.
+      # toe: crun maakt bij container-start een session-keyring — blokkeren brak
+      # geneste podman meetbaar (crun faalde op container-start). Dit is ook de
+      # keuze van de rootless-podman default (containers/common); moby's
+      # docker-default is hier juist strénger. Wij volgen podman, want dat is de
+      # runtime die hierbinnen draait.
       # Strikt veiliger dan unconfined.
       # Compose leest dit profiel client-side en resolvet een relatief pad tegen
       # de PROJECTDIRECTORY: de map van het eerste -f-bestand (te overrulen met
