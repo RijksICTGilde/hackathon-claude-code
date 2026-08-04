@@ -10,4 +10,4 @@
 # Owners moeten write-access op de repo hebben anders negeert GitHub
 # de regel zonder waarschuwing. Alle drie zijn admin op repo-niveau
 # (geverifieerd via repos/.../collaborators).
-* @loek-rijksoverheid @mreuvekamp @ericwout-overheid
+* @loek-rijksoverheid @mreuvekamp @ericwout-overheid @jonrust-minbzk
