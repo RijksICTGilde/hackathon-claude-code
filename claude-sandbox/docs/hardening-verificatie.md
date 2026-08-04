@@ -61,6 +61,24 @@ draait en of het profiel in enforce-modus staat:
 sudo aa-status | grep claude-sandbox-podman
 ```
 
+### Profiel afwezig moet fail-closed zijn (negatieve test, Linux)
+
+De linux-override zet `SANDBOX_EXPECT_APPARMOR=true`; een Linux-container die
+zónder óns enforce-profiel start hoort dan te weigeren, niet stil door te gaan.
+Test dat door de container eenmalig met `apparmor=unconfined` te recreaten:
+
+```
+docker compose -f compose.yml -f compose.override.podman-linux.yml \
+  run --rm --security-opt apparmor=unconfined claude true
+```
+
+| Verwacht |
+|---|
+| Start faalt met `FATAL: SANDBOX_EXPECT_APPARMOR=true, maar het AppArmor-profiel claude-sandbox-podman is niet toegepast`. Start hij tóch (`claude`-shell of firewall-log), dan is de fail-open terug — controleer dat `SANDBOX_EXPECT_APPARMOR=true` in de override staat en dat de `*)`-tak in `entrypoint-root.sh` faalt. |
+
+Op macOS/Rancher is dit géén fout: daar staat de flag bewust niet, want de
+VM-grens levert de MAC-laag en `unconfined` is de correcte stand.
+
 Draai je multi-uid, controleer dan dat `CAP_SYS_ADMIN` (bit 21) wél in de
 bounding set zit maar níét effectief is — dat is de bewuste trade-off:
 

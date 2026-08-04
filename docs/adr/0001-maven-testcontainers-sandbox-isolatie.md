@@ -93,10 +93,14 @@ draaien in een VM), dus daar is niets te doen.
   proc-mount elders zou hem omzeilen, maar dat vereist `CAP_SYS_ADMIN`, en juist
   de setuid-strip hierboven sluit de weg daarheen. `entrypoint-root.sh` faalt
   bovendien hard als het profiel in *complain*-modus staat, zodat het niet stil
-  in complain onafgedwongen blijft. (Het geval "profiel helemaal niet toegepast"
-  op een Linux-host wordt door de runtime-check niet gedekt — daar is
-  `unconfined` niet te onderscheiden van de legitieme macOS-stand; het
-  handmatige testprotocol vangt dat wel.)
+  in complain onafgedwongen blijft. Ook het geval "profiel helemaal niet
+  toegepast" faalt nu hard op een Linux-host: de linux-override zet
+  `SANDBOX_EXPECT_APPARMOR=true`, en `entrypoint-root.sh` weigert dan te starten
+  als `attr/current` óns profiel niet in enforce toont. Zonder die flag kan de
+  runtime "profiel vergeten op Linux" niet onderscheiden van de legitieme
+  macOS-stand (beide tonen `unconfined`); de macOS-override zet de flag daarom
+  niet en valt daar stil door. De flag wordt, net als `OPEN_HTTPS`, alleen in de
+  root-fase vóór de drop gelezen — `claude` kan hem niet uitzetten.
 
 **Waarom geen `--no-new-privs`.** Dat lijkt gratis hardening, maar setuid-root
 `newuidmap` wint er geen privileges meer mee, waarna multi-uid rootless podman

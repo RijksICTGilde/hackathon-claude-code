@@ -47,6 +47,9 @@ services:
       - "seccomp=${PWD:?draai compose vanuit claude-sandbox/}/podman/seccomp/podman-sandbox.json"
       # Geen AppArmor in de Fedora CoreOS VM → unconfined (het Linux-profiel
       # claude-sandbox-podman bestaat hier niet en zou de container-start breken).
+      # Zet hier dus GEEN SANDBOX_EXPECT_APPARMOR=true: dat is de Linux-flag die
+      # 'profiel afwezig' fataal maakt, en hier is afwezig de correcte stand (de
+      # VM-grens levert de MAC-laag). De default (flag ongezet) is precies goed.
       - "apparmor=unconfined"
       # SELinux staat op Enforcing in de Podman-machine VM → vereist.
       - "label=disable"

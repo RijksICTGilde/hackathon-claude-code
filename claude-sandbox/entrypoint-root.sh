@@ -59,9 +59,19 @@ fi
 # Positieve check: staat óns profiel geladen, dan MOET het enforce zijn. Zo vangen
 # we niet alleen complain (na een aa-complain-debugsessie) maar ook een profiel
 # dat in-place naar flags=(unconfined) is verzwakt — beide zetten de /proc/sys-
-# denies uit en heropenen de core_pattern-escape. Toont attr/current geen
-# claude-sandbox-podman (macOS/Rancher: apparmor=unconfined, VM-grens eronder),
-# dan is er niks van ons te handhaven en gaan we door.
+# denies uit en heropenen de core_pattern-escape.
+#
+# Toont attr/current geen claude-sandbox-podman, dan is er niks van ons te
+# handhaven. Dat is legitiem op macOS/Rancher (apparmor=unconfined, VM-grens
+# eronder), maar op een Linux-host waar het profiel er wél hoort te zijn is het
+# een fail-open misconfiguratie: de override vergat --security-opt
+# apparmor=claude-sandbox-podman, of setup-host.sh laadde het profiel niet, en de
+# /proc/sys-denies ontbreken volledig. De runtime kan die twee gevallen niet uit
+# attr/current afleiden — beide tonen 'unconfined'. Daarom zet de linux-override
+# SANDBOX_EXPECT_APPARMOR=true: op zo'n host is 'profiel afwezig' fataal i.p.v.
+# stil doorgaan. Net als OPEN_HTTPS/ALLOW_APPARMOR_COMPLAIN wordt deze env alleen
+# hier in de root-fase gelezen, vóór de drop — `claude` bereikt deze fase niet en
+# kan de flag dus niet uitzetten.
 aa_current="$(/usr/bin/cat /proc/self/attr/current 2>/dev/null || true)"
 case "$aa_current" in
     *"claude-sandbox-podman (enforce)"*)
@@ -72,6 +82,13 @@ case "$aa_current" in
             echo "WAARSCHUWING: $msg (toegestaan via ALLOW_APPARMOR_COMPLAIN=true — alleen voor debug)" >&2
         else
             echo "FATAL: $msg" >&2
+            exit 1
+        fi ;;
+    *)
+        # Profiel niet toegepast. Alleen fataal als deze host het profiel hoort af
+        # te dwingen; macOS/Rancher zet de flag niet en valt hier stil door.
+        if [[ "${SANDBOX_EXPECT_APPARMOR:-false}" == "true" ]]; then
+            echo "FATAL: SANDBOX_EXPECT_APPARMOR=true, maar het AppArmor-profiel claude-sandbox-podman is niet toegepast (attr/current: ${aa_current:-leeg}). De /proc/sys-denies ontbreken volledig en de core_pattern-escape staat open. Controleer dat de container met '--security-opt apparmor=claude-sandbox-podman' draait (staat in compose.override.podman-linux.yml) en dat 'sudo ./podman/setup-host.sh' het profiel op de host geladen heeft, en recreate de container." >&2
             exit 1
         fi ;;
 esac

@@ -28,6 +28,14 @@ services:
       # bridge-gateway (bv. 10.88.0.1) → port-wait timeouts op alles dat op een
       # poort wacht (Postgres, Redis, Quarkus Dev Services).
       - TESTCONTAINERS_HOST_OVERRIDE=localhost
+      # Deze host hoort het AppArmor-profiel af te dwingen (zie security_opt
+      # apparmor=claude-sandbox-podman hieronder). entrypoint-root.sh faalt dan
+      # hard als het profiel afwezig of niet-enforce is — zonder deze flag kan de
+      # runtime 'profiel vergeten op Linux' niet onderscheiden van de legitieme
+      # macOS-stand (beide tonen 'unconfined') en zou stil fail-open starten.
+      # Zet je hieronder bewust apparmor=unconfined (host zonder AppArmor), zet
+      # dan óók deze flag op false, anders weigert de container terecht te starten.
+      - SANDBOX_EXPECT_APPARMOR=true
     devices:
       # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
       # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
@@ -66,7 +74,8 @@ services:
       # (kernel.apparmor_restrict_unprivileged_userns=1) ZONDER die hardening
       # systeembreed uit te zetten. Laad het eerst op de host met ./setup-host.sh
       # (anders faalt de container-start: "AppArmor profile not found"). Op een
-      # host zonder AppArmor: vervang door "apparmor=unconfined".
+      # host zonder AppArmor: vervang door "apparmor=unconfined" én zet
+      # SANDBOX_EXPECT_APPARMOR=false hierboven (anders faalt de start terecht).
       - "apparmor=claude-sandbox-podman"
       # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
       - "label=disable"
