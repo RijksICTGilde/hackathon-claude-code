@@ -140,11 +140,14 @@ setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
   build) vanuit een vertrouwde checkout buiten `PROJECTS_DIR`, gescheiden van de
   werk-checkout die de agent bewerkt; of review de diff vóór elke run. Concrete
   twee-checkout-werkwijze: zie `claude-sandbox/podman/README.md`, "Stappen (op de
-  host)". Technische backstops sluiten een deel: de setup-host-validatie
-  weigert een verzwakt/vervangen profiel (witruimte-tolerant, `flags=(unconfined)`
-  overal geweigerd), en `entrypoint-root.sh` weigert te starten als ons profiel
-  niet in enforce draait — maar `setup-host.sh` zelf en de seccomp/compose-route
-  blijven een host-side integriteitsvraag die alleen de mount-scheiding sluit.
+  host)". Technische backstops sluiten een deel: `setup-host.sh` pint het
+  AppArmor-profiel op een gereviewde sha256 (`PROFILE_SHA`) en weigert élke
+  afwijking, dus een verzwakt of vervangen profiel wordt niet geladen; en
+  `entrypoint-root.sh` weigert te starten als ons profiel niet in enforce draait.
+  Die hash-pin blijft echter defense-in-depth: kan de agent `setup-host.sh`
+  schrijven, dan kan hij ook de gepinde hash meewijzigen. `setup-host.sh` zelf,
+  die hash en de seccomp/compose-route blijven een host-side integriteitsvraag
+  die alleen de mount-scheiding (de twee-checkout-werkwijze) sluit.
 
 **Welke laag welke escape sluit.** De root-entrypoint plus de setuid-strip
 sluiten het *bereiken* van container-root met `CAP_SYS_ADMIN` — dat is de
