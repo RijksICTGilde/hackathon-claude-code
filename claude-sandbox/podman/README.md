@@ -57,6 +57,27 @@ mariadb en de meeste DB-images. Heb je die nodig: zie "Multi-uid" hieronder.
 Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
 `docs/` zijn vanaf de repo-root.
 
+> **Ontwikkel je de sandbox mét de sandbox (dogfooding)?** Dan staat deze repo
+> waarschijnlijk uitgecheckt onder je `PROJECTS_DIR` en kan de agent (uid 1000)
+> élk bestand hierin schrijven — ook `setup-host.sh`, de AppArmor/seccomp-
+> profielen en de compose-bestanden. `setup-host.sh` draai je met sudo, en de
+> compose/profielen gelden bij de volgende start. Een gemanipuleerd bestand
+> wordt dan als root uitgevoerd.
+>
+> **Werk daarom met twee checkouts:**
+> - een **vertrouwde build-checkout** buiten `PROJECTS_DIR` (bv. `~/sandbox`) —
+>   hiervandaan draai je `setup-host.sh` en `docker compose build/up`. De
+>   sandbox kan deze niet schrijven.
+> - een **werk-checkout** onder `PROJECTS_DIR` die de agent bewerkt. Behandel
+>   wijzigingen daarin als onvertrouwd: review de diff en breng ze pas over naar
+>   de build-checkout (merge/`git pull`) vóór je opnieuw `setup-host.sh` draait of
+>   bouwt.
+>
+> Voor een normale gebruiker (je werkt aan een ánder project dan deze repo)
+> speelt dit niet: de sandboxconfig zit dan niet in je `PROJECTS_DIR`. Zie de
+> security-noot in `docs/adr/0001-...md`. Minimaal, als je met één checkout werkt:
+> review de `claude-sandbox/`-diff vóór elke `setup-host.sh`/rebuild.
+
 1. In `.env` zetten (vóór de build):
    ```
    INSTALL_PODMAN=true

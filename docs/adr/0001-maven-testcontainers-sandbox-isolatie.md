@@ -137,8 +137,10 @@ setuid-strip vervangt de bescherming die `--no-new-privs` zou geven.
   volgende start/build geldt. Voor een *normale* gebruiker (project ≠ deze repo)
   staat die config in de image / een aparte clone en speelt dit niet.
   **Mitigatie (operationeel):** draai host-side scripts (`setup-host.sh`, de
-  build) vanuit een checkout die de sandbox niet kan schrijven, of review de diff
-  vóór elke run. Technische backstops sluiten een deel: de setup-host-validatie
+  build) vanuit een vertrouwde checkout buiten `PROJECTS_DIR`, gescheiden van de
+  werk-checkout die de agent bewerkt; of review de diff vóór elke run. Concrete
+  twee-checkout-werkwijze: zie `claude-sandbox/podman/README.md`, "Stappen (op de
+  host)". Technische backstops sluiten een deel: de setup-host-validatie
   weigert een verzwakt/vervangen profiel (witruimte-tolerant, `flags=(unconfined)`
   overal geweigerd), en `entrypoint-root.sh` weigert te starten als ons profiel
   niet in enforce draait — maar `setup-host.sh` zelf en de seccomp/compose-route
