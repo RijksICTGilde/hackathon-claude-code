@@ -11,6 +11,14 @@ if [[ "$(id -u)" -eq 0 ]]; then
     exit 1
 fi
 
+# /home/claude/.local/bin terug op PATH: de root-fase (entrypoint-root.sh) heeft
+# die bewust verwijderd zodat root geen agent-geplante shim uit dat claude-eigen
+# pad kon uitvoeren. Hier draaien we als `claude`, dus claude's eigen bin-map op
+# PATH is geen escalatie — en de claude-CLI (o.a. de marketplace-update hieronder)
+# staat daar. Interactieve `docker exec`-sessies krijgen dit sowieso al via de
+# image-wide ENV PATH.
+export PATH="/home/claude/.local/bin:$PATH"
+
 # Hint als optionele runtimes ontbreken (bv. INSTALL_JVM=false bij build)
 if [[ ! -f /home/claude/.sdkman/bin/sdkman-init.sh ]]; then
     echo "INFO: SDKman/JVM niet aanwezig in deze image — herbouw met INSTALL_JVM=true om 'sdk install java' etc. te kunnen draaien." >&2

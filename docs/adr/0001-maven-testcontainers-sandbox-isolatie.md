@@ -66,7 +66,7 @@ draaien in een VM), dus daar is niets te doen.
 
 - De container→host code-execution-bridge van #44. Er is geen host-agent meer
   en geen Docker-socket; alle projectcode draait in de sandbox.
-- De route van uid 1000 naar container-root, via twee gesloten paden. (a) De
+- De route van uid 1000 naar container-root, via drie gesloten paden. (a) De
   sudo-route: de firewall draait in de root-fase van de entrypoint en dropt
   daarna met `setpriv` naar `claude`; de NOPASSWD-sudoers-regel met de
   SETENV-tag is weg, evenals `sudo` zelf. Die tag liet `BASH_ENV` de `env_reset`
@@ -75,6 +75,15 @@ draaien in een VM), dus daar is niets te doen.
   zónder maatregel kon `claude` euid 0 + bounding-set-caps winnen via elke
   setuid-root-binary. De Dockerfile stript daarom de setuid-bits behalve
   `newuidmap`/`newgidmap`/`fusermount3` — geen setuid-shell, geen setuid-`mount`.
+  (c) De PATH-route: de image zet image-wide `PATH="/home/claude/.local/bin:…"`,
+  een door `claude` beschrijfbare map op het volume. De root-fase resolvet
+  `init-firewall.sh` en de `iptables`/`ipset`/`dig`/`cat`/`id`/`setpriv` die het
+  aanroept; zónder maatregel draaide een door de agent geplante shim uit die map
+  als root bij de eerstvolgende (auto)restart. `entrypoint-root.sh` en
+  `init-firewall.sh` forceren daarom een vertrouwd PATH vóór de eerste
+  commando-resolutie, en de kritieke binaries worden via absoluut pad
+  aangeroepen; `entrypoint.sh` (de claude-fase) zet de bin-map ná de drop weer
+  terug.
 - De egress-allowlist als self-service. `OPEN_HTTPS` en `ALLOWED_DOMAINS` worden
   alleen nog gelezen vóór de drop, dus `claude` kan de firewall niet meer
   heropenen.

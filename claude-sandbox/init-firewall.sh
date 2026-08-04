@@ -2,6 +2,13 @@
 set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
 IFS=$'\n\t'       # Stricter word splitting
 
+# Vertrouwd PATH forceren. Dit script draait als root (via entrypoint-root.sh) en
+# resolvet iptables/ipset/dig/awk op naam. De image-wide PATH begint met
+# /home/claude/.local/bin — schrijfbaar voor de agent (uid 1000). Zonder deze
+# reset zou een geplante shim uit dat pad als root draaien. entrypoint-root.sh zet
+# dit ook al; hier herhaald zodat het script ook los veilig is.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Pre-flight: verify we have iptables permissions (requires NET_ADMIN capability)
 if ! iptables -L -n >/dev/null 2>&1; then
     echo "ERROR: iptables not available - is the container running with --cap-add=NET_ADMIN?"

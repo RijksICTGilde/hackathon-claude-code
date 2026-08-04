@@ -15,6 +15,19 @@ set -euo pipefail
 # self-service was voor precies de agent die hij moet beperken.
 # Beide zijn dicht doordat OPEN_HTTPS en ALLOWED_DOMAINS alleen hier worden
 # gelezen, vóór de drop, en er daarna geen weg terug naar root is.
+#
+# VERTROUWD PATH IN DE ROOT-FASE
+# De image zet image-wide PATH="/home/claude/.local/bin:...". Die map is van
+# `claude` (uid 1000) en ligt op het claude-home volume — schrijfbaar voor de
+# agent. Zou de root-fase een commando op naam resolven (init-firewall.sh en de
+# iptables/ipset/dig/cat/id/setpriv die het aanroept), dan draaide een door de
+# agent geplante shim uit die map als root — precies de uid-1000→container-root-
+# route die deze splitsing sluit. Daarom forceren we hier een vertrouwd PATH met
+# alleen root-eigen systeemmappen, vóór de eerste commando-resolutie. De kritieke
+# binaries hieronder worden bovendien via absoluut pad aangeroepen (defense in
+# depth). entrypoint.sh (de claude-fase) zet /home/claude/.local/bin daarna weer
+# terug — dat mag, want vanaf de drop draait alles als claude.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 echo "entrypoint OPEN_HTTPS: ${OPEN_HTTPS:-false}"
 echo "entrypoint ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}"
@@ -43,7 +56,7 @@ fi
 # reproduceren (zie hardening-verificatie.md sectie 4). Alleen de operator kan
 # die env zetten bij container-start, vóór de drop naar claude — `claude` bereikt
 # deze fase niet.
-aa_current="$(cat /proc/self/attr/current 2>/dev/null || true)"
+aa_current="$(/usr/bin/cat /proc/self/attr/current 2>/dev/null || true)"
 case "$aa_current" in
     *"claude-sandbox-podman (complain)"*)
         msg="het AppArmor-profiel claude-sandbox-podman staat in complain-modus. In die modus worden de /proc/sys-denies niet afgedwongen. Zet enforce met 'sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman' en recreate de container."
@@ -65,8 +78,8 @@ export LOGNAME=claude
 
 # Numerieke id's, niet de naam: niet elke setpriv-versie accepteert een
 # gebruikersnaam bij --reuid/--regid.
-claude_uid="$(id -u claude)"
-claude_gid="$(id -g claude)"
+claude_uid="$(/usr/bin/id -u claude)"
+claude_gid="$(/usr/bin/id -g claude)"
 
 # GEEN --no-new-privs. Dat lijkt gratis hardening, maar setuid-root `newuidmap`
 # loopt er precies op stuk ("newuidmap: write to uid_map failed"), waarna podman
@@ -78,5 +91,5 @@ claude_gid="$(id -g claude)"
 #
 # --inh-caps=-all leegt de inheritable set. De bounding set blijft staan, want
 # setuid-root newuidmap moet daar in multi-uid CAP_SYS_ADMIN uit kunnen trekken.
-exec setpriv --reuid="$claude_uid" --regid="$claude_gid" --init-groups \
+exec /usr/bin/setpriv --reuid="$claude_uid" --regid="$claude_gid" --init-groups \
     --inh-caps=-all /opt/entrypoint.sh "$@"

@@ -28,6 +28,28 @@ docker exec -tiu claude claude-sandbox bash
 | `find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null` | alleen `newuidmap`, `newgidmap`, `fusermount3` — geen `su`/`mount`/`passwd`/… |
 | `getcap -r / 2>/dev/null` | geen binary met `cap_sys_admin`/`cap_setuid` buiten wat rootless podman nodig heeft — de setuid-strip raakt géén file-capabilities, dus hier apart controleren |
 
+### PATH-hijack (negatieve test)
+
+De root-fase mag geen commando resolven uit `/home/claude/.local/bin` (agent-
+beschrijfbaar). Plant een shim en herstart; hij mag **niet** als root draaien:
+
+```
+# als claude:
+printf '#!/bin/sh\necho GEPWNED > /pwned-as-$(id -u)\n' > ~/.local/bin/setpriv
+chmod +x ~/.local/bin/setpriv
+```
+Recreate de container, en controleer daarna:
+
+| Commando | Verwacht |
+|---|---|
+| `ls /pwned-as-0` | `No such file or directory` — de shim draaide niet als root |
+| `id -un` (na de recreate) | `claude` — de echte `setpriv` deed de drop, niet de shim |
+
+Ruim de shim daarna op (`rm ~/.local/bin/setpriv`). Draait de container ná de
+recreate niet meer (loop), of bestaat `/pwned-as-0`, dan resolvet de root-fase
+nog uit het claude-pad — controleer dat `entrypoint-root.sh` het vertrouwde PATH
+zet vóór de eerste commando-resolutie.
+
 De `core_pattern`-write, het enforce-profiel en de setuid-enumeratie zijn de
 kern. Die drie lagen sluiten de escape onafhankelijk: de setuid-strip sluit de
 weg naar `CAP_SYS_ADMIN`, het enforce-profiel sluit de `/proc/sys`-write. Slaagt
