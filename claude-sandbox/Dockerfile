@@ -13,6 +13,7 @@ ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
 ARG INSTALL_PODMAN=false
+ARG INSTALL_SSHD=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -224,6 +225,64 @@ COPY init-firewall.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh && \
   echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
   chmod 0440 /etc/sudoers.d/claude-firewall
+
+# Optioneel: OpenSSH-server zodat een externe orchestrator (GitKraken Kepler) via
+# SSH een Claude-agent-sessie ín deze sandbox kan draaien. Default uit — alleen
+# nodig voor de Kepler-remote-opzet. Gehard: pubkey-only, geen root, alleen user
+# 'claude', geen X11. De poort publiceer je host-side op 127.0.0.1 (zie
+# compose.override.kepler.yml); de sandbox-firewall laat inbound vanaf het
+# host-netwerk al toe (init-firewall.sh, INPUT -s HOST_NETWORK).
+#
+# PATH-fix: een non-interactieve SSH-sessie erft de Docker `ENV PATH` NIET, dus
+# `claude` in ~/.local/bin zou "command not found" geven. We zetten PATH in
+# /etc/zsh/zshenv (zsh = login-shell van 'claude', altijd gesourced, ook bij
+# `zsh -c`) én /etc/profile.d (bash/sh login-shells). node zit al in de default
+# PATH (/usr/local/bin) en heeft dit niet nodig.
+#
+# Auth: geen ANTHROPIC_API_KEY via env (die reset sshd weg) — gebruik `claude
+# login`, persisted in het claude-home volume. Zie README 'Kepler (SSH-remote)'.
+# Let op: houd de README-tools-tabel + Kepler-sectie in sync.
+#
+# PerSourcePenalties uit: OpenSSH ≥9.8 straft standaard per bron-IP (noauth:1,
+# authfail:5, refuseconnection:10 …). Achter een NAT/port-forward — precies onze
+# opzet: op macOS NAT gvproxy alle host-connecties naar één gateway-IP, en de
+# Docker-portpublish doet hetzelfde — ziet sshd élke client als dezelfde bron.
+# Eén afgebroken of mislukte connectie straft dan alle volgende (en elke daarop
+# geweigerde poging voegt straf toe → zelf-versterkend, blijft ~15-600s hangen).
+# Kepler opent meerdere sessies/kanalen; dat tikt dat plafond zo aan. Op een
+# loopback-only, pubkey-only poort levert per-bron-throttling nauwelijks
+# beveiliging op, dus uit. (MaxStartups blijft op de default staan.)
+#
+# Kepler tunnel-race workaround (/etc/zsh/zprofile): Kepler zet een SSH
+# ControlMaster op en draait de tunnel als `ssh -N -L` mux-slave daarover. Een
+# mux-slave vraagt áltijd een sessie aan (ook met -N; bekend OpenSSH-gedrag),
+# draagt de forward over aan de master en exit binnen ~10-30 ms. De poort is dan
+# al klaar, maar Keplers readiness-poll (Mw/waitForTunnelReady) behandelt het
+# ssh-child-exit als fataal en gooit vóór z'n poort-check — dus "ssh exited
+# before the tunnel on local port N was ready (code 0)", terwijl de forward
+# prima werkt. Server-onafhankelijk (idem tegen een kale sshd) → een Kepler-bug.
+# Wij rékken de fantoom-login-shell die de mux-slave opent met een korte sleep,
+# zodat Keplers eerste poll de al-klare poort pakt vóór het child exit. Alleen
+# non-interactieve login-shells (dat is precies die fantoom-sessie); de `zsh -c`
+# probe sourcet geen zprofile en interactieve shells slaan de sleep over, dus de
+# agent en `docker exec -it` blijven ongemoeid. Zie README 'Kepler (SSH-remote)'.
+RUN case "$INSTALL_SSHD" in \
+      true) apt-get update && \
+            apt-get install -y --no-install-recommends openssh-server && \
+            apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            mkdir -p /run/sshd && \
+            ssh-keygen -A && \
+            printf 'PasswordAuthentication no\nPermitRootLogin no\nPubkeyAuthentication yes\nPermitUserEnvironment no\nX11Forwarding no\nAllowUsers claude\nPerSourcePenalties no\n' \
+              > /etc/ssh/sshd_config.d/kepler.conf && \
+            printf '\nexport PATH="/home/claude/.local/bin:$PATH"\n' >> /etc/zsh/zshenv && \
+            printf 'export PATH="/home/claude/.local/bin:$PATH"\n' > /etc/profile.d/kepler-path.sh && \
+            printf '# Kepler tunnel-race workaround (zie Dockerfile-comment + README): rek de\n# fantoom-login-shell van Keplers mux -N -L tunnel-slave zodat de readiness-poll\n# de al-klare poort pakt vóór het ssh-child exit. Alleen non-interactieve\n# login-shells; de `zsh -c` probe en interactieve shells blijven ongemoeid.\nif [[ ! -o interactive ]]; then sleep 0.4; fi\n' \
+              > /etc/zsh/zprofile && \
+            echo "claude ALL=(root) NOPASSWD: /usr/sbin/sshd" > /etc/sudoers.d/claude-sshd && \
+            chmod 0440 /etc/sudoers.d/claude-sshd ;; \
+      false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
 
 # Optioneel: rootless Podman voor Maven+Testcontainers ín de container
 # (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/

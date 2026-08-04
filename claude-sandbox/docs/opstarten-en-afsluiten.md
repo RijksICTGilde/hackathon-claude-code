@@ -19,6 +19,7 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 | `INSTALL_ANTHROPIC_PLUGINS`    | `true`  | Anthropic-plugins (+ LSP's bij `INSTALL_JVM=true`)                                           |
 | `INSTALL_LOCAL_SKILLS`         | `true`  | Lokale skills uit `skills/` (digital-waste-spotter)                                          |
 | `INSTALL_CAVEMAN`              | `true`  | caveman plugin (third-party, ~75% token-reductie via communicatie-stijl)                     |
+| `INSTALL_SSHD`                 | `false` | OpenSSH-server (gehard) voor de Kepler-remote-opzet; default uit — zie README 'Kepler (SSH-remote)' |
 
 Zet de waardes in `.env` of op de commandline:
 ```
@@ -35,6 +36,7 @@ Naast de build-time toggles kent de container één runtime-env-var:
 | Variabele                | Default | Wat het doet                                                                                                                                              |
 |--------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `MARKETPLACE_AUTOUPDATE` | `true`  | Draait `claude plugin marketplace update` bij entrypoint-start zodat plugin-bundels up-to-date blijven zonder image-rebuild. Niet-fataal bij netwerk-/upstream-failure. |
+| `KEPLER_SSH_PUBKEY`      | _(leeg)_ | Alleen relevant met `INSTALL_SSHD=true`: publieke SSH-sleutel die de entrypoint naar `~/.ssh/authorized_keys` schrijft zodat Kepler kan inloggen. Zie README 'Kepler (SSH-remote)'. |
 
 #### Voorbeeld: `sdk install java` na `INSTALL_JVM=true`
 
