@@ -63,10 +63,11 @@ Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
    ```
    De docker.io-registries die Testcontainers pullt komen automatisch mee:
    `init-firewall.sh` voegt ze aan de whitelist toe zodra podman in de image
-   zit. Handmatig in `ALLOWED_DOMAINS` zetten is niet meer nodig. Dit speelt
-   sowieso alleen bij `OPEN_HTTPS=false` (strikte whitelist); bij de default
-   `OPEN_HTTPS=true` is al het uitgaand HTTPS toegestaan en is de allowlist een
-   no-op.
+   zit. Handmatig in `ALLOWED_DOMAINS` zetten is niet meer nodig. Gebruik je een
+   eigen of interne registry (Harbor, Nexus, een mirror), zet die dan wél in
+   `ALLOWED_DOMAINS`. Dit speelt sowieso alleen bij `OPEN_HTTPS=false` (strikte
+   whitelist); bij de default `OPEN_HTTPS=true` is al het uitgaand HTTPS
+   toegestaan en is de allowlist een no-op.
 2. **AppArmor-profiel laden** (gehardende host; onschadelijk elders):
    ```
    ./podman/setup-host.sh
