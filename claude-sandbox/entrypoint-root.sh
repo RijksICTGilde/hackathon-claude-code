@@ -59,10 +59,10 @@ esac
 # eruit draait. Op het volume overleeft de sleutel een image-rebuild, dus Kepler
 # houdt dezelfde known_hosts-entry.
 #
-# Eigendom wordt elke start getoetst. `/home/claude` is van `claude`, dus die kan
-# `.ssh-host` hernoemen en er een eigen sleutel neerzetten; sshd accepteert een
-# host-key van een ándere user zonder morren. Daarmee zou de ingesloten partij
-# kiezen welke identiteit Kepler in known_hosts pint.
+# Het pad wordt elke start gecontroleerd. `/home/claude` is van `claude`, dus
+# niets daaronder is te vertrouwen: sshd accepteert een host-key van een andere
+# user zonder morren, waarmee de ingesloten partij zou kiezen welke identiteit
+# Kepler in known_hosts pint.
 #
 # -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
 # vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
@@ -71,20 +71,27 @@ esac
 # het nog niet bestaat: opnieuw aanmaken zou bij elke restart het auth-spoor
 # wissen.
 #
-# De hele voorbereiding is niet-fataal. `/home/claude` is van `claude` en
-# persistent, dus de inhoud van `.ssh-host` ligt buiten onze controle; een
-# gesloopt of vervangen pad mag de sandbox niet onstartbaar maken. Daarom eerst
-# controleren dat het een echte directory is en geen symlink — root die blind in
-# een door de sandbox-gebruiker beheerd pad schrijft, is precies de route die de
-# privilege-drop moet afsluiten.
+# De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
+# sandbox niet onstartbaar maken.
 prepare_host_key() {
     local key=/home/claude/.ssh-host/ssh_host_ed25519_key
-    if [[ -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ]]; then
+    # Symlinks en niet-reguliere bestanden eerst weg. `-f` dereferencet, dus een
+    # kapotte symlink zou ssh-keygen als root buiten .ssh-host laten schrijven,
+    # en op een directory of fifo blokkeert het op zijn overwrite-prompt — met
+    # stdin_open uit compose.yml hangt de container-start dan onbeperkt.
+    if [[ -L "$key" || -L "$key.pub" || ( -e "$key" && ! -f "$key" ) ]]; then
+        echo "WAARSCHUWING: host-key-pad op het volume is geen gewoon bestand — vervangen." >&2
+        rm -rf -- "$key" "$key.pub" || return 1
+    elif [[ -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ]]; then
         echo "WAARSCHUWING: host-key op het volume is niet van root — vervangen door een verse." \
              "Kepler ziet daardoor een gewijzigde host-key (known_hosts-mismatch)." >&2
-        rm -f "$key" "$key.pub"
+        rm -f "$key" "$key.pub" || return 1
     fi
-    [[ -f "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
+    # Niet op `set -e` leunen: in een conditie-context staat errexit uit, dus een
+    # mislukte rm hierboven zou anders alsnog als succes doorgaan en sshd met de
+    # vreemde sleutel laten starten.
+    [[ -f "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key" </dev/null || return 1
+    [[ "$(stat -c %u "$key" 2>/dev/null)" == 0 ]]
 }
 
 sshd_ready=false

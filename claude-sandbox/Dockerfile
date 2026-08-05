@@ -329,6 +329,11 @@ RUN case "$INSTALL_SSHD" in \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
+# Vangnet op de invariant hierboven: de wegwerpsleutel van de configcontrole
+# hoort in dezelfde laag opgeruimd te zijn. Herordent iemand die keten, dan komt
+# er stil weer privesleutelmateriaal in de image te staan.
+RUN test ! -e /home/claude/.ssh-host
+
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
 # heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
 # kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.

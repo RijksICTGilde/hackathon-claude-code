@@ -135,7 +135,9 @@ fi
 # ziet er van buiten uit als een gewone sandbox.
 if [[ "$EXPECT_NO_SSHD" == true ]]; then
     section "SSH hoort uit te staan"
-    if "$CLI" exec "$CONTAINER" sh -c 'command -v pgrep >/dev/null && ! pgrep -x sshd >/dev/null'; then
+    if ! "$CLI" exec "$CONTAINER" sh -c 'command -v pgrep >/dev/null'; then
+        fail "pgrep ontbreekt in de container — of er een sshd draait is hiermee niet vast te stellen"
+    elif "$CLI" exec "$CONTAINER" sh -c '! pgrep -x sshd >/dev/null'; then
         pass "geen sshd-proces"
     else
         fail "sshd draait terwijl SSH uit hoort te staan — de start hoort achter ENABLE_SSHD te zitten, niet achter de aanwezigheid van de binary"
@@ -206,6 +208,20 @@ if "$CLI" exec "$CONTAINER" sh -c \
     pass "geen setuid-binaries buiten newuidmap/newgidmap"
 else
     fail "setuid-root-binary aangetroffen — de setuid-strip in de Dockerfile draait niet ná alle apt-installs"
+fi
+
+# De host-key hoort bij eerste start op het volume te ontstaan, niet in de
+# image: een privesleutel in een layer geeft iedereen met die image de
+# identiteit van elke container die eruit draait.
+if "$CLI" exec "$CONTAINER" sh -c '! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'; then
+    pass "geen host-keys in /etc/ssh (die horen op het volume te staan)"
+else
+    fail "host-keys in /etc/ssh — die zijn in de image gebakken; de Dockerfile hoort ze na de apt-install te verwijderen"
+fi
+if "$CLI" exec "$CONTAINER" sh -c 'test -f /home/claude/.ssh-host/ssh_host_ed25519_key'; then
+    pass "host-key op het claude-home volume"
+else
+    fail "geen host-key op /home/claude/.ssh-host — entrypoint-root.sh maakt hem daar aan"
 fi
 
 section "2. Poortbinding — alleen loopback"
@@ -337,7 +353,8 @@ section "7. Kepler tunnel-race workaround actief"
 # probe (sectie 4) mag dat NIET zijn.
 read -r LOGIN_MS LOGIN_RC <<<"$(ssh_timed_login)"
 read -r PROBE_MS PROBE_RC <<<"$(ssh_timed_probe)"
-if [[ ! "$LOGIN_MS$LOGIN_RC$PROBE_MS$PROBE_RC" =~ ^[0-9]+$ ]]; then
+if [[ ! "$LOGIN_MS" =~ ^[0-9]+$ || ! "$LOGIN_RC" =~ ^[0-9]+$ ||
+      ! "$PROBE_MS" =~ ^[0-9]+$ || ! "$PROBE_RC" =~ ^[0-9]+$ ]]; then
     # _timed draait in een command substitution en erft `set -e` niet, dus een
     # mislukte mktemp levert lege waarden i.p.v. een afbreking. Zonder deze
     # guard leest de vergelijking hieronder die als 0 en meldt stellig dat de
@@ -355,7 +372,12 @@ else
     # een absolute drempel zou daar een vals-rood over de zprofile-workaround
     # geven.
     DELTA=$(( LOGIN_MS - PROBE_MS ))
-    if [[ "$DELTA" -ge 250 && "$DELTA" -lt 1500 ]]; then
+    if [[ "$PROBE_MS" -ge 1000 ]]; then
+        # Zonder deze tak zou een delay die van zprofile naar zshenv verhuisd is
+        # als "workaround ontbreekt" binnenkomen: beide metingen worden dan traag
+        # en het verschil valt weg.
+        fail "de zsh -c probe is zelf al traag (${PROBE_MS}ms) — staat de delay in zshenv i.p.v. zprofile, of is de verbinding traag? Sectie 7 kan de workaround zo niet beoordelen"
+    elif [[ "$DELTA" -ge 250 && "$DELTA" -lt 1500 ]]; then
         pass "kale login-shell ${DELTA}ms trager dan de probe (${LOGIN_MS}ms vs ${PROBE_MS}ms) — workaround actief"
     elif [[ "$DELTA" -lt 250 ]]; then
         fail "kale login-shell niet vertraagd t.o.v. de probe (${LOGIN_MS}ms vs ${PROBE_MS}ms) — /etc/zsh/zprofile-workaround ontbreekt; Kepler faalt met 'ssh exited before the tunnel ... (code 0)'"

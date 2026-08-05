@@ -38,6 +38,7 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
         # eindigt op een newline, en die zou als tweede sleutel gelezen worden.
         pubkey="$KEPLER_SSH_PUBKEY"
         while [[ "$pubkey" == *[[:space:]] ]]; do pubkey="${pubkey%[[:space:]]}"; done
+        while [[ "$pubkey" == [[:space:]]* ]]; do pubkey="${pubkey#[[:space:]]}"; done
         if [[ "$(printf '%s' "$pubkey" | wc -l)" -gt 0 ]]; then
             echo "WAARSCHUWING: KEPLER_SSH_PUBKEY bevat een regeleinde. De var houdt één sleutel;" \
                  "meerdere sleutels beheer je zelf in ~/.ssh/authorized_keys op het volume." \
