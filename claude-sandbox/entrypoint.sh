@@ -107,14 +107,17 @@ if [[ "$sshd_active" == true ]]; then
     # weigert elk niveau dat voor groep of anderen schrijfbaar is. Dat meldt hij
     # alleen in zijn eigen log — een geslaagd-melding hierboven gevolgd door een
     # stille weigering bij het inloggen is precies wat we willen vermijden.
-    if perm_bad="$(find "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022 2>/dev/null)" &&
-       [[ -n "$perm_bad" ]]; then
+    # `|| true`: find geeft exit 1 zodra één van de paden ontbreekt, ook als het
+    # voor de andere wél een treffer print. Zonder dat zou de waarschuwing juist
+    # uitblijven op een vers volume, waar authorized_keys nog niet bestaat.
+    perm_bad="$(find "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022 2>/dev/null || true)"
+    if [[ -n "$perm_bad" ]]; then
         echo "WAARSCHUWING: schrijfbaar voor groep of anderen: $(tr '\n' ' ' <<<"$perm_bad")—" \
              "sshd weigert de login daarop. Zet 'chmod 755 $HOME; chmod 700 $HOME/.ssh;" \
              "chmod 600 $HOME/.ssh/authorized_keys'." >&2
     fi
 elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
-    case "${SSHD_STATUS:-disabled}" in
+    case "$SSHD_STATUS" in
         absent)  echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar deze image bevat geen sshd — de sleutel wordt" \
                       "genegeerd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2 ;;
         invalid) echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar ENABLE_SSHD heeft een ongeldige waarde —" \

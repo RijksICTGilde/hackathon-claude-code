@@ -114,10 +114,11 @@ dump_logs() {
 KNOWN_HOSTS="$(mktemp)"
 TUNNEL_ERR=""
 TUNNEL_PID=""
+KEY_ERR=""
 # Eén opruimpunt: de tunneltest verderop start een achtergrondproces, en een
 # tweede trap-string zou bij uitbreiding stilletjes uit elkaar lopen.
 cleanup() {
-    rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"}
+    rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"} ${KEY_ERR:+"$KEY_ERR"}
     # `if` en niet `&&`: onder set -e breekt een mislukte kill de functie af
     # vóór de return, en dan erft het script die exit-code — een geslaagde run
     # zou zo alsnog rood aflopen.
@@ -175,7 +176,7 @@ section "0. Container draait"
 if ! PS_OUT="$("$CLI" ps --format '{{.Names}}' 2>&1)"; then
     echo "FOUT: '$CLI ps' faalde: $(tr '\n' ' ' <<<"$PS_OUT")" >&2
     exit 2
-elif grep -qx "$CONTAINER" <<<"$PS_OUT"; then
+elif grep -qxF "$CONTAINER" <<<"$PS_OUT"; then
     pass "container '$CONTAINER' draait"
 else
     echo "FOUT: container '$CONTAINER' draait niet. Start eerst (zie README 'Kepler (SSH-remote)')." >&2
@@ -494,10 +495,14 @@ fi
 # OPEN_HTTPS uit de container lezen i.p.v. het verschil open te laten: met
 # OPEN_HTTPS=true is bereikbaar verwacht gedrag, met false is het een lek — en
 # dat laatste mag geen groene run opleveren.
-OPEN_HTTPS_VAL="$("$CLI" exec "$CONTAINER" printenv OPEN_HTTPS 2>/dev/null || echo false)"
+# Niet `|| echo false`: bij een exec-fout zou dat een waarde verzinnen waarop
+# hieronder een lek gemeld wordt. Leeg betekent hier "onbekend".
+OPEN_HTTPS_VAL="$("$CLI" exec "$CONTAINER" printenv OPEN_HTTPS 2>/dev/null)" || OPEN_HTTPS_VAL=""
 if ssh_run 'curl -sS --max-time 5 -o /dev/null https://example.com' >/dev/null 2>&1; then
     if [[ "$OPEN_HTTPS_VAL" == true ]]; then
         printf '  \033[33mINFO\033[0m example.com bereikbaar — verwacht bij OPEN_HTTPS=true\n'
+    elif [[ -z "$OPEN_HTTPS_VAL" ]]; then
+        fail "example.com bereikbaar en OPEN_HTTPS niet uit de container te lezen — of dit een lek is, is niet vast te stellen"
     else
         fail "example.com bereikbaar terwijl OPEN_HTTPS=$OPEN_HTTPS_VAL — de egress-allowlist lekt"
     fi
@@ -581,14 +586,29 @@ section "Sleutel uit .env geaccepteerd"
 # container-env is de betrouwbare bron: dat is exact de waarde die de entrypoint
 # bij de laatste start zag. Vingerafdrukken vergelijken maakt dit ongevoelig
 # voor logrotatie, logdriver en een herstart.
-WANT="$("$CLI" exec "$CONTAINER" printenv KEPLER_SSH_PUBKEY 2>/dev/null || true)"
-if [[ -z "$WANT" ]]; then
+# stdout en stderr gescheiden houden: `2>&1` zou een WARN-regel van de CLI
+# (podman doet dat routinematig) vóór de vingerafdruk zetten, waarna de
+# vergelijking vals-rood geeft met een zeer stellige, onjuiste diagnose.
+KEY_ERR="$(mktemp)"
+# `|| want_rc=$?` en niet een losse `$?`: onder set -e breekt een toewijzing met
+# een falend commando het script af, en rc 1 is hier het normale geval (var niet
+# gezet bij een zelfbeheerde opzet).
+want_rc=0
+WANT="$("$CLI" exec "$CONTAINER" printenv KEPLER_SSH_PUBKEY 2>"$KEY_ERR")" || want_rc=$?
+if [[ "$want_rc" -gt 1 ]]; then
+    # printenv geeft 1 als de var niet gezet is; alles daarboven is een fout van
+    # de CLI en mag niet als "zelfbeheerde opzet" gerapporteerd worden.
+    fail "KEPLER_SSH_PUBKEY niet uit de container-env te lezen: $(tr '\n' ' ' <"$KEY_ERR")"
+elif [[ -z "$WANT" ]]; then
     printf '  \033[33mINFO\033[0m geen KEPLER_SSH_PUBKEY in de container-env — zelfbeheerde authorized_keys, herkomst niet te toetsen\n'
 elif ! WANT_FP="$(ssh-keygen -lf - <<<"$WANT" 2>/dev/null)"; then
     fail "KEPLER_SSH_PUBKEY in de container-env is geen geldige sleutel — de entrypoint heeft hem geweigerd; zie de containerlog"
-elif ! HAVE_FP="$("$CLI" exec -u claude "$CONTAINER" ssh-keygen -lf /home/claude/.ssh/authorized_keys 2>&1)"; then
-    fail "authorized_keys niet te lezen als claude: $(tr '\n' ' ' <<<"$HAVE_FP")"
-elif [[ "$(cut -d' ' -f2 <<<"$WANT_FP")" == "$(cut -d' ' -f2 <<<"$HAVE_FP")" ]]; then
+elif ! HAVE_FP="$("$CLI" exec -u claude "$CONTAINER" ssh-keygen -lf /home/claude/.ssh/authorized_keys 2>"$KEY_ERR")"; then
+    fail "authorized_keys niet te lezen als claude: $(tr '\n' ' ' <"$KEY_ERR")"
+# Zoeken of de gewenste vingerafdruk vóórkomt, niet of hij de enige is: staan er
+# meerdere sleutels in het bestand, dan geeft ssh-keygen -lf een regel per stuk
+# en zou een gelijkheidstest vals-rood geven.
+elif cut -d' ' -f2 <<<"$HAVE_FP" | grep -qxF "$(cut -d' ' -f2 <<<"$WANT_FP")"; then
     pass "authorized_keys bevat de sleutel uit de container-env"
 else
     fail "authorized_keys komt niet overeen met KEPLER_SSH_PUBKEY — je logt in met een oudere sleutel van het volume (env: $WANT_FP / bestand: $HAVE_FP)"
