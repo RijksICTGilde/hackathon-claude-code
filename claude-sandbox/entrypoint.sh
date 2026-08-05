@@ -27,7 +27,18 @@ fi
 # Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
 # KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
 # volume, en dat kan niet in een directory die root heeft aangemaakt.
-if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
+# SSHD_STATUS komt uit de root-fase. ENABLE_SSHD hier opnieuw interpreteren zou
+# betekenen dat deze fase niet weet of sshd daadwerkelijk luistert.
+case "${SSHD_STATUS:-disabled}" in running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
+if [[ "$sshd_active" == true ]]; then
+    # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
+    # vers volume is er niets te beschermen, en dan is de juiste boodschap dat
+    # er nu geen sleutel staat. Vooraf bepalen, zodat elke tak hem kan gebruiken.
+    if [[ -s "$HOME/.ssh/authorized_keys" ]]; then
+        keep="authorized_keys is ONGEWIJZIGD gelaten."
+    else
+        keep="er staat geen authorized_keys — Kepler kan niet inloggen."
+    fi
     if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         # Valideren vóór schrijven: een pad in plaats van de sleutelinhoud, een
         # geplakte privésleutel of een meerregelige waarde zou anders een
@@ -42,27 +53,25 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
         while [[ "$pubkey" == [[:space:]]* ]]; do pubkey="${pubkey#[[:space:]]}"; done
         if [[ "$(printf '%s' "$pubkey" | wc -l)" -gt 0 ]]; then
             echo "WAARSCHUWING: KEPLER_SSH_PUBKEY bevat een regeleinde. De var houdt één sleutel;" \
-                 "meerdere sleutels beheer je zelf in ~/.ssh/authorized_keys op het volume." \
-                 "authorized_keys is ONGEWIJZIGD gelaten." >&2
+                 "meerdere sleutels beheer je zelf in ~/.ssh/authorized_keys op het volume. $keep" >&2
         # Het keytype vooraan asserten, niet alleen `ssh-keygen -l` draaien: die
         # slaat een eerste veld over voor known_hosts-hostnamen en keurt daardoor
         # ook een known_hosts-regel of een authorized_keys-regel mét opties goed.
         # Zo'n regel schrijft prima weg en wordt door sshd alsnog geweigerd.
         elif [[ ! "$pubkey" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]] ]]; then
-            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY begint niet met een SSH-keytype — authorized_keys is" \
-                 "ONGEWIJZIGD gelaten. Verwacht de kále inhoud van je .pub-bestand" \
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY begint niet met een SSH-keytype. $keep" \
+                 "Verwacht de kále inhoud van je .pub-bestand" \
                  "('ssh-ed25519 AAAA... kepler'): geen regel uit known_hosts (hostnaam ervoor), geen" \
                  "authorized_keys-regel met command=/permitopen=, geen pad en geen privésleutel." >&2
         elif ! keyinfo="$(printf '%s\n' "$pubkey" | ssh-keygen -l -f - 2>/dev/null)"; then
-            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel — authorized_keys is" \
-                 "ONGEWIJZIGD gelaten." >&2
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel. $keep" >&2
         # sshd weigert RSA onder RequiredRSASize; zonder deze check zou de sleutel
         # met een geslaagd-melding weggeschreven worden en pas bij het inloggen
         # stukgaan, met "Permission denied (publickey)" als enige aanwijzing.
         elif [[ "$pubkey" == ssh-rsa\ * && "${keyinfo%% *}" -lt 3072 ]]; then
             echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is een RSA-sleutel van ${keyinfo%% *} bits; sshd eist er" \
-                 "minstens 3072 (RequiredRSASize). authorized_keys is ONGEWIJZIGD gelaten —" \
-                 "genereer bij voorkeur een ed25519-sleutel: ssh-keygen -t ed25519 -f ~/.ssh/kepler" >&2
+                 "minstens 3072 (RequiredRSASize). $keep" \
+                 "Genereer bij voorkeur een ed25519-sleutel: ssh-keygen -t ed25519 -f ~/.ssh/kepler" >&2
         elif ! mkdir -p "$HOME/.ssh" || ! chmod 700 "$HOME/.ssh"; then
             echo "WAARSCHUWING: $HOME/.ssh niet aanmaakbaar — Kepler kan niet inloggen." \
                  "Controleer de rechten op het claude-home volume." >&2
@@ -72,19 +81,23 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
         elif tmp="$HOME/.ssh/.authorized_keys.$$" &&
              printf '%s\n' "$pubkey" > "$tmp" && chmod 600 "$tmp" &&
              mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
-            echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
+            if [[ "${SSHD_STATUS:-running}" == running ]]; then
+                echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
+            else
+                echo "WAARSCHUWING: Kepler-pubkey weggeschreven, maar sshd luistert niet" \
+                     "(SSHD_STATUS=${SSHD_STATUS}) — zie de waarschuwing eerder in dit log." >&2
+            fi
         else
             rm -f "${tmp:-}"
             echo "WAARSCHUWING: authorized_keys niet kunnen schrijven (vol volume of rechten) —" \
                  "een bestaande sleutel is ongewijzigd gebleven." >&2
         fi
     elif [[ -s "$HOME/.ssh/authorized_keys" ]]; then
-        # Zelfbeheerd bestand: sshd weigert een authorized_keys of ~/.ssh die voor
-        # groep of anderen schrijfbaar is, en meldt dat alleen in zijn eigen log.
-        # Hier is het zichtbaar bij de start.
-        if [[ -n "$(find "$HOME/.ssh" -maxdepth 0 -perm /022)" ]] ||
-           [[ -n "$(find "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022)" ]]; then
-            echo "WAARSCHUWING: ~/.ssh of ~/.ssh/authorized_keys is schrijfbaar voor groep of anderen —" \
+        # Zelfbeheerd bestand: sshd loopt de hele keten tot en met de home-dir na
+        # en weigert elk niveau dat voor groep of anderen schrijfbaar is. Dat
+        # meldt hij alleen in zijn eigen log; hier is het zichtbaar bij de start.
+        if [[ -n "$(find "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022 2>/dev/null)" ]]; then
+            echo "WAARSCHUWING: $HOME, ~/.ssh of ~/.ssh/authorized_keys is schrijfbaar voor groep of anderen —" \
                  "sshd weigert de login daarop. Zet 'chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys'." >&2
         fi
     else

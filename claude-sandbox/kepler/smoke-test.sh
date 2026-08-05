@@ -92,7 +92,13 @@ dump_logs() {
     echo "Containerlog (relevante regels):"
     "$CLI" logs --tail 100 "$CONTAINER" 2>&1 | grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' || echo "  (niets gevonden)"
     echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
-    "$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>/dev/null || echo "  (niet leesbaar)"
+    # Eerst vaststellen dat de container nog draait: anders vervangt de
+    # fallback juist de foutregel die de oorzaak noemt.
+    if ! "$CLI" exec "$CONTAINER" true 2>/dev/null; then
+        echo "  (container draait niet meer — sshd-log niet op te halen)"
+    else
+        "$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log || echo "  (/var/log/sshd.log niet leesbaar)"
+    fi
 }
 
 # Eigen, wegwerpbare known_hosts: we testen de sandbox, niet je
@@ -156,7 +162,7 @@ ssh_timed_login() {
 ssh_timed_probe() { _timed ssh_run "zsh -c true"; }
 
 section "0. Container draait"
-if "$CLI" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
+if grep -qx "$CONTAINER" <<<"$("$CLI" ps --format '{{.Names}}' 2>/dev/null)"; then
     pass "container '$CONTAINER' draait"
 else
     echo "FOUT: container '$CONTAINER' draait niet. Start eerst (zie README 'Kepler (SSH-remote)')." >&2
@@ -319,16 +325,18 @@ else
     dump_logs >&2
     exit 1
 fi
-# Op de invariant die sshd echt afdwingt: niet schrijfbaar voor groep of
-# anderen. Exact 600/700 eisen zou het gedocumenteerde zelfbeheer-pad (var leeg
-# laten, bestand zelf beheren) onterecht rood maken.
+# Twee invarianten tegelijk. Eigendom: het bestand hoort in de gebruikersfase
+# geschreven te zijn, anders kan `claude` zijn eigen sleutels niet beheren —
+# sshd accepteert een root-eigen bestand namelijk gewoon, dus dat merk je
+# nergens anders. Rechten: sshd weigert wat voor groep of anderen schrijfbaar
+# is. Exact 600/700 eisen zou het zelfbeheer-pad onterecht rood maken.
 if "$CLI" exec -u claude "$CONTAINER" sh -c \
-    'test -r ~/.ssh/authorized_keys &&
-     test -z "$(find ~/.ssh -maxdepth 0 -perm /022)" &&
-     test -z "$(find ~/.ssh/authorized_keys -maxdepth 0 -perm /022)"'; then
-    pass "authorized_keys leesbaar en niet schrijfbaar voor groep/anderen"
+    'test -O /home/claude/.ssh && test -O /home/claude/.ssh/authorized_keys &&
+     test -z "$(find /home/claude/.ssh -maxdepth 0 -perm /022)" &&
+     test -z "$(find /home/claude/.ssh/authorized_keys -maxdepth 0 -perm /022)"'; then
+    pass "authorized_keys van claude en niet schrijfbaar voor groep/anderen"
 else
-    fail "authorized_keys ontbreekt of is schrijfbaar voor groep/anderen — sshd weigert de login daarop (chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys)"
+    fail "authorized_keys ontbreekt, is niet van claude (dan is hij in de root-fase geschreven) of is schrijfbaar voor groep/anderen (dan weigert sshd de login)"
 fi
 
 section "4. PATH in een non-interactieve sessie"
@@ -557,11 +565,19 @@ fi
 
 section "Sleutel uit .env geaccepteerd"
 # Anders is de run groen terwijl de entrypoint de nieuwe sleutel geweigerd heeft
-# en een oude authorized_keys van het volume het werk doet.
-if "$CLI" logs --tail 200 "$CONTAINER" 2>&1 | grep -q 'WAARSCHUWING.*KEPLER_SSH_PUBKEY'; then
-    fail "de entrypoint heeft KEPLER_SSH_PUBKEY geweigerd — je logt in met een oudere sleutel van het volume; zie de containerlog"
+# en een oude authorized_keys van het volume het werk doet. Positief toetsen op
+# de INFO-regel: dat dekt alle weigerpaden in één keer, ook de twee die de
+# naam van de variabele niet noemen. Geen --tail, en eerst de canary — een
+# afwezigheid in de logs bewijst niets als er geen logs zijn.
+START_LOGS="$("$CLI" logs "$CONTAINER" 2>&1 || true)"
+if [[ -z "${KEPLER_SSH_PUBKEY:-}" ]]; then
+    printf '  \033[33mINFO\033[0m KEPLER_SSH_PUBKEY niet gezet in deze shell — sleutelherkomst niet te toetsen\n'
+elif ! grep -q 'entrypoint OPEN_HTTPS:' <<<"$START_LOGS"; then
+    fail "containerlogs bevatten de entrypoint-start niet (logdriver leest niet, of logs zijn geroteerd) — of de sleutel uit .env geaccepteerd is, is niet vast te stellen"
+elif grep -q 'INFO: Kepler-pubkey naar .* geschreven' <<<"$START_LOGS"; then
+    pass "entrypoint heeft de sleutel uit .env weggeschreven"
 else
-    pass "geen waarschuwing over KEPLER_SSH_PUBKEY in de containerlog"
+    fail "entrypoint heeft KEPLER_SSH_PUBKEY niet weggeschreven — je logt mogelijk in met een oudere sleutel van het volume; zie de containerlog"
 fi
 
 section "Resultaat"
