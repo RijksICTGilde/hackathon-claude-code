@@ -1,7 +1,7 @@
 # Runtime-vereisten voor rootless Podman ín de sandbox op macOS met een
 # Podman-machine (applehv → Fedora CoreOS VM). Variant op
-# compose.override.podman-linux.yml; zie die file en de spec
-# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
+# compose.override.podman-linux.yml; zie die file en ADR 0001 §2.5 "Relaxaties
+# op de buitenste container".
 #
 # Verschil met de Linux/Ubuntu-override: de Fedora CoreOS VM heeft GEEN AppArmor
 # en GEEN userns-hardening (kernel.apparmor_restrict_unprivileged_userns ontbreekt),
@@ -9,31 +9,43 @@
 # apparmor=unconfined i.p.v. apparmor=claude-sandbox-podman, en setup-host.sh
 # overslaan. SELinux staat in deze VM WEL op Enforcing → label=disable blijft nodig.
 #
-# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml):
-#   podman compose -f compose.yml -f compose.override.macos.yml up --build -d
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml). Gebruik
+# podman-compose, NIET `podman compose`: dat laatste delegeert naar docker-compose
+# dat het seccomp-profiel inline meestuurt, waarna podman afkapt met "file name
+# too long" (zie de fallback-tabel in podman/README.md):
+#   BUILDAH_FORMAT=docker podman-compose -f compose.yml \
+#     -f compose.override.podman-macos.yml up --build -d --force-recreate
 services:
   claude:
     environment:
-      - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
+      # Client-env voor Testcontainers. Op containerniveau en niet in een
+      # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
+      # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
+      # Vaste uid 1000: de image draait als `claude`. Zie de motivatie per
+      # variabele in compose.override.podman-linux.yml.
+      - XDG_RUNTIME_DIR=/tmp/podman-run-1000
+      - DOCKER_HOST=unix:///tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_RYUK_DISABLED=true
+      - TESTCONTAINERS_HOST_OVERRIDE=localhost
     devices:
       # /dev/net/tun is in de Fedora CoreOS VM al aanwezig (pasta/slirp4netns tap).
       - "/dev/net/tun"
-      # Optioneel: /dev/fuse — alleen voor fuse-overlayfs (`PODMAN_STORAGE_DRIVER=
-      # overlay`). Uitgecommentarieerd (FUSE-kernel-aanvaloppervlak); vfs heeft het
-      # niet nodig. Bij overlay zonder dit device valt de entrypoint terug op vfs.
-      # - "/dev/fuse"
     security_opt:
       # Zie compose.override.podman-linux.yml voor de motivatie van deze seccomp-blocklist.
       # ABSOLUUT pad via ${PWD}: podman-compose geeft de string ongewijzigd door aan
       # `podman --security-opt seccomp=...`, en de podman-client leest het profiel
       # CLIENT-side (op de Mac) — een relatief pad resolvet daar niet betrouwbaar.
       # Draai compose dus vanuit claude-sandbox/, dan wijst ${PWD} naar deze map.
-      - "seccomp=${PWD}/host-agents/maven/podman/seccomp/podman-sandbox.json"
+      # ${PWD:?...}: is PWD niet gezet, dan faalt compose hard i.p.v. stil een pad
+      # vanaf filesystem-root te vormen (consistent met de :? -guards in compose.yml).
+      - "seccomp=${PWD:?draai compose vanuit claude-sandbox/}/podman/seccomp/podman-sandbox.json"
       # Geen AppArmor in de Fedora CoreOS VM → unconfined (het Linux-profiel
       # claude-sandbox-podman bestaat hier niet en zou de container-start breken).
       - "apparmor=unconfined"
       # SELinux staat op Enforcing in de Podman-machine VM → vereist.
       - "label=disable"
       # Heft de masked/RO /proc-paden op de outer container op, zodat de geneste
-      # container een eigen procfs mag mounten. Zie security-noot in de spec.
+      # container een eigen procfs mag mounten. ADR 0001 §2.5.3
+      # "systempaths=unconfined".
       - "systempaths=unconfined"

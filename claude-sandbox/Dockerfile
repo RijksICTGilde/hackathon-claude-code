@@ -1,4 +1,4 @@
-FROM debian:13.5-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8
+FROM debian:13.6-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -13,6 +13,7 @@ ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
 ARG INSTALL_PODMAN=false
+ARG PODMAN_MULTIUID=false
 ARG INSTALL_SSHD=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
@@ -25,7 +26,6 @@ RUN apt-get update && \
     curl \
     ca-certificates \
     procps \
-    sudo \
     fzf \
     zsh \
     man-db \
@@ -54,11 +54,11 @@ RUN apt-get update && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.16.0 && \
+RUN NODE_VERSION=v24.18.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9 ;; \
-      arm64) NODE_ARCH=arm64; SHA=524659219d6a207a7400f2bde15d19ba060ffbe0d32a8643319ad67e3bb64c78 ;; \
+      amd64) NODE_ARCH=x64;   SHA=55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742 ;; \
+      arm64) NODE_ARCH=arm64; SHA=58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -222,9 +222,9 @@ RUN case "$INSTALL_JVM" in \
 USER root
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
-  echo "claude ALL=(root) NOPASSWD: SETENV: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/claude-firewall && \
-  chmod 0440 /etc/sudoers.d/claude-firewall
+# Geen sudoers-regel: de firewall draait in de root-fase van de entrypoint, vóór
+# de drop naar `claude`. Zie ADR 0001 §2.3.1 "Firewall vóór de privilege-drop".
+RUN chmod +x /usr/local/bin/init-firewall.sh
 
 # Optioneel: OpenSSH-server zodat een externe orchestrator (GitKraken Kepler) via
 # SSH een Claude-agent-sessie ín deze sandbox kan draaien. Default uit — alleen
@@ -284,37 +284,45 @@ RUN case "$INSTALL_SSHD" in \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
-# Optioneel: rootless Podman voor Maven+Testcontainers ín de container
-# (alternatief voor de host-agent-bridge; zie docs/superpowers/specs/
-# 2026-06-10-maven-podman-in-docker-design.md). Default uit — alleen nodig als
-# je Testcontainers nested wil draaien i.p.v. via de host. Vereist runtime de
-# seccomp/apparmor-stand uit compose.override.podman.yml. Storage =
-# vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
-# fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
-# /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
+# Optioneel: rootless Podman voor Maven+Testcontainers ín de container. Default
+# uit. Bediening: claude-sandbox/podman/README.md. Afwegingen: ADR 0001 §2.2
+# "Bouwfase (image)".
 #
-# SINGLE-UID modus: het `sed` hieronder verwijdert bewust een eventuele
-# subuid/subgid-range voor `claude`. Op gehardende Ubuntu/Tuxedo faalt de
-# privileged newuidmap-range-write (zie spec, blokkade #2); zonder subuid-entry
-# mapt podman alleen de eigen uid als root (count 1) en gebruikt newuidmap niet.
+# De `sed` verwijdert de subuid/subgid-range voor `claude` (single-uid, default);
+# bij PODMAN_MULTIUID=true wordt hij er juist weer in gezet. Wat dat verschil
+# betekent staat in ADR 0001 §2.2.2 "Single-uid default, multi-uid opt-in".
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
-              podman fuse-overlayfs uidmap passt slirp4netns && \
+              podman uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
-            sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ;; \
+            { sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ; } && \
+            case "$PODMAN_MULTIUID" in \
+              true) echo "claude:100000:65536" >> /etc/subuid && \
+                    echo "claude:100000:65536" >> /etc/subgid ;; \
+              false) echo "INFO: PODMAN_MULTIUID=false — single-uid modus" ;; \
+              *) echo "FOUT: PODMAN_MULTIUID='$PODMAN_MULTIUID' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+            esac ;; \
       false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
+
+# Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
+# heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
+# kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.
+# Verwijder de regel dus niet als een build erop stukloopt — ADR 0001 §2.2.3
+# "Setuid-strip" beschrijft wat er dan open komt te staan.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
+      ! -name newuidmap ! -name newgidmap \
+      -exec chmod -s {} + 2>/dev/null || true
 
 USER claude
 
 # Rootless storage-config (vfs + single-uid). Komt mee via de claude-home volume
 # (gepopulate bij eerste run, zoals sdkman/.claude); de entrypoint schrijft 'm
-# ook op een bestaand volume. Default vfs = veilig (geen /dev/fuse / geen
-# kernel-FUSE-oppervlak). ignore_chown_errors is nodig in single-uid modus:
+# ook op een bestaand volume. ignore_chown_errors is nodig in single-uid modus:
 # images die naar uids buiten de enige gemapte uid chownen mogen niet hard falen.
 RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
       mkdir -p /home/claude/.config/containers && \
@@ -322,10 +330,37 @@ RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
         > /home/claude/.config/containers/storage.conf ; \
     fi
 
-# Startup script voor firewall
-COPY --chown=claude:claude entrypoint.sh /opt/entrypoint.sh
-RUN chmod +x /opt/entrypoint.sh
+# De container start als root zodat de firewall kan worden opgezet;
+# entrypoint-root.sh dropt daarna naar `claude`. Gevolg voor bediening: `docker
+# exec` zonder -u geeft een root-shell. Gebruik `docker exec -u claude` — de
+# root-shell waarschuwt daar zelf ook voor.
+USER root
+
+# Beide entrypoints zijn root-eigendom en niet schrijfbaar voor `claude`. Dat is
+# geen detail: entrypoint-root.sh draait als root bij elke container-start, dus
+# een door `claude` schrijfbaar bestand zou een privilege-escalatie zijn die bij
+# de volgende herstart afgaat.
+#
+# Geen COPY --chown/--chmod: die vlaggen vergen een recente BuildKit- of
+# buildah-frontend, en op macOS bouwen gebruikers met podman-compose. Een kale
+# COPY landt sowieso als root:root; de chmod doen we expliciet.
+COPY entrypoint-root.sh /opt/entrypoint-root.sh
+COPY entrypoint.sh /opt/entrypoint.sh
+RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh
+
+# Vangnet tegen de footgun hierboven: wie per ongeluk als root de container in
+# exec't, krijgt het te zien in plaats van ongemerkt als root te werken en
+# root-eigendom achter te laten in het claude-home volume. Systeembreed
+# (/etc/{bash.bashrc,zsh/zshrc}) en niet per-user, want de aangeraden shell is
+# zsh (root leest dan /root/.zshrc, niet .bashrc) en een systeembreed rc-bestand
+# dekt bash én zsh, login én non-login.
+RUN mkdir -p /etc/zsh && { \
+      echo 'if [ -t 1 ] && [ "$(id -u)" -eq 0 ]; then'; \
+      echo '  echo "LET OP: je bent root in de sandbox. Claude en projectcode horen als claude te draaien."'; \
+      echo '  echo "Gebruik: docker exec -tiu claude claude-sandbox zsh"'; \
+      echo 'fi'; \
+    } | tee -a /etc/bash.bashrc >> /etc/zsh/zshrc
 
 WORKDIR /home/claude/projects
 
-ENTRYPOINT ["/opt/entrypoint.sh"]
+ENTRYPOINT ["/opt/entrypoint-root.sh"]

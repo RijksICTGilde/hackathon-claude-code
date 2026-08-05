@@ -14,15 +14,11 @@ docker exec -tiu claude claude-sandbox bash   # werkt ook vanuit andere director
 
 Daarna kun je claude starten met `claude-danger`.
 
-> **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Start met beide files, bv. op macOS:
-> ```
-> podman-compose -f compose.yml -f compose.override.podman-macos.yml up -d --force-recreate
-> ```
-> Zie [host-agents/maven/podman/README.md](host-agents/maven/podman/README.md) voor de per-OS-matrix (Linux/Tuxedo/macOS). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen. Gebruik je óók `INSTALL_SSHD=true`, geef dan beide overrides mee — zie [Kepler (SSH-remote)](#kepler-ssh-remote).
+> **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Het exacte startcommando verschilt per OS en staat in [podman/README.md](podman/README.md). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen. Gebruik je óók `INSTALL_SSHD=true`, geef dan beide overrides mee — zie [Kepler (SSH-remote)](#kepler-ssh-remote).
 
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
-- [Maven MCP-agent (host-side)](docs/maven-mcp-agent.md) — voor Maven-builds die de host-Docker nodig hebben (Testcontainers e.d.).
+- [Maven en Testcontainers via podman](podman/README.md) — Testcontainers draait ín de sandbox, via rootless podman. Er is geen host-side agent meer. Niet elk platform is ondersteund; zie de platformtabel daar.
 - [Firewall](#firewall) — netwerk-beperkingen van de container.
 
 > **LET OP**: Bij wijziging in environment variabelen moet ook het volume verwijderd en opnieuw aangemaakt worden. Dit
@@ -33,8 +29,12 @@ Verder lezen:
 Er is een native versie van Claude geinstalleerd.
 
 Er wordt een directory `projects` aangemaakt (als die er nog niet is), daarin kun je je projecten uitchecken en
-bewerken, dit is een volume mount van een lokale directory, op deze manier kun je ook buiten docker naar deze directory
-navigeren en de applicatie bouwen, testen of opstarten bijvoorbeeld.
+bewerken. Dit is een volume mount van een lokale directory, zodat je ook buiten docker bij deze bestanden kunt.
+
+> **Let op:** Claude schrijft in deze map, inclusief `pom.xml`, `mvnw`, `Makefile`, `package.json`-scripts en
+> git-hooks. Draai host-side build-tooling (`mvn`, `npm`, `make`) niet blind op deze map na een Claude-sessie — dat
+> voert die bestanden uit met jouw host-rechten (issue #44). Draai builds en tests ín de sandbox; voor Testcontainers
+> zie [podman/README.md](podman/README.md).
 
 De image bevat een firewall die uitgaand verkeer beperkt. Zie [Firewall](#firewall) voor details.
 
@@ -181,7 +181,7 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
      -f compose.override.kepler.yml \
      up --build -d
    ```
-   De twee overrides botsen niet: kepler zet alleen `ports` + `environment`, podman alleen `devices`/`security_opt` + `environment`, en `environment` merget per key. Verifieer het resultaat met `docker compose -f ... config` — check dat `ports`, `/dev/net/tun`, alle vier de `security_opt`-entries en beide env-vars erin staan. Op macOS gebruik je `compose.override.podman-macos.yml`; zie de per-OS-matrix in [host-agents/maven/podman/README.md](host-agents/maven/podman/README.md).
+   De twee overrides botsen niet: kepler zet alleen `ports` + `environment`, podman alleen `devices`/`security_opt` + `environment`, en `environment` merget per key. Verifieer het resultaat met `docker compose -f ... config` — check dat `ports`, `/dev/net/tun`, alle vier de `security_opt`-entries en beide env-vars erin staan. Op macOS gebruik je `compose.override.podman-macos.yml`; zie de per-OS-matrix in [podman/README.md](podman/README.md).
 3. **Claude authenticeren** (eenmalig, persist in het volume):
    ```
    docker exec -it claude-sandbox claude login
