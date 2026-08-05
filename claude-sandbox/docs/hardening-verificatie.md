@@ -25,7 +25,7 @@ docker exec -tiu claude claude-sandbox bash
 | `echo test > /proc/sys/kernel/core_pattern` | `Permission denied` |
 | `cat /proc/self/status \| grep CapEff` | `CapEff: 0000000000000000` |
 | `cat /proc/self/attr/current` | `claude-sandbox-podman (enforce)` op een gehardende Linux-host; `unconfined` op macOS/Rancher (VM-grens eronder). **Nooit `(complain)`** — de entrypoint hoort daar al op te falen |
-| `find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null` | alleen `newuidmap`, `newgidmap`, `fusermount3` — geen `su`/`mount`/`passwd`/… |
+| `find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null` | alleen `newuidmap`, `newgidmap` — geen `su`/`mount`/`passwd`/`fusermount3`/… |
 | `getcap -r / 2>/dev/null` | geen binary met `cap_sys_admin`/`cap_setuid` buiten wat rootless podman nodig heeft — de setuid-strip raakt géén file-capabilities, dus hier apart controleren |
 
 De `core_pattern`-write, het enforce-profiel en de setuid-enumeratie zijn de

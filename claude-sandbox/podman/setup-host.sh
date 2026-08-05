@@ -15,8 +15,8 @@ PROFILE_DST="/etc/apparmor.d/claude-sandbox-podman"
 
 echo "== Host-setup: rootless Podman-in-Docker =="
 
-# 1. Kernel-devices: /dev/fuse (fuse-overlayfs storage) en /dev/net/tun (rootless
-# netwerk-tap). Ontbreken ze, dan proberen we de module te laden.
+# 1. Kernel-device: /dev/net/tun (rootless netwerk-tap voor pasta). Ontbreekt hij,
+# dan proberen we de module te laden.
 ensure_device() {
     local dev="$1" mod="$2"
     if [[ -e "$dev" ]]; then
@@ -30,7 +30,6 @@ ensure_device() {
         fi
     fi
 }
-ensure_device /dev/fuse fuse
 ensure_device /dev/net/tun tun
 
 # 2. userns-hardening melden (informatief)

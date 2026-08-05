@@ -94,16 +94,14 @@ Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
    Dit installeert `claude-sandbox-podman` in `/etc/apparmor.d/` en laadt het.
    De override verwijst ernaar; zonder dit faalt de container-start met
    "AppArmor profile not found". **Vereist sudo op de host** (installeert een
-   profiel in `/etc/apparmor.d/` en laadt de kernelmodules `fuse`/`tun`) — op
+   profiel in `/etc/apparmor.d/` en laadt de kernelmodule `tun`) — op
    een beheerde werkplek zonder lokale admin lukt deze stap niet.
 3. Image bouwen + starten met de runtime-override (seccomp, apparmor, netwerk):
    ```
    cd claude-sandbox
    docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d --force-recreate
    ```
-   Storage is default `vfs` (veilig, geen `/dev/fuse`). Sneller? Zet in `.env`
-   `PODMAN_STORAGE_DRIVER=overlay` én uncomment de `/dev/fuse`-device in de
-   override (fuse-overlayfs; groter kernel-aanvaloppervlak), en recreate. Wisselen
+   Storage is altijd `vfs`. Wisselen
    vereist eenmalig `podman system reset` in de container.
 4. JDK+Maven in de container (eenmalig, blijft in het claude-home volume):
    ```
@@ -198,7 +196,7 @@ oorzaak weg is. Zie de `no_new_privs`-rij in de fallback-tabel.
 Bevestigd (2026-07-31). Rancher draait een Lima-VM met Alpine en rootful dockerd;
 de container zit in de init-userns. Die VM heeft **geen AppArmor en geen SELinux**
 (`/sys/kernel/security/lsm` → `lockdown,capability,landlock`), geen
-userns-hardening, en `/dev/net/tun` + `/dev/fuse` staan er allebei. Er is dus
+userns-hardening, en `/dev/net/tun` is aanwezig. Er is dus
 **niets op de host in te stellen** — geen `setup-host.sh`, geen sysctl, geen
 subuid-range op de host.
 
@@ -265,7 +263,6 @@ in de sandbox.
 | `unshare ... uid_map: Operation not permitted` of `podman info` faalt op userns | host-hardening blokkeert userns; profiel niet (goed) geladen | `setup-host.sh` gedraaid? `cat /proc/self/attr/current` in de container → moet `claude-sandbox-podman` zijn. Container ná het laden **recreaten** (`--force-recreate`) — de AppArmor-mediatie klikt vast bij start. |
 | `newuidmap: write to uid_map failed: Operation not permitted` | multi-uid (subuid-entry aanwezig) zonder `CAP_SYS_ADMIN` | óf `compose.override.podman-multiuid.yml` meestapelen, óf terug naar single-uid (`PODMAN_MULTIUID=false` + rebuild). Check `cat /etc/subuid` in de container: `claude:`-regel = multi-uid. De entrypoint waarschuwt hier bij de start al voor. |
 | `chown: ...: Invalid argument` bij een DB-image, of Testcontainers meldt `Container did not start correctly` | single-uid: de image chownt naar een uid die niet in de namespace bestaat | multi-uid aanzetten — zie "Multi-uid (opt-in)" hierboven |
-| `podman info` faalt op storage / `overlay` werkt niet | `PODMAN_STORAGE_DRIVER=overlay` maar `/dev/fuse`-device niet doorgegeven | entrypoint valt automatisch terug op vfs + waarschuwt; uncomment de `/dev/fuse`-device in de override of blijf op `vfs` (default) |
 | `pasta failed: Failed to open() /dev/net/tun` | rootless netwerk-backend mist het tun-device | override geeft `/dev/net/tun` door; ontbreekt het op de host: `sudo modprobe tun`. NET_ADMIN heeft de sandbox al. |
 | `crun: open /proc/sys/net/ipv4/ping_group_range: Read-only file system` | podman zet default deze sysctl; `/proc/sys` is RO in de outer container | `~/.config/containers/containers.conf` → `[containers]\ndefault_sysctls = []` (entrypoint schrijft dit bij start) |
 | `podman info` toont `uidmap=[{0 1000 1}]` terwijl `/etc/subuid` een `claude:`-regel heeft én `CAP_SYS_ADMIN` er is; DB-images falen op `chown: Invalid argument` | een pause-proces dat single-uid is aangemaakt. Alle latere podman-commando's joinen dat proces, dus de degradatie plakt vast. Ontstaat als het éérste podman-commando `newuidmap` niet kon gebruiken — bv. onder `no_new_privs`, waar een setuid-root-binary geen privileges meer wint (reproduceerbaar met `setpriv --no-new-privs podman info`) | `podman system migrate` en de podman-socket herstarten; of simpelweg de container recreaten — de entrypoint zet de namespace bij de start goed. Draait er een gezond pause-proces, dan joinen ook `no_new_privs`-aanroepen dát en gaat het weer goed |

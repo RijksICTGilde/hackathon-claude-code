@@ -6,9 +6,6 @@
 services:
   claude:
     environment:
-      # Storage-driver, via .env. vfs (default, veilig) of overlay (fuse-overlayfs,
-      # sneller). Entrypoint genereert storage.conf hieruit.
-      - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
       # Client-env voor Testcontainers. Op containerniveau en niet in een
       # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
       # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
@@ -33,12 +30,6 @@ services:
       # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
       # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
       - "/dev/net/tun"
-      # Optioneel: /dev/fuse — alleen nodig voor de snellere fuse-overlayfs-driver
-      # (`PODMAN_STORAGE_DRIVER=overlay` in .env). Uitgecommentarieerd want het
-      # vergroot het kernel-aanvaloppervlak (FUSE-CVE's); default-storage vfs heeft
-      # het niet nodig. Vergeet je dit bij overlay, dan valt de entrypoint terug op
-      # vfs met een waarschuwing — geen broken start.
-      # - "/dev/fuse"
     security_opt:
       # Tailored seccomp-blocklist i.p.v. unconfined. defaultAction=ALLOW (zodat
       # podman's clone/unshare/mount/setns werken — Docker-default seccomp brak

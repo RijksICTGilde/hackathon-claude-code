@@ -231,10 +231,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 # docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
 # Default uit — alleen nodig als je Testcontainers nested wil draaien. Vereist
 # runtime de seccomp/apparmor-stand uit compose.override.podman-linux.yml of
-# -macos.yml (zie claude-sandbox/podman/README.md). Storage =
-# vfs (geen /dev/fuse nodig); fuse-overlayfs is optioneel voor snelheid.
-# fuse-overlayfs wordt wél geïnstalleerd zodat opt-in alleen storage.conf +
-# /dev/fuse vergt (geen rebuild); zonder /dev/fuse is de binary inert.
+# -macos.yml (zie claude-sandbox/podman/README.md).
 #
 # SINGLE-UID (default): het `sed` hieronder verwijdert een eventuele
 # subuid/subgid-range voor `claude`. Zonder subuid-entry mapt podman alleen de
@@ -252,7 +249,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
-              podman fuse-overlayfs uidmap passt slirp4netns && \
+              podman uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
             { sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ; } && \
             case "$PODMAN_MULTIUID" in \
@@ -266,8 +263,7 @@ RUN case "$INSTALL_PODMAN" in \
     esac
 
 # Strip setuid/setgid-bits, behalve op de helpers die rootless podman echt nodig
-# heeft: newuidmap/newgidmap (multi-uid uid-mapping) en fusermount3 (de optionele
-# fuse-overlayfs-storage). Waarom: de privilege-drop in entrypoint-root.sh laat
+# heeft: newuidmap/newgidmap (multi-uid uid-mapping). Waarom: de privilege-drop in entrypoint-root.sh laat
 # bewust --no-new-privs weg (dat breekt newuidmap), dus zonder deze strip kan
 # `claude` na de drop euid 0 winnen via élke setuid-root-binary (su, mount, passwd,
 # ...). De kernel vult bij zo'n setuid-exec de permitted caps uit de bounding set —
@@ -279,15 +275,14 @@ RUN case "$INSTALL_PODMAN" in \
 # deze binaries. Geverifieerd worden gestript: su, mount, umount, passwd, chsh,
 # chfn, chage, expiry, gpasswd, newgrp, ssh-agent, ssh-keysign, unix_chkpwd.
 RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
-      ! -name newuidmap ! -name newgidmap ! -name fusermount3 \
+      ! -name newuidmap ! -name newgidmap \
       -exec chmod -s {} + 2>/dev/null || true
 
 USER claude
 
 # Rootless storage-config (vfs + single-uid). Komt mee via de claude-home volume
 # (gepopulate bij eerste run, zoals sdkman/.claude); de entrypoint schrijft 'm
-# ook op een bestaand volume. Default vfs = veilig (geen /dev/fuse / geen
-# kernel-FUSE-oppervlak). ignore_chown_errors is nodig in single-uid modus:
+# ook op een bestaand volume. ignore_chown_errors is nodig in single-uid modus:
 # images die naar uids buiten de enige gemapte uid chownen mogen niet hard falen.
 RUN if [ "$INSTALL_PODMAN" = "true" ]; then \
       mkdir -p /home/claude/.config/containers && \

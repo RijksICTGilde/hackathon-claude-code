@@ -18,7 +18,6 @@
 services:
   claude:
     environment:
-      - PODMAN_STORAGE_DRIVER=${PODMAN_STORAGE_DRIVER:-vfs}
       # Client-env voor Testcontainers. Op containerniveau en niet in een
       # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
       # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
@@ -32,10 +31,6 @@ services:
     devices:
       # /dev/net/tun is in de Fedora CoreOS VM al aanwezig (pasta/slirp4netns tap).
       - "/dev/net/tun"
-      # Optioneel: /dev/fuse — alleen voor fuse-overlayfs (`PODMAN_STORAGE_DRIVER=
-      # overlay`). Uitgecommentarieerd (FUSE-kernel-aanvaloppervlak); vfs heeft het
-      # niet nodig. Bij overlay zonder dit device valt de entrypoint terug op vfs.
-      # - "/dev/fuse"
     security_opt:
       # Zie compose.override.podman-linux.yml voor de motivatie van deze seccomp-blocklist.
       # ABSOLUUT pad via ${PWD}: podman-compose geeft de string ongewijzigd door aan
