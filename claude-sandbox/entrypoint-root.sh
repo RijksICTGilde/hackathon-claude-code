@@ -54,15 +54,9 @@ esac
 # gebeurt vóór de drop, zodat `claude` daarna geen weg terug heeft. Ná
 # init-firewall.sh, zodat de poort niet openstaat vóór de INPUT-regels er zijn.
 #
-# Host-keys op het volume in plaats van in de image: een privésleutel in een
-# image-layer geeft iedereen met die image de identiteit van elke container die
-# eruit draait. Op het volume overleeft de sleutel een image-rebuild, dus Kepler
-# houdt dezelfde known_hosts-entry.
-#
-# Het pad wordt elke start gecontroleerd. `/home/claude` is van `claude`, dus
-# niets daaronder is te vertrouwen: sshd accepteert een host-key van een andere
-# user zonder morren, waarmee de ingesloten partij zou kiezen welke identiteit
-# Kepler in known_hosts pint.
+# Host-keys op het volume in plaats van in de image (ADR 0001 §2.3.4). Het pad
+# wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
+# accepteert een host-key van een andere user zonder morren.
 #
 # -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
 # vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het

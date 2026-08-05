@@ -52,9 +52,16 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
                  "ONGEWIJZIGD gelaten. Verwacht de kále inhoud van je .pub-bestand" \
                  "('ssh-ed25519 AAAA... kepler'): geen regel uit known_hosts (hostnaam ervoor), geen" \
                  "authorized_keys-regel met command=/permitopen=, geen pad en geen privésleutel." >&2
-        elif ! printf '%s\n' "$pubkey" | ssh-keygen -l -f - >/dev/null 2>&1; then
+        elif ! keyinfo="$(printf '%s\n' "$pubkey" | ssh-keygen -l -f - 2>/dev/null)"; then
             echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel — authorized_keys is" \
                  "ONGEWIJZIGD gelaten." >&2
+        # sshd weigert RSA onder RequiredRSASize; zonder deze check zou de sleutel
+        # met een geslaagd-melding weggeschreven worden en pas bij het inloggen
+        # stukgaan, met "Permission denied (publickey)" als enige aanwijzing.
+        elif [[ "$pubkey" == ssh-rsa\ * && "${keyinfo%% *}" -lt 3072 ]]; then
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is een RSA-sleutel van ${keyinfo%% *} bits; sshd eist er" \
+                 "minstens 3072 (RequiredRSASize). authorized_keys is ONGEWIJZIGD gelaten —" \
+                 "genereer bij voorkeur een ed25519-sleutel: ssh-keygen -t ed25519 -f ~/.ssh/kepler" >&2
         elif ! mkdir -p "$HOME/.ssh" || ! chmod 700 "$HOME/.ssh"; then
             echo "WAARSCHUWING: $HOME/.ssh niet aanmaakbaar — Kepler kan niet inloggen." \
                  "Controleer de rechten op het claude-home volume." >&2

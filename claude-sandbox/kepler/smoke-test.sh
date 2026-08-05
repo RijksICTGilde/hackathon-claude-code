@@ -63,7 +63,7 @@ command -v "$CLI" >/dev/null || { echo "FOUT: container-CLI '$CLI' niet gevonden
 # Poorten vroeg afvangen: een niet-numerieke waarde komt anders pas veel later
 # naar boven als een ssh-fout over een 'bad forwarding specification'.
 for _p in "PORT:$PORT" "TUNNEL_PORT:$TUNNEL_PORT"; do
-    [[ "${_p#*:}" =~ ^[0-9]+$ ]] && [[ "${_p#*:}" -ge 1 && "${_p#*:}" -le 65535 ]] ||
+    [[ "${_p#*:}" =~ ^[1-9][0-9]*$ ]] && [[ "${_p#*:}" -le 65535 ]] ||
         { echo "FOUT: ${_p%%:*}='${_p#*:}' is geen geldig poortnummer." >&2; exit 2; }
 done
 
@@ -234,9 +234,7 @@ else
     fail "setuid/setgid-binary aangetroffen — de strip in de Dockerfile draait niet ná alle apt-installs"
 fi
 
-# De host-key hoort bij eerste start op het volume te ontstaan, niet in de
-# image: een privesleutel in een layer geeft iedereen met die image de
-# identiteit van elke container die eruit draait.
+# Host-key hoort op het volume te ontstaan, niet in de image (ADR 0001 §2.3.4).
 if "$CLI" exec "$CONTAINER" sh -c '! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'; then
     pass "geen host-keys in /etc/ssh (die horen op het volume te staan)"
 else
@@ -301,6 +299,7 @@ else
     echo "FOUT: SSH-login mislukt op $HOST:$PORT. Draai 'ssh -v -i $KEY -p $PORT claude@$HOST' voor de reden." >&2
     echo "  - 'Permission denied (publickey)' → key hoort niet bij KEPLER_SSH_PUBKEY; check .env en de entrypoint-logs." >&2
     echo "  - 'Connection refused' terwijl de poort gepubliceerd is → probeer 127.0.0.1 i.p.v. een hostnaam (IPv4-only forward)." >&2
+    echo "  - RSA-sleutel kleiner dan 3072 bits → sshd weigert 'm (RequiredRSASize); gebruik ed25519." >&2
     exit 1
 fi
 # StrictModes weigert een authorized_keys die de inlogger niet bezit. Los
@@ -467,10 +466,9 @@ else
 fi
 
 section "8b. Tunnel naar de container (-L)"
-# Dit is wat Kepler feitelijk doet, en het enige dat PermitOpen kan breken:
-# sshd vergelijkt de bestemming met strcmp, dus een client die 127.0.0.1 stuurt
-# matcht niet op een regel die alleen `localhost` toestaat. Een configcheck
-# vangt dat niet — alleen een echte forward.
+# Wat Kepler feitelijk doet. Een configcheck volstaat hier niet: sshd vergelijkt
+# de bestemming letterlijk, dus of PermitOpen de juiste vormen dekt blijkt pas
+# uit een echte forward.
 if { exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT"; } 2>/dev/null; then
     exec 3<&-
     # Rood i.p.v. gokken: luistert hier al iets, dan meet de banner-check dat

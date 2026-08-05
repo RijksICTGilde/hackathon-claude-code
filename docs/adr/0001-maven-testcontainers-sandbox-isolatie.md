@@ -137,6 +137,26 @@ De bescherming die `--no-new-privs` zou geven, komt in plaats daarvan van de
 setuid-strip uit §2.2.3. De bounding set blijft staan omdat setuid-root
 `newuidmap` daar in de multi-uid opt-in `CAP_SYS_ADMIN` uit moet kunnen trekken.
 
+#### 2.3.4 Optionele sshd in de rootfase
+
+`INSTALL_SSHD=true` bouwt een OpenSSH-server mee; `ENABLE_SSHD=true` (gezet door
+`compose.override.kepler.yml`) start hem. De schakelaar is de runtime-var en niet
+de aanwezigheid van de binary, zodat een image die één keer met de toggle
+gebouwd is niet bij elke start een poort openzet.
+
+De start staat hier om dezelfde reden als de firewall: sshd bindt poort 22 en
+heeft root nodig voor zijn privilege separation, en na de drop is dat er niet
+meer. Hij draait wel met een verkleinde bounding set (`-net_admin,-net_raw`) —
+die capabilities heeft de container voor de firewall, en een pre-auth-lek in
+OpenSSH zou er anders `iptables -F` mee kunnen doen.
+
+Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
+image: een privésleutel in een layer geeft iedereen met die image de identiteit
+van elke container die eruit draait. Omdat `/home/claude` van `claude` is, wordt
+type en eigendom van dat pad elke start gecontroleerd. `authorized_keys` schrijft
+`entrypoint.sh` ná de drop, zodat het bestand van de inlogger is — StrictModes
+weigert het anders.
+
 ### 2.4 Gebruikersfase
 
 Vanaf hier draait alles als `claude`. `entrypoint.sh` weigert te starten als het
@@ -319,6 +339,15 @@ dat wel.
   `/proc/sys`-usermode-helper-escapeklasse, niet elke capability van
   container-root. De proc-mount-bypass in het profiel zelf blokkeren vergt
   vermoedelijk een child-profiel voor de geneste runtime.
+- **De optionele sshd** (§2.3.4) voegt inbound oppervlak toe. De poort wordt
+  host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
+  luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
+  een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
+  draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
+  gecompromitteerde sessie. `openssh-server` komt bovendien ongepind uit apt en
+  valt buiten Dependabot en de Trivy-filesystemscan, waardoor regelmatig
+  herbouwen hier een beveiligingseis is in plaats van hygiëne. Draai deze opt-in
+  bij voorkeur in een VM.
 - **Kernel-escapes** blijven buiten bereik van al deze maatregelen.
 
 ### 4.3 Welke laag welke escape sluit

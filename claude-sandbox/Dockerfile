@@ -260,10 +260,9 @@ RUN case "$INSTALL_PODMAN" in \
 # apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
 # over de openssh-bestanden gaat.
 #
-# Geen host-keys in de image: dat zijn privésleutels, en wie de image heeft zou
-# de sandbox anders kunnen impersoneren tegenover Kepler. entrypoint-root.sh
-# maakt ze bij eerste start op het claude-home volume. De `rm` is nodig omdat
-# Debians openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
+# Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
+# eerste start op het volume. De `rm` is nodig omdat Debians
+# openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
 #
 # PATH-fix in zshenv: een non-interactieve SSH-sessie erft de Docker `ENV PATH`
 # niet, dus `claude` in ~/.local/bin zou "command not found" geven. zsh is de
@@ -275,12 +274,10 @@ RUN case "$INSTALL_PODMAN" in \
 # onderhandelt OpenSSH sowieso geen aparte MAC, maar hij vangt een latere
 # cipher-wijziging af.
 #
-# PermitOpen: `AllowTcpForwarding local` laat `-L` naar élke bestemming toe die
-# de firewall doorlaat, en OUTPUT accepteert het hele bridge-subnet. Zonder deze
-# regel kan een sessie langs de loopback-publish heen pivoten naar de
-# docker-gateway en naar buurcontainers. Alle drie de loopback-vormen staan
-# erin omdat sshd de bestemming met strcmp vergelijkt — geen naamresolutie, dus
-# een client die `127.0.0.1` stuurt matcht niet op `localhost`.
+# PermitOpen houdt `-L` binnen de container; zonder die regel reikt een forward
+# tot alles wat de firewall doorlaat, inclusief de docker-gateway. Alle drie de
+# loopback-vormen, want sshd vergelijkt de bestemming letterlijk: een client die
+# `127.0.0.1` stuurt matcht niet op `localhost`.
 #
 # PerSourcePenalties uit: achter een NAT/port-forward deelt elke client één
 # bron-IP, en Keplers kortlevende tunnel-connecties tellen als afgebroken
@@ -351,7 +348,7 @@ RUN case "$INSTALL_SSHD" in \
 
 # Vangnet op de invariant hierboven: de wegwerpsleutel van de configcontrole
 # hoort in dezelfde laag opgeruimd te zijn. Herordent iemand die keten, dan komt
-# er stil weer privesleutelmateriaal in de image te staan.
+# er stil weer privésleutelmateriaal in de image te staan.
 RUN test ! -e /home/claude/.ssh-host
 
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
