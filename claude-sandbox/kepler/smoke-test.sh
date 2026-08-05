@@ -85,7 +85,12 @@ TUNNEL_PID=""
 # tweede trap-string zou bij uitbreiding stilletjes uit elkaar lopen.
 cleanup() {
     rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"}
-    [[ -n "$TUNNEL_PID" ]] && kill "$TUNNEL_PID" 2>/dev/null
+    # `if` en niet `&&`: onder set -e breekt een mislukte kill de functie af
+    # vóór de return, en dan erft het script die exit-code — een geslaagde run
+    # zou zo alsnog rood aflopen.
+    if [[ -n "$TUNNEL_PID" ]]; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
+    fi
     return 0
 }
 trap cleanup EXIT
