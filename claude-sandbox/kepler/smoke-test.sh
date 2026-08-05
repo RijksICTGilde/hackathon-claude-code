@@ -111,14 +111,16 @@ dump_logs() {
 # Eigen, wegwerpbare known_hosts: we testen de sandbox, niet je
 # known_hosts-hygiëne. De host-key staat op het volume en overleeft een rebuild,
 # maar niet een volume-recreate.
-KNOWN_HOSTS="$(mktemp)"
+KNOWN_HOSTS="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
 TUNNEL_ERR=""
 TUNNEL_PID=""
 KEY_ERR=""
+OPEN_HTTPS_ERR=""
+SSHD_T_ERR=""
 # Eén opruimpunt: de tunneltest verderop start een achtergrondproces, en een
 # tweede trap-string zou bij uitbreiding stilletjes uit elkaar lopen.
 cleanup() {
-    rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"} ${KEY_ERR:+"$KEY_ERR"}
+    rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"} ${KEY_ERR:+"$KEY_ERR"} ${OPEN_HTTPS_ERR:+"$OPEN_HTTPS_ERR"} ${SSHD_T_ERR:+"$SSHD_T_ERR"}
     # `if` en niet `&&`: onder set -e breekt een mislukte kill de functie af
     # vóór de return, en dan erft het script die exit-code — een geslaagde run
     # zou zo alsnog rood aflopen.
@@ -380,9 +382,10 @@ section "5. Hardening — de effectieve serverconfig"
 # client met BatchMode=yes biedt wachtwoord-auth sowieso niet aan, en root wordt
 # al door AllowUsers geweigerd. Zulke pogingen falen dus ook op een server
 # zonder hardening — ze bewijzen niets.
-EFFECTIVE="$("$CLI" exec "$CONTAINER" sshd -T 2>/dev/null || true)"
+SSHD_T_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
+EFFECTIVE="$("$CLI" exec "$CONTAINER" sshd -T 2>"$SSHD_T_ERR")" || true
 if [[ -z "$EFFECTIVE" ]]; then
-    fail "'sshd -T' gaf geen output — config onleesbaar of sshd niet in de image"
+    fail "'sshd -T' gaf geen output: $(tr '\n' ' ' <"$SSHD_T_ERR") (een regel als 'Bad configuration option' wijst naar sshd_config.d/kepler.conf)"
 else
     for directive in \
         'passwordauthentication no' \
@@ -495,14 +498,22 @@ fi
 # OPEN_HTTPS uit de container lezen i.p.v. het verschil open te laten: met
 # OPEN_HTTPS=true is bereikbaar verwacht gedrag, met false is het een lek — en
 # dat laatste mag geen groene run opleveren.
-# Niet `|| echo false`: bij een exec-fout zou dat een waarde verzinnen waarop
-# hieronder een lek gemeld wordt. Leeg betekent hier "onbekend".
-OPEN_HTTPS_VAL="$("$CLI" exec "$CONTAINER" printenv OPEN_HTTPS 2>/dev/null)" || OPEN_HTTPS_VAL=""
+# Drie uitkomsten uit elkaar houden: gezet, niet gezet (compose injecteert de
+# var dan niet en init-firewall valt terug op false — bereikbaar is dus een
+# lek), en een fout van de CLI (dan valt er niets te concluderen).
+OPEN_HTTPS_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
+open_https_rc=0
+OPEN_HTTPS_VAL="$("$CLI" exec "$CONTAINER" printenv OPEN_HTTPS 2>"$OPEN_HTTPS_ERR")" || open_https_rc=$?
+if [[ "$open_https_rc" -ne 0 && -s "$OPEN_HTTPS_ERR" ]]; then
+    OPEN_HTTPS_VAL="<onleesbaar>"
+elif [[ "$open_https_rc" -ne 0 ]]; then
+    OPEN_HTTPS_VAL=false
+fi
 if ssh_run 'curl -sS --max-time 5 -o /dev/null https://example.com' >/dev/null 2>&1; then
     if [[ "$OPEN_HTTPS_VAL" == true ]]; then
         printf '  \033[33mINFO\033[0m example.com bereikbaar — verwacht bij OPEN_HTTPS=true\n'
-    elif [[ -z "$OPEN_HTTPS_VAL" ]]; then
-        fail "example.com bereikbaar en OPEN_HTTPS niet uit de container te lezen — of dit een lek is, is niet vast te stellen"
+    elif [[ "$OPEN_HTTPS_VAL" == "<onleesbaar>" ]]; then
+        fail "example.com bereikbaar en OPEN_HTTPS niet uit de container te lezen ($(tr '\n' ' ' <"$OPEN_HTTPS_ERR")) — of dit een lek is, is niet vast te stellen"
     else
         fail "example.com bereikbaar terwijl OPEN_HTTPS=$OPEN_HTTPS_VAL — de egress-allowlist lekt"
     fi
@@ -521,7 +532,7 @@ if { exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT"; } 2>/dev/null; then
     # opgezet.
     fail "poort $TUNNEL_PORT is al bezet op deze host — de tunnel is niet te testen; ruim een blijven hangen 'ssh -N -L' naar deze poort op (--tunnel-port kiest een andere)"
 else
-    TUNNEL_ERR="$(mktemp)"
+    TUNNEL_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
     ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
         -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
@@ -589,15 +600,16 @@ section "Sleutel uit .env geaccepteerd"
 # stdout en stderr gescheiden houden: `2>&1` zou een WARN-regel van de CLI
 # (podman doet dat routinematig) vóór de vingerafdruk zetten, waarna de
 # vergelijking vals-rood geeft met een zeer stellige, onjuiste diagnose.
-KEY_ERR="$(mktemp)"
+KEY_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
 # `|| want_rc=$?` en niet een losse `$?`: onder set -e breekt een toewijzing met
 # een falend commando het script af, en rc 1 is hier het normale geval (var niet
 # gezet bij een zelfbeheerde opzet).
 want_rc=0
 WANT="$("$CLI" exec "$CONTAINER" printenv KEPLER_SSH_PUBKEY 2>"$KEY_ERR")" || want_rc=$?
-if [[ "$want_rc" -gt 1 ]]; then
-    # printenv geeft 1 als de var niet gezet is; alles daarboven is een fout van
-    # de CLI en mag niet als "zelfbeheerde opzet" gerapporteerd worden.
+# Niet alleen op de exit-code afgaan: welke code een CLI voor een daemon-fout
+# teruggeeft verschilt per implementatie, en 1 betekent bij printenv juist
+# "niet gezet". Lege stderr is het betrouwbare onderscheid.
+if [[ "$want_rc" -ne 0 && -s "$KEY_ERR" ]]; then
     fail "KEPLER_SSH_PUBKEY niet uit de container-env te lezen: $(tr '\n' ' ' <"$KEY_ERR")"
 elif [[ -z "$WANT" ]]; then
     printf '  \033[33mINFO\033[0m geen KEPLER_SSH_PUBKEY in de container-env — zelfbeheerde authorized_keys, herkomst niet te toetsen\n'
