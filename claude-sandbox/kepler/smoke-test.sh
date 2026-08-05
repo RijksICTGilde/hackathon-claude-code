@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Draai op de HOST (niet in de container), vanuit claude-sandbox/. Verifieert de
+# Draai op de HOST (niet in de container). Verifieert de
 # Kepler-remote-opzet: een image gebouwd met INSTALL_SSHD=true, gestart met
 # compose.override.kepler.yml. Zie README 'Kepler (SSH-remote)'.
 #
@@ -16,6 +16,7 @@ HOST=127.0.0.1
 CONTAINER=claude-sandbox
 PODMAN=false
 CLI=docker
+EXPECT_NO_SSHD=false
 
 usage() {
     cat <<'EOF'
@@ -29,25 +30,37 @@ Gebruik: smoke-test.sh -i <private-key> [opties]
       --podman         Verwacht óók de podman-override (checkt /dev/net/tun en
                        de security-opts in de draaiende container)
       --cli CMD        Container-CLI voor ps/exec/port (default docker; bv. podman)
+      --expect-no-sshd Keer de verwachting om: verifieert dat een container
+                       ZONDER de Kepler-opzet geen sshd draait en geen poort
+                       publiceert. Vereist geen key.
   -h, --help           Deze hulp
 EOF
 }
 
+# Zonder deze check geeft een optie zonder waarde onder `set -u` een kale
+# "$2: unbound variable" in plaats van de usage.
+need_value() { [[ $# -ge 2 ]] || { echo "FOUT: $1 vereist een waarde." >&2; usage >&2; exit 2; }; }
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -i|--identity)  KEY="$2"; shift 2 ;;
-        -p|--port)      PORT="$2"; shift 2 ;;
-        -H|--host)      HOST="$2"; shift 2 ;;
-        -c|--container) CONTAINER="$2"; shift 2 ;;
+        -i|--identity)  need_value "$@"; KEY="$2"; shift 2 ;;
+        -p|--port)      need_value "$@"; PORT="$2"; shift 2 ;;
+        -H|--host)      need_value "$@"; HOST="$2"; shift 2 ;;
+        -c|--container) need_value "$@"; CONTAINER="$2"; shift 2 ;;
         --podman)       PODMAN=true; shift ;;
-        --cli)          CLI="$2"; shift 2 ;;
+        --expect-no-sshd) EXPECT_NO_SSHD=true; shift ;;
+        --cli)          need_value "$@"; CLI="$2"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *) echo "FOUT: onbekende optie '$1'" >&2; usage >&2; exit 2 ;;
     esac
 done
 
-[[ -n "$KEY" ]] || { echo "FOUT: -i/--identity is verplicht (private key bij KEPLER_SSH_PUBKEY)." >&2; exit 2; }
-[[ -r "$KEY" ]] || { echo "FOUT: key '$KEY' niet leesbaar." >&2; exit 2; }
+command -v "$CLI" >/dev/null || { echo "FOUT: container-CLI '$CLI' niet gevonden (zie --cli)." >&2; exit 2; }
+
+if [[ "$EXPECT_NO_SSHD" != true ]]; then
+    [[ -n "$KEY" ]] || { echo "FOUT: -i/--identity is verplicht (private key bij KEPLER_SSH_PUBKEY)." >&2; exit 2; }
+    [[ -r "$KEY" ]] || { echo "FOUT: key '$KEY' niet leesbaar." >&2; exit 2; }
+fi
 
 # Op macOS met een Podman-machine bindt gvproxy de doorgezette poort alleen op
 # IPv4, terwijl 'localhost' daar eerst naar ::1 resolvet → Connection refused op
@@ -62,9 +75,9 @@ pass() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
 fail() { printf '  \033[31mFOUT\033[0m %s\n' "$1"; FAILCOUNT=$((FAILCOUNT + 1)); FAILLIST="${FAILLIST}  - ${1}"$'\n'; }
 section() { printf '\n== %s ==\n' "$1"; }
 
-# Host-key-churn (elke image-build genereert nieuwe host-keys) zou dit script na
-# elke rebuild laten struikelen op een known_hosts-mismatch. Daarom een eigen,
-# wegwerpbare known_hosts: we testen de sandbox, niet je known_hosts-hygiëne.
+# Eigen, wegwerpbare known_hosts: we testen de sandbox, niet je
+# known_hosts-hygiëne. De host-key staat op het volume en overleeft een rebuild,
+# maar niet een volume-recreate.
 KNOWN_HOSTS="$(mktemp)"
 trap 'rm -f "$KNOWN_HOSTS"' EXIT
 
@@ -79,30 +92,68 @@ ssh_run() {
         "claude@$HOST" "$@"
 }
 
-# Duur (ms) van een SSH-actie. Gebruikt Python voor een monotone klok met
-# ms-resolutie (bash heeft geen sub-seconde timing zonder externe tools).
-_ms_since() { python3 -c 'import sys,time; print(round((time.time()-float(sys.argv[1]))*1000))' "$1"; }
+# Duur (ms) + exit-status van een commando, via de `time`-builtin. Geen externe
+# tool nodig; `date +%s%N` en $EPOCHREALTIME ontbreken op de bash 3.2 van macOS.
+# Echoot "<ms> <rc>", zodat de aanroeper een mislukte verbinding kan
+# onderscheiden van een trage — een mislukte login is snel, en zou anders als
+# "delay ontbreekt" gerapporteerd worden.
+_timed() {
+    local TIMEFORMAT=%3R dur rc rcfile
+    # De exit-status via een bestand: de `time`-meting draait in een command
+    # substitution, dus een variabele die daarbinnen gezet wordt is buiten weg.
+    rcfile="$(mktemp)"
+    dur="$( { time { "$@" >/dev/null 2>&1; echo $? >"$rcfile"; } ; } 2>&1 )"
+    rc="$(cat "$rcfile")"
+    rm -f "$rcfile"
+    # 10#: "0412" is anders octaal en telt fout.
+    printf '%s %s\n' "$(( 10#${dur/./} ))" "$rc"
+}
 # Kale login-shell: GEEN commando (`ssh host < /dev/null`) → sshd draait de
 # login-shell die /etc/zsh/zprofile sourcet (waar de Kepler-delay zit).
 ssh_timed_login() {
-    local t0; t0="$(python3 -c 'import time;print(time.time())')"
-    ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    _timed ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
-        "claude@$HOST" </dev/null >/dev/null 2>&1 || true
-    _ms_since "$t0"
+        "claude@$HOST" </dev/null
 }
 # Probe zoals Kepler: `zsh -c` sourcet GEEN zprofile, dus mag niet vertraagd zijn.
-ssh_timed_probe() {
-    local t0; t0="$(python3 -c 'import time;print(time.time())')"
-    ssh_run "zsh -c true" >/dev/null 2>&1 || true
-    _ms_since "$t0"
-}
+ssh_timed_probe() { _timed ssh_run "zsh -c true"; }
 
 section "0. Container draait"
 if "$CLI" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
     pass "container '$CONTAINER' draait"
 else
     echo "FOUT: container '$CONTAINER' draait niet. Start eerst (zie README 'Kepler (SSH-remote)')." >&2
+    exit 1
+fi
+
+# De default-opzet — iedereen die Kepler niet gebruikt — hoort geen SSH te
+# hebben. Zonder deze modus is dat pad alleen handmatig te controleren, en de
+# fail-open-variant (image met INSTALL_SSHD=true, gestart zonder de override)
+# ziet er van buiten uit als een gewone sandbox.
+if [[ "$EXPECT_NO_SSHD" == true ]]; then
+    section "SSH hoort uit te staan"
+    if "$CLI" exec "$CONTAINER" sh -c '! pgrep -x sshd >/dev/null'; then
+        pass "geen sshd-proces"
+    else
+        fail "sshd draait terwijl SSH uit hoort te staan — de start hoort achter ENABLE_SSHD te zitten, niet achter de aanwezigheid van de binary"
+    fi
+    if [[ -z "$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)" ]]; then
+        pass "poort 22 niet gepubliceerd"
+    else
+        fail "poort 22 is gepubliceerd terwijl SSH uit hoort te staan"
+    fi
+    if ! "$CLI" logs "$CONTAINER" 2>&1 | grep -qi 'sshd gestart'; then
+        pass "geen sshd-start in de containerlogs"
+    else
+        fail "containerlog meldt een sshd-start terwijl SSH uit hoort te staan"
+    fi
+    section "Resultaat"
+    if [[ "$FAILCOUNT" -eq 0 ]]; then
+        echo "Alles groen — deze container draait geen SSH."
+        exit 0
+    fi
+    echo "$FAILCOUNT check(s) gefaald:"
+    printf '%s' "$FAILLIST"
     exit 1
 fi
 
@@ -116,20 +167,49 @@ fi
 if "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     pass "sshd-proces draait"
 else
-    fail "sshd-proces draait niet (check 'docker compose logs $CONTAINER' op de WAARSCHUWING)"
+    fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint-root.sh"
+fi
+# sshd hoort als root te draaien: hij start in de root-fase, vóór de
+# privilege-drop. Een sshd als `claude` kan zijn privilege separation niet doen.
+if "$CLI" exec "$CONTAINER" sh -c 'ps -o user= -p "$(pgrep -x sshd | head -1)" 2>/dev/null | grep -qw root'; then
+    pass "sshd draait als root (gestart in de root-fase)"
+else
+    fail "sshd draait niet als root — hij hoort in entrypoint-root.sh te starten, vóór de privilege-drop"
+fi
+
+section '1b. Geen route naar root voor claude'
+# De hardening haalde sudo volledig uit de image; sshd start daarom in de
+# root-fase. Deze guards vangen een terugkeer van die route af — een sudoers-
+# drop-in of een setuid-binary maakt de privilege-drop betekenisloos.
+if "$CLI" exec "$CONTAINER" sh -c '! command -v sudo >/dev/null'; then
+    pass "geen sudo-binary in de image"
+else
+    fail "sudo is terug in de image — claude heeft daarmee mogelijk weer een pad naar root"
+fi
+if "$CLI" exec "$CONTAINER" sh -c '! ls -A /etc/sudoers.d 2>/dev/null | grep -q .'; then
+    pass "geen sudoers-drop-ins"
+else
+    fail "/etc/sudoers.d is niet leeg — sshd hoort in de root-fase te starten, niet via sudo"
+fi
+if "$CLI" exec "$CONTAINER" sh -c \
+    'test -z "$(find / -xdev -type f -perm -4000 ! -name newuidmap ! -name newgidmap 2>/dev/null)"'; then
+    pass "geen setuid-binaries buiten newuidmap/newgidmap"
+else
+    fail "setuid-root-binary aangetroffen — de setuid-strip in de Dockerfile draait niet ná alle apt-installs"
 fi
 
 section "2. Poortbinding — alleen loopback"
 # De belangrijkste security-assertie van deze opzet: de SSH-poort mag nooit op
 # 0.0.0.0/:: staan. Publiceren op een wildcard-adres zet een agent-shell open
-# voor het hele netwerk.
-BINDING="$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)"
+# voor het hele netwerk. Positief asserten, niet de wildcards uitsluiten: een
+# LAN-adres als 192.168.64.2 is geen wildcard en zou anders slagen.
+BINDING="$("$CLI" port "$CONTAINER" 22 || true)"
 if [[ -z "$BINDING" ]]; then
     fail "poort 22 niet gepubliceerd — draai je met compose.override.kepler.yml?"
-elif grep -qE '^(0\.0\.0\.0|\[?::\]?):' <<<"$BINDING"; then
-    fail "poort op wildcard-adres gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
-else
+elif grep -qE '^(127\.[0-9.]+|\[::1\]):' <<<"$BINDING"; then
     pass "poort alleen op loopback ($BINDING)"
+else
+    fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
 section "3. SSH-login met key"
@@ -141,12 +221,21 @@ else
     echo "  - 'Connection refused' terwijl de poort gepubliceerd is → probeer 127.0.0.1 i.p.v. een hostnaam (IPv4-only forward)." >&2
     exit 1
 fi
+# StrictModes weigert een authorized_keys die de inlogger niet bezit. Los
+# asserten, want anders komt die regressie binnen als een generieke
+# "login mislukt" en zoekt iedereen aan de verkeerde kant.
+if "$CLI" exec -u claude "$CONTAINER" sh -c \
+    'test -O ~/.ssh/authorized_keys && [ "$(stat -c %a ~/.ssh/authorized_keys)" = 600 ] && [ "$(stat -c %a ~/.ssh)" = 700 ]'; then
+    pass "authorized_keys van claude, 600 in een 700-directory"
+else
+    fail "authorized_keys heeft verkeerde eigenaar of rechten — StrictModes weigert 'm; het bestand hoort in de gebruikersfase geschreven te worden (entrypoint.sh), niet in de root-fase"
+fi
 
 section "4. PATH in een non-interactieve sessie"
 # Het scenario dat in de praktijk breekt: een SSH-sessie erft de Docker `ENV PATH`
 # niet, dus `claude` (in ~/.local/bin) is "command not found" tenzij de PATH-fix
-# in /etc/zsh/zshenv + /etc/profile.d pakt. Kepler kiest zelf welke shell-vorm het
-# gebruikt, dus we testen alle drie i.p.v. te gokken.
+# in /etc/zsh/zshenv pakt. Alle drie de vormen lopen via de login-shell zsh en
+# dekken dus diezelfde fix; ze tonen dat Keplers shellkeuze niet uitmaakt.
 for shell_desc in \
     "default-shell:command -v claude" \
     "zsh -c:zsh -c 'command -v claude'" \
@@ -165,22 +254,41 @@ else
     fail "'claude --version' mislukt over SSH"
 fi
 
-section "5. Hardening — wat moet weigeren, weigert"
-# Verwacht falen. `! cmd` i.p.v. een if-then-else zodat set -e niet meekijkt.
-if ! ssh -p "$PORT" -o BatchMode=yes -o PubkeyAuthentication=no \
-        -o PreferredAuthentications=password,keyboard-interactive \
-        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS" \
-        -o ConnectTimeout=10 "claude@$HOST" 'echo nope' >/dev/null 2>&1; then
-    pass "wachtwoord-auth geweigerd"
+section "5. Hardening — de effectieve serverconfig"
+# Via `sshd -T` (de config zoals sshd hem toepast), niet via een ssh-poging: een
+# client met BatchMode=yes biedt wachtwoord-auth sowieso niet aan, en root wordt
+# al door AllowUsers geweigerd. Zulke pogingen falen dus ook op een server
+# zonder hardening — ze bewijzen niets.
+EFFECTIVE="$("$CLI" exec "$CONTAINER" sshd -T 2>/dev/null || true)"
+if [[ -z "$EFFECTIVE" ]]; then
+    fail "'sshd -T' gaf geen output — config onleesbaar of sshd niet in de image"
 else
-    fail "wachtwoord-auth ACCEPTEERT — PasswordAuthentication staat niet uit"
+    for directive in \
+        'passwordauthentication no' \
+        'kbdinteractiveauthentication no' \
+        'permitrootlogin no' \
+        'pubkeyauthentication yes' \
+        'allowusers claude' \
+        'allowagentforwarding no' \
+        'x11forwarding no' \
+        'permituserrc no' \
+        'permittunnel no' \
+        'gatewayports no'
+    do
+        if grep -qix "$directive" <<<"$EFFECTIVE"; then
+            pass "$directive"
+        else
+            fail "$directive staat niet zo in de effectieve config — check /etc/ssh/sshd_config.d/kepler.conf"
+        fi
+    done
 fi
+# Gedragscheck bovenop de config: een login als root moet echt stuklopen.
 if ! ssh -i "$KEY" -p "$PORT" -o BatchMode=yes \
         -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS" \
         -o ConnectTimeout=10 "root@$HOST" 'echo nope' >/dev/null 2>&1; then
     pass "root-login geweigerd"
 else
-    fail "root-login ACCEPTEERT — PermitRootLogin staat niet uit"
+    fail "root-login ACCEPTEERT — PermitRootLogin/AllowUsers staan niet goed in sshd_config.d/kepler.conf"
 fi
 
 section "6. Burst — geen per-bron-straf na mislukte auth"
@@ -191,10 +299,17 @@ section "6. Burst — geen per-bron-straf na mislukte auth"
 # vanaf deze bron. Staat PerSourcePenalties nog aan, dan wordt deze burst van
 # legitieme logins geweigerd — terwijl één losse login (sectie 3) nog slaagt.
 # Daarom een burst i.p.v. een enkele: de bug is onzichtbaar bij gespreide calls.
-BURST=10
+# Parallel, want dat is ook wat Kepler doet (meerdere kanalen tegelijk) — en het
+# maakt de burst een burst in plaats van een reeks gespreide logins.
+BURST=5
 bfail=0
+burst_pids=()
 for _ in $(seq 1 "$BURST"); do
-    ssh_run true >/dev/null 2>&1 || bfail=$((bfail + 1))
+    ssh_run true >/dev/null 2>&1 &
+    burst_pids+=($!)
+done
+for pid in "${burst_pids[@]}"; do
+    wait "$pid" || bfail=$((bfail + 1))
 done
 if [[ "$bfail" -eq 0 ]]; then
     pass "$BURST/$BURST snelle logins na authfails geslaagd (geen per-bron-straf)"
@@ -213,19 +328,27 @@ section "7. Kepler tunnel-race workaround actief"
 # al-klare poort pakt vóór het child exit. We meten dat: een kale login-shell
 # (geen commando → sourcet zprofile) moet merkbaar vertraagd zijn; de `zsh -c`
 # probe (sectie 4) mag dat NIET zijn.
-LOGIN_MS="$(ssh_timed_login)"
-PROBE_MS="$(ssh_timed_probe)"
-if [[ -n "$LOGIN_MS" && "$LOGIN_MS" -ge 250 ]]; then
-    pass "kale login-shell vertraagd (${LOGIN_MS}ms ≥ 250ms) — workaround actief"
-elif [[ -n "$LOGIN_MS" ]]; then
-    fail "kale login-shell niet vertraagd (${LOGIN_MS}ms) — /etc/zsh/zprofile-workaround ontbreekt; Kepler faalt met 'ssh exited before the tunnel ... (code 0)'"
+read -r LOGIN_MS LOGIN_RC <<<"$(ssh_timed_login)"
+read -r PROBE_MS PROBE_RC <<<"$(ssh_timed_probe)"
+if [[ "$LOGIN_RC" -ne 0 || "$PROBE_RC" -ne 0 ]]; then
+    # Zonder deze tak wordt een kapotte verbinding als "delay ontbreekt"
+    # gerapporteerd: een mislukte login is snel, en een hangende raakt de
+    # ConnectTimeout. Beide zouden hieronder een zeer stellige, onjuiste
+    # diagnose over /etc/zsh/zprofile opleveren.
+    fail "SSH-verbinding mislukte tijdens de timing-meting (login rc=$LOGIN_RC, probe rc=$PROBE_RC) — de meting zegt niets over de workaround; zie sectie 3 en 6"
 else
-    fail "kon login-shell-duur niet meten"
-fi
-if [[ -n "$PROBE_MS" && "$PROBE_MS" -lt 250 ]]; then
-    pass "zsh -c probe blijft snel (${PROBE_MS}ms) — delay raakt alleen login-shells"
-else
-    fail "zsh -c probe óók vertraagd (${PROBE_MS}ms) — delay staat te breed (hoort in zprofile, niet zshenv); vertraagt Keplers probe onnodig"
+    if [[ "$LOGIN_MS" -ge 250 && "$LOGIN_MS" -lt 1500 ]]; then
+        pass "kale login-shell vertraagd (${LOGIN_MS}ms) — workaround actief"
+    elif [[ "$LOGIN_MS" -lt 250 ]]; then
+        fail "kale login-shell niet vertraagd (${LOGIN_MS}ms) — /etc/zsh/zprofile-workaround ontbreekt; Kepler faalt met 'ssh exited before the tunnel ... (code 0)'"
+    else
+        fail "kale login-shell veel te traag (${LOGIN_MS}ms) — de sleep in /etc/zsh/zprofile staat te hoog; elke Kepler-login betaalt dat"
+    fi
+    if [[ "$PROBE_MS" -lt 250 ]]; then
+        pass "zsh -c probe blijft snel (${PROBE_MS}ms) — delay raakt alleen login-shells"
+    else
+        fail "zsh -c probe óók vertraagd (${PROBE_MS}ms) — delay staat te breed (hoort in zprofile, niet zshenv); vertraagt Keplers probe onnodig"
+    fi
 fi
 
 section "8. Firewall nog intact vanuit een SSH-sessie"
@@ -236,9 +359,16 @@ if ssh_run 'curl -sS --max-time 15 -o /dev/null https://api.anthropic.com' >/dev
 else
     fail "api.anthropic.com onbereikbaar — Claude zal over SSH niet werken"
 fi
+# OPEN_HTTPS uit de container lezen i.p.v. het verschil open te laten: met
+# OPEN_HTTPS=true is bereikbaar verwacht gedrag, met false is het een lek — en
+# dat laatste mag geen groene run opleveren.
+OPEN_HTTPS_VAL="$("$CLI" exec "$CONTAINER" printenv OPEN_HTTPS 2>/dev/null || echo false)"
 if ssh_run 'curl -sS --max-time 5 -o /dev/null https://example.com' >/dev/null 2>&1; then
-    # Met OPEN_HTTPS=true is dit verwacht gedrag, geen fout — daarom een melding.
-    printf '  \033[33mINFO\033[0m example.com bereikbaar — verwacht bij OPEN_HTTPS=true; bij een strikte allowlist is dit een lek\n'
+    if [[ "$OPEN_HTTPS_VAL" == true ]]; then
+        printf '  \033[33mINFO\033[0m example.com bereikbaar — verwacht bij OPEN_HTTPS=true\n'
+    else
+        fail "example.com bereikbaar terwijl OPEN_HTTPS=$OPEN_HTTPS_VAL — de egress-allowlist lekt"
+    fi
 else
     pass "example.com geblokkeerd (strikte allowlist actief)"
 fi
@@ -275,4 +405,11 @@ if [[ "$FAILCOUNT" -eq 0 ]]; then
 fi
 echo "$FAILCOUNT check(s) gefaald:"
 printf '%s' "$FAILLIST"
+# De entrypoint-waarschuwingen en de sshd-auth-log zijn bij vrijwel elke gefaalde
+# run de volgende stap; scheelt een handmatige ronde.
+echo
+echo "Containerlog (laatste relevante regels):"
+"$CLI" logs --tail 100 "$CONTAINER" 2>&1 | grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' || echo "  (niets gevonden)"
+echo "sshd-auth-log:"
+"$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>/dev/null || echo "  (niet leesbaar)"
 exit 1

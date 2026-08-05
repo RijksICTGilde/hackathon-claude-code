@@ -8,13 +8,17 @@
 services:
   claude:
     # Poort ALLEEN op 127.0.0.1 binden — nooit 0.0.0.0. Draait de sandbox in een
-    # VM (aanbevolen kernel-grens, zie docs/maximale-isolatie-linux.md), dan is
-    # dit de VM-loopback; Kepler bereikt 'm via de VM (of een SSH-tunnel naar de
-    # VM). sshd zelf is gehard (pubkey-only, geen root, alleen user 'claude').
+    # VM (aanbevolen kernel-grens), dan is dit de VM-loopback; Kepler bereikt 'm
+    # via de VM (of een SSH-tunnel naar de VM). Dit beperkt het pad vanaf de
+    # host, niet dat vanaf het container-netwerk — zie README 'Kepler
+    # (SSH-remote)', sectie Beveiliging.
     ports:
       - "127.0.0.1:2222:22"
     environment:
-      # Publieke SSH-sleutel van Kepler. De entrypoint schrijft deze runtime naar
-      # /home/claude/.ssh/authorized_keys (geen baked keys in de image). Zet de waarde
-      # in .env: KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler".
+      # Zet sshd aan in déze run. Zonder deze var start de entrypoint geen sshd,
+      # ook niet in een image die met INSTALL_SSHD=true gebouwd is: SSH hoort
+      # alleen te luisteren als je er expliciet om vraagt.
+      - ENABLE_SSHD=true
+      # Publieke SSH-sleutel van Kepler. Zet de waarde in .env:
+      # KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler".
       - KEPLER_SSH_PUBKEY

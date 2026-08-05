@@ -16,6 +16,52 @@ if [[ ! -f /home/claude/.sdkman/bin/sdkman-init.sh ]]; then
     echo "INFO: SDKman/JVM niet aanwezig in deze image — herbouw met INSTALL_JVM=true om 'sdk install java' etc. te kunnen draaien." >&2
 fi
 
+# authorized_keys voor de Kepler-remote. De sleutel komt runtime uit
+# KEPLER_SSH_PUBKEY, zodat er geen sleutel in de image gebakken zit.
+#
+# Bovenaan dit script, want sshd luistert al vanaf de root-fase: alles wat hier
+# vóór zou staan (podman-wachtlus, marketplace-update over het netwerk) is tijd
+# waarin een client verbindt en `Permission denied` krijgt terwijl het log even
+# later meldt dat de sleutel geschreven is.
+#
+# Hier en niet in de root-fase, zodat het bestand van `claude` is: met
+# StrictModes weigert sshd een authorized_keys die de inlogger niet zelf bezit.
+if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
+    if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
+        # Valideren vóór schrijven: een pad in plaats van de sleutelinhoud, een
+        # per ongeluk geplakte privésleutel of een meerregelige waarde zou
+        # anders een werkende authorized_keys op het volume overschrijven, mét
+        # een geslaagd-melding erachteraan. Meerregelig is bovendien een
+        # toegangsconfiguratie op zich: authorized_keys accepteert per regel
+        # `command=`/`permitopen=`.
+        if [[ "$(printf '%s' "$KEPLER_SSH_PUBKEY" | wc -l)" -gt 0 ]]; then
+            echo "FOUT: KEPLER_SSH_PUBKEY bevat een regeleinde. De var houdt één sleutel;" \
+                 "meerdere sleutels beheer je zelf in ~/.ssh/authorized_keys op het volume." \
+                 "authorized_keys is ONGEWIJZIGD gelaten." >&2
+        elif ! printf '%s\n' "$KEPLER_SSH_PUBKEY" | ssh-keygen -l -f - >/dev/null 2>&1; then
+            echo "FOUT: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel — authorized_keys is" \
+                 "ONGEWIJZIGD gelaten. Verwacht de inhoud van je .pub-bestand" \
+                 "('ssh-ed25519 AAAA... kepler'), niet het pad ernaartoe en niet de privésleutel." >&2
+        elif ! mkdir -p "$HOME/.ssh" || ! chmod 700 "$HOME/.ssh"; then
+            echo "WAARSCHUWING: $HOME/.ssh niet aanmaakbaar — Kepler kan niet inloggen." \
+                 "Controleer de rechten op het claude-home volume." >&2
+        else
+            printf '%s\n' "$KEPLER_SSH_PUBKEY" > "$HOME/.ssh/authorized_keys"
+            chmod 600 "$HOME/.ssh/authorized_keys"
+            echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
+        fi
+    elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
+        {
+            echo "WAARSCHUWING: SSH staat aan, maar er is geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen."
+            echo "  - Zet KEPLER_SSH_PUBKEY=\"ssh-ed25519 AAAA... kepler\" in .env en recreate de container."
+            echo "  - Of beheer ~/.ssh/authorized_keys zelf op het claude-home volume; een bestaand, niet-leeg bestand blijft ongemoeid."
+        } >&2
+    fi
+elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
+    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
+         "Start met '-f compose.override.kepler.yml' (die zet ENABLE_SSHD) en bouw de image met INSTALL_SSHD=true." >&2
+fi
+
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de
 # image werkt niet betrouwbaar: een al bestaand named volume wordt NIET opnieuw
 # uit de image gevuld, dus de image-versie wordt geschaduwd. Daarom hier bij
@@ -162,24 +208,5 @@ case "${MARKETPLACE_AUTOUPDATE:-true}" in
         exit 1
         ;;
 esac
-
-# Optioneel: authorized_keys voor de Kepler-remote schrijven (image gebouwd met
-# INSTALL_SSHD=true). De sleutel komt runtime uit KEPLER_SSH_PUBKEY, zodat er
-# geen sleutel in de image gebakken zit. sshd zelf is al gestart in de root-fase.
-#
-# Dat sshd eerder draait dan dit bestand bestaat is geen probleem: sshd leest
-# authorized_keys per connectie, niet bij het starten. Schrijven hoort hier en
-# niet in de root-fase, zodat het bestand van `claude` is — sshd weigert met
-# StrictModes een authorized_keys die de inlogger niet zelf bezit.
-if [[ -x /usr/sbin/sshd ]]; then
-    if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
-        mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-        printf '%s\n' "$KEPLER_SSH_PUBKEY" > "$HOME/.ssh/authorized_keys"
-        chmod 600 "$HOME/.ssh/authorized_keys"
-        echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
-    elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
-        echo "WAARSCHUWING: sshd draait maar er is geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen. Zet KEPLER_SSH_PUBKEY in .env (zie compose.override.kepler.yml)." >&2
-    fi
-fi
 
 exec sleep infinity

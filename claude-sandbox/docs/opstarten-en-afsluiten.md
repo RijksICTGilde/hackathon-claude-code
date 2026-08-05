@@ -9,6 +9,8 @@ verbinding maken met de container.
 
 De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Iedere waarde moet exact `true` of `false` zijn (andere waardes laten de build expliciet falen). De meeste defaults staan op `true`; `INSTALL_OVERHEID_GEO` en `INSTALL_OVERHEID_ZAD_ACTIONS` zijn uitzonderingen en staan op `false` (zie de noten bij de tabel).
 
+<!-- Houd deze tabel in sync met de ARG-regels in de Dockerfile en de build-args in compose.yml -->
+
 | Argument                       | Default | Wat het installeert                                                                          |
 |--------------------------------|---------|----------------------------------------------------------------------------------------------|
 | `INSTALL_JVM`                  | `true`  | SDKman + LSP-plugins (jdtls, kotlin)                                                         |
@@ -19,6 +21,8 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 | `INSTALL_ANTHROPIC_PLUGINS`    | `true`  | Anthropic-plugins (+ LSP's bij `INSTALL_JVM=true`)                                           |
 | `INSTALL_LOCAL_SKILLS`         | `true`  | Lokale skills uit `skills/` (digital-waste-spotter)                                          |
 | `INSTALL_CAVEMAN`              | `true`  | caveman plugin (third-party, ~75% token-reductie via communicatie-stijl)                     |
+| `INSTALL_PODMAN`               | `false` | Rootless podman voor Testcontainers ín de sandbox; vereist een platform-override — zie [podman/README.md](../podman/README.md) |
+| `PODMAN_MULTIUID`              | `false` | subuid/subgid-range voor `claude`, nodig voor DB-images die naar een tweede uid chownen; vereist `compose.override.podman-multiuid.yml` |
 | `INSTALL_SSHD`                 | `false` | OpenSSH-server (gehard) voor de Kepler-remote-opzet; default uit — zie README 'Kepler (SSH-remote)' |
 
 Zet de waardes in `.env` of op de commandline:
@@ -31,12 +35,13 @@ INSTALL_JVM=false docker compose build
 
 #### Runtime-toggles
 
-Naast de build-time toggles kent de container één runtime-env-var:
+Naast de build-time toggles kent de container deze runtime-env-vars:
 
 | Variabele                | Default | Wat het doet                                                                                                                                              |
 |--------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `MARKETPLACE_AUTOUPDATE` | `true`  | Draait `claude plugin marketplace update` bij entrypoint-start zodat plugin-bundels up-to-date blijven zonder image-rebuild. Niet-fataal bij netwerk-/upstream-failure. |
-| `KEPLER_SSH_PUBKEY`      | _(leeg)_ | Alleen relevant met `INSTALL_SSHD=true`: publieke SSH-sleutel die de entrypoint naar `~/.ssh/authorized_keys` schrijft zodat Kepler kan inloggen. Zie README 'Kepler (SSH-remote)'. |
+| `ENABLE_SSHD`            | `false` | Start de sshd in déze run. Wordt gezet door `compose.override.kepler.yml`; zonder deze var luistert er geen SSH, ook niet in een image met `INSTALL_SSHD=true`. |
+| `KEPLER_SSH_PUBKEY`      | _(leeg)_ | Publieke SSH-sleutel die de entrypoint naar `~/.ssh/authorized_keys` schrijft zodat Kepler kan inloggen. Wordt gevalideerd; een ongeldige waarde laat het bestaande bestand ongemoeid. Zie README 'Kepler (SSH-remote)'. |
 
 #### Voorbeeld: `sdk install java` na `INSTALL_JVM=true`
 

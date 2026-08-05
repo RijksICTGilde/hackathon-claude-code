@@ -143,18 +143,23 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 
 [GitKraken Kepler](https://www.gitkraken.com/kepler) is een agentic development environment die coding-agents (o.a. Claude Code) orkestreert. Kepler kan agents op een **remote machine via SSH** draaien: worktrees én agent-sessies draaien remote, de Kepler-UI blijft lokaal. Kepler kent géén "custom agent-command"-optie, dus de agent draait op wát je in-SSH't — daarom draaien we een gehard `sshd` **ín** deze sandbox, zodat Claude in de gecureerde, gefirewallde image blijft draaien i.p.v. op de kale host/VM.
 
-> **Isolatie:** draai de sandbox bij voorkeur in een VM (eigen kernel-grens, zie [docs/maximale-isolatie-linux.md](docs/maximale-isolatie-linux.md)). De VM omhult de container; Kepler bereikt de sandbox-sshd via de VM. Zo voegt SSH inbound-oppervlak toe binnen een grens, niet direct op je host-kernel.
+> **Isolatie:** draai de sandbox bij voorkeur in een VM (eigen kernel-grens). De VM omhult de container; Kepler bereikt de sandbox-sshd via de VM. Zo voegt SSH inbound-oppervlak toe binnen een grens, niet direct op je host-kernel.
 
 > **Combineer je dit met `INSTALL_PODMAN=true`? Dan is de VM geen voorkeur maar een vereiste.** De podman-override peelt outer-sandbox-hardening af (`systempaths=unconfined` heft de masked/RO `/proc`-paden op, seccomp gaat naar `defaultAction=ALLOW` met een blocklist). Die verzwakte containergrens combineren met een inbound SSH-poort betekent dat één gecompromitteerde SSH-sessie merkbaar dichter bij de kernel staat. In een VM raakt dat de VM-kernel, niet die van je host.
 
 ### Beveiliging (niet omzeild)
-- **sshd gehard**: alleen pubkey-auth, geen wachtwoord, geen root-login, alleen user `claude` (`/etc/ssh/sshd_config.d/kepler.conf`).
-- **Poort alleen op `127.0.0.1`** (nooit `0.0.0.0`) — zie `compose.override.kepler.yml`. In een VM = VM-loopback; Kepler tunnelt naar de VM.
-- **Firewall blijft aan**: `init-firewall.sh` laat inbound vanaf het host-netwerk al toe (geen versoepeling nodig); egress-allowlist bevat `api.anthropic.com` + GitHub, dus Claude en git werken.
-- **Geen baked keys**: host-keys worden per build gegenereerd (`ssh-keygen -A`); je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY`.
-- **Auth zonder secret in env**: `ANTHROPIC_API_KEY` via de container-env bereikt een sshd-sessie níet (sshd reset de env). Gebruik `claude login` — de credentials persisten in het `claude-home` volume.
+- **sshd gehard**: pubkey-only (`AuthenticationMethods publickey`), geen root-login, alleen user `claude`, geen agent- of X11-forwarding, `AllowTcpForwarding local` (Kepler heeft alleen `-L` nodig), `LoginGraceTime 30`, `MaxAuthTries 3`, `LogLevel VERBOSE`. De volledige stand staat in `/etc/ssh/sshd_config.d/kepler.conf`; de build weigert als die drop-in niet toegepast blijkt (`sshd -t`/`sshd -T`).
+- **SSH staat alleen aan als je erom vraagt**: de entrypoint start sshd op `ENABLE_SSHD=true`, wat `compose.override.kepler.yml` zet — niet op de aanwezigheid van de binary. Een image die één keer met `INSTALL_SSHD=true` gebouwd is, zet dus niet bij elke `up` een poort open.
+- **Geen sleutels in de image**: host-keys worden bij eerste start op het `claude-home` volume aangemaakt, niet tijdens de build — een privésleutel in een image-layer zou iedereen met die image de identiteit van je sandbox geven. Je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY` en wordt gevalideerd voor hij weggeschreven wordt.
+- **Auth-logging**: sshd logt naar `/var/log/sshd.log` in de container (er draait geen syslog-daemon; zonder dit verdwijnt elke login spoorloos). `LogLevel VERBOSE` zet de key-fingerprint erbij.
+- **Auth zonder secret in env**: `ANTHROPIC_API_KEY` via de container-env bereikt een sshd-sessie níet (sshd reset de env). Gebruik `claude login`.
 - **Geen weg naar root voor `claude`**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image.
-- **`PerSourcePenalties no`**: OpenSSH ≥9.8 straft standaard per bron-IP (mislukte/afgebroken connecties → tijdelijke weigering). Achter een NAT/port-forward ziet sshd élke client als dezelfde bron (gvproxy op macOS, of Docker's portpublish), dus die throttling straft legitieme clients voor elkaars gedrag — Kepler opent meerdere sessies, dus dit tikt aan en blokkeert. Op een loopback-only, pubkey-only poort levert het nauwelijks beveiliging op, dus uit (zie de Dockerfile-comment; de smoke-test heeft er een regressie-guard voor). `MaxStartups` blijft op de default.
+- **`PerSourcePenalties no`**: OpenSSH ≥9.8 straft per bron-IP. Keplers kortlevende tunnel-connecties tellen als afgebroken sessies, en achter een NAT/port-forward (gvproxy op macOS, Docker's portpublish) ziet sshd élke client als dezelfde bron — die straf treft dus alle clients samen. Met pubkey-only valt er niets te raden, dus de maatregel kost meer dan hij oplevert; `LoginGraceTime`/`MaxAuthTries` dekken de resterende DoS-hoek af. De smoke-test heeft er een regressie-guard voor.
+
+### Beveiliging (wat het níet dekt)
+- **De loopback-binding geldt alleen vanaf de host.** Binnen de container luistert sshd op `0.0.0.0:22`, en `init-firewall.sh` accepteert inbound vanaf het hele bridge-subnet. Een andere container op datzelfde compose-netwerk bereikt poort 22 dus rechtstreeks, langs de `127.0.0.1`-publish om. Draai geen onvertrouwde containers op dit netwerk.
+- **Een geslaagde login is een volledige shell als `claude`** — inclusief schrijfrechten op de host-bindmount `${PROJECTS_DIR}:/home/claude/projects` en leestoegang tot de `claude login`-credentials op het volume. De SSH-hardening beperkt wie binnenkomt, niet wat die daarna mag.
+- **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee lokale poorten van de container benaderen.
 
 ### Opzet
 1. **Build met sshd** (opt-in; vereist image-rebuild + volume-recreate zoals elke toggle):
@@ -169,7 +174,7 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
    ```
    KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler"
    ```
-   Start met de override erbij (NIET hernoemen naar `compose.override.yml` — dat auto-load de poort op elke `up`):
+   Start met de override erbij — die publiceert de poort én zet `ENABLE_SSHD=true`, waarop de entrypoint sshd start (waarom je 'm niet hernoemt: zie de kop van `compose.override.kepler.yml`):
    ```
    INSTALL_SSHD=true docker compose -f compose.yml -f compose.override.kepler.yml up --build -d
    ```
@@ -190,11 +195,11 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 
 > **Gebruik `127.0.0.1`, niet `localhost`.** Op macOS met een Podman-machine bindt gvproxy de doorgezette poort **alleen op IPv4** (`lsof -iTCP:2222 -sTCP:LISTEN -n -P` toont één IPv4-regel). macOS resolvet `localhost` eerst naar `::1`, waar niets luistert → `Connection refused`, terwijl `127.0.0.1` het wél doet. Vul dus overal het IP-adres in: in Kepler, in `~/.ssh/config` en in scripts.
 
-> **Caveat — host-key churn:** host-keys worden bij elke image-build opnieuw gegenereerd. Na een rebuild ziet Kepler een gewijzigde host-key (known_hosts-mismatch); verwijder de oude entry of persist de host-keys op het volume als je vaak herbouwt.
+> **Caveat — host-key na volume-recreate:** de host-key staat op het `claude-home` volume en overleeft een image-rebuild. Verwijder je het volume (nodig bij elke wijziging in environment-variabelen), dan komt er een nieuwe en ziet Kepler een known_hosts-mismatch; verwijder dan de oude entry.
 
-> **Caveat — `authorized_keys` wordt elke start overschreven:** staat `KEPLER_SSH_PUBKEY` gezet, dan schrijft de entrypoint het bestand bij iedere container-start opnieuw. Een handmatig toegevoegde tweede sleutel overleeft dus geen `restart`. De var houdt één sleutel: een `\n` in `.env` komt als letterlijke backslash-n in het bestand terecht (de entrypoint gebruikt `printf '%s'`), niet als regeleinde. Meerdere sleutels nodig? Laat `KEPLER_SSH_PUBKEY` leeg en beheer `authorized_keys` zelf op het volume — de entrypoint laat een bestaand, niet-leeg bestand met rust.
+> **Caveat — `authorized_keys` wordt elke start overschreven:** staat `KEPLER_SSH_PUBKEY` gezet, dan schrijft de entrypoint het bestand bij iedere container-start opnieuw. Een handmatig toegevoegde tweede sleutel overleeft dus geen `restart`. De var houdt één sleutel; een meerregelige of ongeldige waarde wordt geweigerd en laat het bestaande bestand ongemoeid. Meerdere sleutels nodig? Laat `KEPLER_SSH_PUBKEY` leeg en beheer `authorized_keys` zelf op het volume — de entrypoint laat een bestaand, niet-leeg bestand met rust.
 
-> **Kepler-bug — `ssh exited before the tunnel on local port N was ready (code 0)`:** Kepler zet een SSH ControlMaster op en draait de tunnel als `ssh -N -L` mux-slave. Een mux-slave vraagt áltijd een sessie aan (ook met `-N` — bekend OpenSSH-gedrag), draagt de forward over aan de master en exit binnen ~10-30 ms. De poort is dan al klaar, maar Keplers readiness-poll (`waitForTunnelReady`) behandelt het ssh-child-exit als fataal en gooit vóór z'n poort-check. De forward zélf werkt (curl door de tunnel geeft HTTP 200); het is een race die Kepler verliest. Server-onafhankelijk (reproduceert ook tegen een kale sshd), dus een Kepler-bug, geen sandbox-fout. **Workaround in het image:** `/etc/zsh/zprofile` rekt de fantoom-login-shell die de mux-slave opent met een korte `sleep` (alleen non-interactieve login-shells; de `zsh -c` probe en interactieve shells blijven ongemoeid), zodat Keplers eerste poll de al-klare poort pakt vóór het child exit. Zie de Dockerfile-comment bij `INSTALL_SSHD`; de smoke-test heeft er een regressie-guard voor (sectie 7). Los dit bij voorkeur upstream op — dan kan de workaround eruit.
+> **Kepler-bug — `ssh exited before the tunnel on local port N was ready (code 0)`:** Kepler zet een SSH ControlMaster op en draait de tunnel als `ssh -N -L` mux-slave. Een mux-slave vraagt áltijd een sessie aan (ook met `-N` — bekend OpenSSH-gedrag), draagt de forward over aan de master en exit binnen ~10-30 ms. De poort is dan al klaar, maar Keplers readiness-poll (`waitForTunnelReady`) behandelt het ssh-child-exit als fataal en gooit vóór z'n poort-check. De forward zélf werkt; het is een race die Kepler verliest, en de bug ligt bij Kepler — wij kunnen 'm hier alleen omzeilen. **Workaround in het image:** `/etc/zsh/zprofile` rekt die fantoom-login-shell met een `sleep 0.4`, zodat Keplers eerste poll de al-klare poort pakt vóór het child exit. De guard beperkt dat tot echte SSH-sessies (`$SSH_CONNECTION` gezet, niet-interactief, buitenste shell), zodat een `zsh -lc` van een orchestrator die vertraging niet betaalt. De smoke-test heeft er een regressie-guard voor (sectie 7). Zodra Kepler dit upstream fixt, kan de workaround eruit.
 
 ### Testen
 `kepler/smoke-test.sh` draait vanaf de **host** (niet in de container) tegen een al draaiende sandbox, en verifieert poortbinding, login, PATH in een non-interactieve sessie, de hardening-weigeringen, de PerSourcePenalties- en tunnel-race-workarounds en de firewall:
@@ -204,7 +209,11 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 ```
 `--help` toont de rest (`--host`/`--port` voor een sandbox in een VM, `--cli podman`). Exit-code 0 = alles groen.
 
-Test daarnaast één keer de **regressie**: een build met `INSTALL_SSHD=false` hoort géén `sshd` in de image te hebben, geen poort te publiceren en niets over SSH te loggen. De toggle moet uit-blijven als je hem niet aanzet.
+Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — zowel een build met `INSTALL_SSHD=false` als een image mét sshd die je zónder de kepler-override start:
+
+```
+./kepler/smoke-test.sh --expect-no-sshd
+```
 
 ## Dependency-onderhoud
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:

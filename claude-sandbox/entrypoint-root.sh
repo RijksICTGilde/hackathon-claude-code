@@ -1,9 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Draait als root, uitsluitend om de firewall op te zetten, en dropt daarna
-# onherroepelijk naar `claude`. OPEN_HTTPS en ALLOWED_DOMAINS worden alleen hier
-# gelezen — na de drop kan `claude` de egress-allowlist niet meer heropenen.
+# Draait als root voor alles wat root vereist — firewall, AppArmor-borging en de
+# optionele sshd — en dropt daarna onherroepelijk naar `claude`. OPEN_HTTPS en
+# ALLOWED_DOMAINS worden alleen hier gelezen — na de drop kan `claude` de
+# egress-allowlist niet meer heropenen.
 # Waarom de firewall vóór de drop moet: ADR 0001 §2.3.1 "Firewall vóór de
 # privilege-drop".
 
@@ -40,24 +41,50 @@ case "$aa_current" in
         fi ;;
 esac
 
-# Optioneel: OpenSSH-server starten zodat GitKraken Kepler via SSH een agent-
-# sessie in deze sandbox kan draaien (image gebouwd met INSTALL_SSHD=true).
-# Gehard bij build: pubkey-only, geen root, alleen user 'claude'. De poort
-# publiceer je host-side op 127.0.0.1 via compose.override.kepler.yml.
+# Optioneel: OpenSSH-server starten voor de Kepler-remote-opzet. Gehard bij
+# build; bediening in README-sectie "Kepler (SSH-remote)".
+#
+# ENABLE_SSHD is de schakelaar, niet de aanwezigheid van de binary: een image dat
+# één keer met INSTALL_SSHD=true gebouwd is, mag niet bij élke `up` een
+# luisterende sshd opzetten. compose.override.kepler.yml zet de var, dus SSH
+# staat alleen aan in een run die er expliciet om vraagt.
 #
 # Hier en niet na de drop: sshd bindt poort 22 en heeft root nodig voor zijn
-# privilege separation. Dat is dezelfde reden als bij de firewall — wat root
-# vereist, gebeurt vóór de drop, zodat `claude` daarna geen weg terug heeft.
-# Na init-firewall.sh, zodat de poort niet openstaat vóór de INPUT-regels staan.
+# privilege separation. Zelfde reden als bij de firewall — wat root vereist,
+# gebeurt vóór de drop, zodat `claude` daarna geen weg terug heeft. Ná
+# init-firewall.sh, zodat de poort niet openstaat vóór de INPUT-regels er zijn.
 #
-# sshd forkt naar de achtergrond en overleeft de setpriv-drop als eigen proces.
-# Niet-fataal: zonder Kepler-remote is de sandbox verder gewoon bruikbaar.
-# authorized_keys schrijft entrypoint.sh na de drop, als `claude`.
-if [[ -x /usr/sbin/sshd ]]; then
-    if /usr/sbin/sshd; then
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
+# Host-keys op het volume in plaats van in de image: een privésleutel in een
+# image-layer geeft iedereen met die image de identiteit van elke container die
+# eruit draait. Op het volume overleven ze bovendien een rebuild, dus Kepler
+# krijgt geen known_hosts-mismatch meer na elke build.
+#
+# -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
+# vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
+# bestand vóór het daemoniseren, dus het overleeft de fd-reset. `claude` mag
+# meelezen via de groep, niet schrijven.
+if [[ "${ENABLE_SSHD:-false}" == "true" ]]; then
+    if [[ ! -x /usr/sbin/sshd ]]; then
+        echo "WAARSCHUWING: ENABLE_SSHD=true maar deze image is zonder INSTALL_SSHD=true gebouwd —" \
+             "er luistert geen sshd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
     else
-        echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door." >&2
+        install -d -m 700 -o root -g root /home/claude/.ssh-host
+        if [[ ! -f /home/claude/.ssh-host/ssh_host_ed25519_key ]]; then
+            ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key
+            echo "INFO: nieuwe SSH-host-key aangemaakt op het claude-home volume"
+        fi
+        install -m 640 -o root -g claude /dev/null /var/log/sshd.log
+        if /usr/sbin/sshd -E /var/log/sshd.log; then
+            echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+        else
+            {
+                echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
+                echo "Veelvoorkomende oorzaken:"
+                echo "  - poort 22 al bezet in deze netwerk-namespace"
+                echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
+                echo "  - /run/sshd of de host-key op het volume niet aanmaakbaar"
+            } >&2
+        fi
     fi
 fi
 
