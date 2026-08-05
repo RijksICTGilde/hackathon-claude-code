@@ -60,6 +60,13 @@ done
 
 command -v "$CLI" >/dev/null || { echo "FOUT: container-CLI '$CLI' niet gevonden (zie --cli)." >&2; exit 2; }
 
+# Poorten vroeg afvangen: een niet-numerieke waarde komt anders pas veel later
+# naar boven als een ssh-fout over een 'bad forwarding specification'.
+for _p in "PORT:$PORT" "TUNNEL_PORT:$TUNNEL_PORT"; do
+    [[ "${_p#*:}" =~ ^[0-9]+$ ]] && [[ "${_p#*:}" -ge 1 && "${_p#*:}" -le 65535 ]] ||
+        { echo "FOUT: ${_p%%:*}='${_p#*:}' is geen geldig poortnummer." >&2; exit 2; }
+done
+
 if [[ "$EXPECT_NO_SSHD" != true ]]; then
     [[ -n "$KEY" ]] || { echo "FOUT: -i/--identity is verplicht (private key bij KEPLER_SSH_PUBKEY)." >&2; exit 2; }
     [[ -r "$KEY" ]] || { echo "FOUT: key '$KEY' niet leesbaar." >&2; exit 2; }
