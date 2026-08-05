@@ -29,7 +29,12 @@ fi
 # volume, en dat kan niet in een directory die root heeft aangemaakt.
 # SSHD_STATUS komt uit de root-fase. ENABLE_SSHD hier opnieuw interpreteren zou
 # betekenen dat deze fase niet weet of sshd daadwerkelijk luistert.
-case "${SSHD_STATUS:-disabled}" in running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
+#
+# `failed` telt mee als actief: de gebruiker wilde SSH, dus de sleutel hoort
+# klaar te staan voor een volgende start. De melding erbij zegt wel dat er nu
+# niets luistert.
+SSHD_STATUS="${SSHD_STATUS:-disabled}"
+case "$SSHD_STATUS" in running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
 if [[ "$sshd_active" == true ]]; then
     # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
     # vers volume is er niets te beschermen, en dan is de juiste boodschap dat
@@ -81,7 +86,7 @@ if [[ "$sshd_active" == true ]]; then
         elif tmp="$HOME/.ssh/.authorized_keys.$$" &&
              printf '%s\n' "$pubkey" > "$tmp" && chmod 600 "$tmp" &&
              mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
-            if [[ "${SSHD_STATUS:-running}" == running ]]; then
+            if [[ "$SSHD_STATUS" == running ]]; then
                 echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
             else
                 echo "WAARSCHUWING: Kepler-pubkey weggeschreven, maar sshd luistert niet" \
@@ -89,30 +94,29 @@ if [[ "$sshd_active" == true ]]; then
             fi
         else
             rm -f "${tmp:-}"
-            echo "WAARSCHUWING: authorized_keys niet kunnen schrijven (vol volume of rechten) —" \
-                 "een bestaande sleutel is ongewijzigd gebleven." >&2
+            echo "WAARSCHUWING: authorized_keys schrijven mislukt (vol volume of rechten). $keep" >&2
         fi
-    elif [[ -s "$HOME/.ssh/authorized_keys" ]]; then
-        # Zelfbeheerd bestand: sshd loopt de hele keten tot en met de home-dir na
-        # en weigert elk niveau dat voor groep of anderen schrijfbaar is. Dat
-        # meldt hij alleen in zijn eigen log; hier is het zichtbaar bij de start.
-        if [[ -n "$(find "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022 2>/dev/null)" ]]; then
-            echo "WAARSCHUWING: $HOME, ~/.ssh of ~/.ssh/authorized_keys is schrijfbaar voor groep of anderen —" \
-                 "sshd weigert de login daarop. Zet 'chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys'." >&2
-        fi
-    else
+    elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
         {
             echo "WAARSCHUWING: SSH staat aan, maar er is geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen."
             echo "  - Zet KEPLER_SSH_PUBKEY=\"ssh-ed25519 AAAA... kepler\" in .env en recreate de container."
             echo "  - Of beheer ~/.ssh/authorized_keys zelf op het claude-home volume; een bestaand, niet-leeg bestand blijft ongemoeid."
         } >&2
     fi
+    # Geldt voor beide paden: sshd loopt de keten tot en met de home-dir na en
+    # weigert elk niveau dat voor groep of anderen schrijfbaar is. Dat meldt hij
+    # alleen in zijn eigen log — een geslaagd-melding hierboven gevolgd door een
+    # stille weigering bij het inloggen is precies wat we willen vermijden.
+    if perm_bad="$(find "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022 2>/dev/null)" &&
+       [[ -n "$perm_bad" ]]; then
+        echo "WAARSCHUWING: schrijfbaar voor groep of anderen: $(tr '\n' ' ' <<<"$perm_bad")—" \
+             "sshd weigert de login daarop. Zet 'chmod 755 $HOME; chmod 700 $HOME/.ssh;" \
+             "chmod 600 $HOME/.ssh/authorized_keys'." >&2
+    fi
 elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
     case "${SSHD_STATUS:-disabled}" in
         absent)  echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar deze image bevat geen sshd — de sleutel wordt" \
                       "genegeerd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2 ;;
-        failed)  echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar sshd is niet gestart — zie de waarschuwing" \
-                      "eerder in dit log. De sleutel is niet weggeschreven." >&2 ;;
         invalid) echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar ENABLE_SSHD heeft een ongeldige waarde —" \
                       "de sleutel wordt genegeerd." >&2 ;;
         *)       echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
