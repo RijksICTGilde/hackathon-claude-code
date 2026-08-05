@@ -396,6 +396,7 @@ else
         'allowagentforwarding no' \
         'x11forwarding no' \
         'permituserrc no' \
+        'authorizedkeysfile .ssh/authorized_keys' \
         'allowtcpforwarding local' \
         'requiredrsasize 3072' \
         'permitopen localhost:* 127.0.0.1:* [::1]:*' \
