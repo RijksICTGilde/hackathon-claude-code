@@ -78,19 +78,33 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
             echo "WAARSCHUWING: authorized_keys niet kunnen schrijven (vol volume of rechten) —" \
                  "een bestaande sleutel is ongewijzigd gebleven." >&2
         fi
-    elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
+    elif [[ -s "$HOME/.ssh/authorized_keys" ]]; then
+        # Zelfbeheerd bestand: sshd weigert een authorized_keys of ~/.ssh die voor
+        # groep of anderen schrijfbaar is, en meldt dat alleen in zijn eigen log.
+        # Hier is het zichtbaar bij de start.
+        if [[ -n "$(find "$HOME/.ssh" -maxdepth 0 -perm /022)" ]] ||
+           [[ -n "$(find "$HOME/.ssh/authorized_keys" -maxdepth 0 -perm /022)" ]]; then
+            echo "WAARSCHUWING: ~/.ssh of ~/.ssh/authorized_keys is schrijfbaar voor groep of anderen —" \
+                 "sshd weigert de login daarop. Zet 'chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys'." >&2
+        fi
+    else
         {
             echo "WAARSCHUWING: SSH staat aan, maar er is geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen."
             echo "  - Zet KEPLER_SSH_PUBKEY=\"ssh-ed25519 AAAA... kepler\" in .env en recreate de container."
             echo "  - Of beheer ~/.ssh/authorized_keys zelf op het claude-home volume; een bestaand, niet-leeg bestand blijft ongemoeid."
         } >&2
     fi
-elif [[ -n "${KEPLER_SSH_PUBKEY:-}" && ! -x /usr/sbin/sshd ]]; then
-    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar deze image bevat geen sshd — de sleutel wordt" \
-         "genegeerd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
 elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
-    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar ENABLE_SSHD niet — de sleutel wordt genegeerd." \
-         "Start met '-f compose.override.kepler.yml'." >&2
+    case "${SSHD_STATUS:-disabled}" in
+        absent)  echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar deze image bevat geen sshd — de sleutel wordt" \
+                      "genegeerd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2 ;;
+        failed)  echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar sshd is niet gestart — zie de waarschuwing" \
+                      "eerder in dit log. De sleutel is niet weggeschreven." >&2 ;;
+        invalid) echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar ENABLE_SSHD heeft een ongeldige waarde —" \
+                      "de sleutel wordt genegeerd." >&2 ;;
+        *)       echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
+                      "Start met '-f compose.override.kepler.yml'." >&2 ;;
+    esac
 fi
 
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de

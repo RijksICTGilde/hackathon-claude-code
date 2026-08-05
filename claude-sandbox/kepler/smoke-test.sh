@@ -84,6 +84,16 @@ FAILLIST=""
 pass() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
 fail() { printf '  \033[31mFOUT\033[0m %s\n' "$1"; FAILCOUNT=$((FAILCOUNT + 1)); FAILLIST="${FAILLIST}  - ${1}"$'\n'; }
 section() { printf '\n== %s ==\n' "$1"; }
+# De containerlog en de sshd-auth-log staan bij vrijwel elke storing de reden.
+# Als functie, want de hardste exits zitten midden in het script en zouden die
+# bron anders juist overslaan.
+dump_logs() {
+    echo
+    echo "Containerlog (relevante regels):"
+    "$CLI" logs --tail 100 "$CONTAINER" 2>&1 | grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' || echo "  (niets gevonden)"
+    echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
+    "$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>/dev/null || echo "  (niet leesbaar)"
+}
 
 # Eigen, wegwerpbare known_hosts: we testen de sandbox, niet je
 # known_hosts-hygiëne. De host-key staat op het volume en overleeft een rebuild,
@@ -166,7 +176,12 @@ if [[ "$EXPECT_NO_SSHD" == true ]]; then
     else
         fail "sshd draait terwijl SSH uit hoort te staan — de start hoort achter ENABLE_SSHD te zitten, niet achter de aanwezigheid van de binary"
     fi
-    if [[ -z "$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)" ]]; then
+    # Leegheid is hier het bewijs, dus eerst vaststellen dat het commando
+    # überhaupt bindings kán rapporteren — anders telt een gewijzigd
+    # outputformaat of een andere CLI als "geen poort".
+    if ! "$CLI" port "$CONTAINER" >/dev/null 2>&1; then
+        fail "'$CLI port $CONTAINER' faalt — of poort 22 gepubliceerd is, is hiermee niet vast te stellen"
+    elif [[ -z "$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)" ]]; then
         pass "poort 22 niet gepubliceerd"
     else
         fail "poort 22 is gepubliceerd terwijl SSH uit hoort te staan"
@@ -198,6 +213,7 @@ if "$CLI" exec "$CONTAINER" sh -c 'command -v sshd >/dev/null'; then
     pass "sshd in de image (INSTALL_SSHD=true)"
 else
     echo "FOUT: geen sshd in de container — image is zonder INSTALL_SSHD=true gebouwd." >&2
+    dump_logs >&2
     exit 1
 fi
 if "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
@@ -300,16 +316,19 @@ else
     echo "  - 'Permission denied (publickey)' → key hoort niet bij KEPLER_SSH_PUBKEY; check .env en de entrypoint-logs." >&2
     echo "  - 'Connection refused' terwijl de poort gepubliceerd is → probeer 127.0.0.1 i.p.v. een hostnaam (IPv4-only forward)." >&2
     echo "  - RSA-sleutel kleiner dan 3072 bits → sshd weigert 'm (RequiredRSASize); gebruik ed25519." >&2
+    dump_logs >&2
     exit 1
 fi
-# Los asserten: schrijft een regressie dit bestand in de root-fase, dan komt dat
-# anders binnen als een generieke "login mislukt" en zoekt iedereen aan de
-# verkeerde kant.
+# Op de invariant die sshd echt afdwingt: niet schrijfbaar voor groep of
+# anderen. Exact 600/700 eisen zou het gedocumenteerde zelfbeheer-pad (var leeg
+# laten, bestand zelf beheren) onterecht rood maken.
 if "$CLI" exec -u claude "$CONTAINER" sh -c \
-    'test -O ~/.ssh/authorized_keys && [ "$(stat -c %a ~/.ssh/authorized_keys)" = 600 ] && [ "$(stat -c %a ~/.ssh)" = 700 ]'; then
-    pass "authorized_keys van claude, 600 in een 700-directory"
+    'test -r ~/.ssh/authorized_keys &&
+     test -z "$(find ~/.ssh -maxdepth 0 -perm /022)" &&
+     test -z "$(find ~/.ssh/authorized_keys -maxdepth 0 -perm /022)"'; then
+    pass "authorized_keys leesbaar en niet schrijfbaar voor groep/anderen"
 else
-    fail "authorized_keys heeft verkeerde eigenaar of rechten — het bestand hoort in de gebruikersfase geschreven te worden (entrypoint.sh), niet in de root-fase; anders kan claude zijn eigen sleutels niet meer beheren"
+    fail "authorized_keys ontbreekt of is schrijfbaar voor groep/anderen — sshd weigert de login daarop (chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys)"
 fi
 
 section "4. PATH in een non-interactieve sessie"
@@ -536,6 +555,15 @@ if [[ "$PODMAN" == true ]]; then
     fi
 fi
 
+section "Sleutel uit .env geaccepteerd"
+# Anders is de run groen terwijl de entrypoint de nieuwe sleutel geweigerd heeft
+# en een oude authorized_keys van het volume het werk doet.
+if "$CLI" logs --tail 200 "$CONTAINER" 2>&1 | grep -q 'WAARSCHUWING.*KEPLER_SSH_PUBKEY'; then
+    fail "de entrypoint heeft KEPLER_SSH_PUBKEY geweigerd — je logt in met een oudere sleutel van het volume; zie de containerlog"
+else
+    pass "geen waarschuwing over KEPLER_SSH_PUBKEY in de containerlog"
+fi
+
 section "Resultaat"
 if [[ "$FAILCOUNT" -eq 0 ]]; then
     echo "Alles groen — Kepler kan deze sandbox als remote gebruiken."
@@ -547,9 +575,5 @@ echo "$FAILCOUNT check(s) gefaald:"
 printf '%s' "$FAILLIST"
 # De entrypoint-waarschuwingen en de sshd-auth-log zijn bij vrijwel elke gefaalde
 # run de volgende stap; scheelt een handmatige ronde.
-echo
-echo "Containerlog (laatste relevante regels):"
-"$CLI" logs --tail 100 "$CONTAINER" 2>&1 | grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' || echo "  (niets gevonden)"
-echo "sshd-auth-log:"
-"$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>/dev/null || echo "  (niet leesbaar)"
+dump_logs
 exit 1

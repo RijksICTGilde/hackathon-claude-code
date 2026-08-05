@@ -32,8 +32,10 @@ env:
 
 jobs:
   # De sshd-laag bouwt alleen bij INSTALL_SSHD=true, en juist daarin zitten de
-  # `sshd -t`/`sshd -T`-asserties die borgen dat de hardening-drop-in echt
-  # toegepast is. Zonder deze job draaien die nergens in CI.
+  # `sshd -t`/`sshd -T`-asserties op de hardening-drop-in. Zonder deze job draait
+  # dat pad nergens in CI. Let op wat het niet zegt: komt de laag uit de cache,
+  # dan zijn de asserties niet opnieuw gedraaid — een openssh-update in Debian
+  # invalideert die laag niet.
   #
   # Een eigen job en niet een stap in build-and-push: daar zou een falende build
   # ná de push maar vóór het signen kunnen landen, precies de toestand

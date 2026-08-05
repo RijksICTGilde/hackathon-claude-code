@@ -82,6 +82,13 @@ prepare_host_key() {
              "Kepler ziet daardoor een gewijzigde host-key (known_hosts-mismatch)." >&2
         rm -f "$key" "$key.pub" || return 1
     fi
+    # Bruikbaarheid en niet alleen aanwezigheid: een bestand van 0 bytes — restant
+    # van een ssh-keygen die op een vol volume afbrak — telt anders als geldige
+    # sleutel, waarna sshd niet start en de oorzaak nergens uit de melding blijkt.
+    if [[ -f "$key" ]] && ! ssh-keygen -l -f "$key" >/dev/null 2>&1; then
+        echo "WAARSCHUWING: host-key op het volume is onbruikbaar — vervangen door een verse." >&2
+        rm -f "$key" "$key.pub" || return 1
+    fi
     # Niet op `set -e` leunen: in een conditie-context staat errexit uit, dus een
     # mislukte rm hierboven zou anders alsnog als succes doorgaan en sshd met de
     # vreemde sleutel laten starten.
@@ -89,10 +96,16 @@ prepare_host_key() {
     [[ "$(stat -c %u "$key" 2>/dev/null)" == 0 ]]
 }
 
+# De gebruikersfase moet weten hoe het hier afliep: anders schrijft die straks
+# een sleutel weg met een INFO-regel terwijl er geen sshd luistert, of geeft hij
+# advies over een var die wél gezet is. setpriv laat de omgeving ongemoeid.
+export SSHD_STATUS=disabled
 sshd_ready=false
 case "${ENABLE_SSHD:-false}" in
     true)
+        SSHD_STATUS=failed
         if [[ ! -x /usr/sbin/sshd ]]; then
+            SSHD_STATUS=absent
             echo "WAARSCHUWING: ENABLE_SSHD=true maar deze image is zonder INSTALL_SSHD=true gebouwd —" \
                  "er luistert geen sshd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
         elif [[ -L /home/claude/.ssh-host || ( -e /home/claude/.ssh-host && ! -d /home/claude/.ssh-host ) ]]; then
@@ -109,6 +122,7 @@ case "${ENABLE_SSHD:-false}" in
         fi ;;
     false) ;;
     *)
+        SSHD_STATUS=invalid
         echo "WAARSCHUWING: ENABLE_SSHD='${ENABLE_SSHD}' is ongeldig (verwacht 'true' of 'false') — sshd blijft uit." >&2 ;;
 esac
 
@@ -125,6 +139,7 @@ if [[ "$sshd_ready" == true ]]; then
     rm -f /run/sshd.pid
     if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
+        SSHD_STATUS=running
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
     else
         # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
@@ -136,6 +151,7 @@ if [[ "$sshd_ready" == true ]]; then
             echo "  - poort 22 al bezet in deze netwerk-namespace (zie /var/log/sshd.log)"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
+            echo "  - onbruikbare host-key op het volume (verwijder /home/claude/.ssh-host)"
             echo "  - setpriv kan de bounding set niet aanpassen (container mist CAP_SETPCAP)"
         } >&2
     fi

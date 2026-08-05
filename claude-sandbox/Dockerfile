@@ -286,7 +286,8 @@ RUN case "$INSTALL_PODMAN" in \
 #
 # `sshd -t`/`sshd -T` in dezelfde laag: zonder die controle levert een niet-
 # toegepaste drop-in (Include weg, optie onbekend in deze OpenSSH) een groene
-# build met stil uitgevallen hardening. De controle draait tegen het echte
+# build met stil uitgevallen hardening. De lus noemt de ontbrekende directive bij
+# naam; een kale exit-code laat de bouwer raden welke het was. De controle draait tegen het echte
 # HostKey-pad — met `sshd -h` erlangs zou sshd de config-HostKey er alleen bij
 # nemen en per aanroep een ERROR-regel over de ontbrekende sleutel printen. De
 # wegwerpsleutel verdwijnt weer in dezelfde laag.
@@ -334,13 +335,15 @@ RUN case "$INSTALL_SSHD" in \
             mkdir -p /home/claude/.ssh-host && \
             ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
             sshd -t && \
-            sshd -T | grep -qx 'passwordauthentication no' && \
-            sshd -T | grep -qx 'permitrootlogin no' && \
-            sshd -T | grep -qx 'allowagentforwarding no' && \
-            sshd -T | grep -qx 'allowtcpforwarding local' && \
-            sshd -T | grep -qx 'permitopen localhost:\* 127\.0\.0\.1:\* \[::1\]:\*' && \
-            sshd -T | grep -qx 'allowusers claude' && \
-            sshd -T | grep -qx 'pidfile /run/sshd.pid' && \
+            effective="$(sshd -T)" && \
+            for d in 'passwordauthentication no' 'permitrootlogin no' \
+                     'allowagentforwarding no' 'allowtcpforwarding local' \
+                     'permitopen localhost:* 127.0.0.1:* [::1]:*' \
+                     'allowusers claude' 'pidfile /run/sshd.pid' \
+                     'requiredrsasize 3072'; do \
+              grep -qxF "$d" <<<"$effective" || \
+                { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
+            done && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
