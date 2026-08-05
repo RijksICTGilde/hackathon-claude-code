@@ -63,7 +63,7 @@ command -v "$CLI" >/dev/null || { echo "FOUT: container-CLI '$CLI' niet gevonden
 # Poorten vroeg afvangen: een niet-numerieke waarde komt anders pas veel later
 # naar boven als een ssh-fout over een 'bad forwarding specification'.
 for _p in "PORT:$PORT" "TUNNEL_PORT:$TUNNEL_PORT"; do
-    [[ "${_p#*:}" =~ ^[1-9][0-9]*$ ]] && [[ "${_p#*:}" -le 65535 ]] ||
+    [[ "${_p#*:}" =~ ^[1-9][0-9]{0,4}$ ]] && [[ "${_p#*:}" -le 65535 ]] ||
         { echo "FOUT: ${_p%%:*}='${_p#*:}' is geen geldig poortnummer." >&2; exit 2; }
 done
 
@@ -302,14 +302,14 @@ else
     echo "  - RSA-sleutel kleiner dan 3072 bits → sshd weigert 'm (RequiredRSASize); gebruik ed25519." >&2
     exit 1
 fi
-# StrictModes weigert een authorized_keys die de inlogger niet bezit. Los
-# asserten, want anders komt die regressie binnen als een generieke
-# "login mislukt" en zoekt iedereen aan de verkeerde kant.
+# Los asserten: schrijft een regressie dit bestand in de root-fase, dan komt dat
+# anders binnen als een generieke "login mislukt" en zoekt iedereen aan de
+# verkeerde kant.
 if "$CLI" exec -u claude "$CONTAINER" sh -c \
     'test -O ~/.ssh/authorized_keys && [ "$(stat -c %a ~/.ssh/authorized_keys)" = 600 ] && [ "$(stat -c %a ~/.ssh)" = 700 ]'; then
     pass "authorized_keys van claude, 600 in een 700-directory"
 else
-    fail "authorized_keys heeft verkeerde eigenaar of rechten — StrictModes weigert 'm; het bestand hoort in de gebruikersfase geschreven te worden (entrypoint.sh), niet in de root-fase"
+    fail "authorized_keys heeft verkeerde eigenaar of rechten — het bestand hoort in de gebruikersfase geschreven te worden (entrypoint.sh), niet in de root-fase; anders kan claude zijn eigen sleutels niet meer beheren"
 fi
 
 section "4. PATH in een non-interactieve sessie"
@@ -354,6 +354,7 @@ else
         'x11forwarding no' \
         'permituserrc no' \
         'allowtcpforwarding local' \
+        'requiredrsasize 3072' \
         'permitopen localhost:* 127.0.0.1:* [::1]:*' \
         'permittunnel no' \
         'gatewayports no'

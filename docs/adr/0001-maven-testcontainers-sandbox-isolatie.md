@@ -153,9 +153,10 @@ OpenSSH zou er anders `iptables -F` mee kunnen doen.
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit
 van elke container die eruit draait. Omdat `/home/claude` van `claude` is, wordt
-type en eigendom van dat pad elke start gecontroleerd. `authorized_keys` schrijft
-`entrypoint.sh` ná de drop, zodat het bestand van de inlogger is — StrictModes
-weigert het anders.
+type en eigendom van dat pad elke start gecontroleerd — anders kiest de
+ingesloten partij zelf welke host-identiteit Kepler in `known_hosts` pint. `authorized_keys` schrijft
+`entrypoint.sh` ná de drop, zodat `~/.ssh` van `claude` blijft: wie de
+env-variabele leeg laat, beheert dat bestand zelf op het volume.
 
 ### 2.4 Gebruikersfase
 

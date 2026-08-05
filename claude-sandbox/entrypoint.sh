@@ -24,8 +24,9 @@ fi
 # waarin een client verbindt en `Permission denied` krijgt terwijl het log even
 # later meldt dat de sleutel geschreven is.
 #
-# Hier en niet in de root-fase, zodat het bestand van `claude` is: met
-# StrictModes weigert sshd een authorized_keys die de inlogger niet zelf bezit.
+# Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
+# KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
+# volume, en dat kan niet in een directory die root heeft aangemaakt.
 if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
     if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         # Valideren vóór schrijven: een pad in plaats van de sleutelinhoud, een
