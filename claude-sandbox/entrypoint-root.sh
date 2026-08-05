@@ -40,6 +40,27 @@ case "$aa_current" in
         fi ;;
 esac
 
+# Optioneel: OpenSSH-server starten zodat GitKraken Kepler via SSH een agent-
+# sessie in deze sandbox kan draaien (image gebouwd met INSTALL_SSHD=true).
+# Gehard bij build: pubkey-only, geen root, alleen user 'claude'. De poort
+# publiceer je host-side op 127.0.0.1 via compose.override.kepler.yml.
+#
+# Hier en niet na de drop: sshd bindt poort 22 en heeft root nodig voor zijn
+# privilege separation. Dat is dezelfde reden als bij de firewall — wat root
+# vereist, gebeurt vóór de drop, zodat `claude` daarna geen weg terug heeft.
+# Na init-firewall.sh, zodat de poort niet openstaat vóór de INPUT-regels staan.
+#
+# sshd forkt naar de achtergrond en overleeft de setpriv-drop als eigen proces.
+# Niet-fataal: zonder Kepler-remote is de sandbox verder gewoon bruikbaar.
+# authorized_keys schrijft entrypoint.sh na de drop, als `claude`.
+if [[ -x /usr/sbin/sshd ]]; then
+    if /usr/sbin/sshd; then
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
+    else
+        echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door." >&2
+    fi
+fi
+
 # HOME expliciet zetten: de container draait nu als root, dus Docker zet HOME op
 # /root. setpriv laat de omgeving ongemoeid, en entrypoint.sh schrijft
 # podman-config naar $HOME/.config/containers — zonder deze regel belandt die op

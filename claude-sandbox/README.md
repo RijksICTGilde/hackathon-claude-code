@@ -153,7 +153,7 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **Firewall blijft aan**: `init-firewall.sh` laat inbound vanaf het host-netwerk al toe (geen versoepeling nodig); egress-allowlist bevat `api.anthropic.com` + GitHub, dus Claude en git werken.
 - **Geen baked keys**: host-keys worden per build gegenereerd (`ssh-keygen -A`); je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY`.
 - **Auth zonder secret in env**: `ANTHROPIC_API_KEY` via de container-env bereikt een sshd-sessie níet (sshd reset de env). Gebruik `claude login` — de credentials persisten in het `claude-home` volume.
-- **sudoers minimaal**: `claude` mag via NOPASSWD uitsluitend `/usr/sbin/sshd` starten (zelfde patroon als de firewall-drop-in).
+- **Geen weg naar root voor `claude`**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image.
 - **`PerSourcePenalties no`**: OpenSSH ≥9.8 straft standaard per bron-IP (mislukte/afgebroken connecties → tijdelijke weigering). Achter een NAT/port-forward ziet sshd élke client als dezelfde bron (gvproxy op macOS, of Docker's portpublish), dus die throttling straft legitieme clients voor elkaars gedrag — Kepler opent meerdere sessies, dus dit tikt aan en blokkeert. Op een loopback-only, pubkey-only poort levert het nauwelijks beveiliging op, dus uit (zie de Dockerfile-comment; de smoke-test heeft er een regressie-guard voor). `MaxStartups` blijft op de default.
 
 ### Opzet
@@ -197,10 +197,10 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 > **Kepler-bug — `ssh exited before the tunnel on local port N was ready (code 0)`:** Kepler zet een SSH ControlMaster op en draait de tunnel als `ssh -N -L` mux-slave. Een mux-slave vraagt áltijd een sessie aan (ook met `-N` — bekend OpenSSH-gedrag), draagt de forward over aan de master en exit binnen ~10-30 ms. De poort is dan al klaar, maar Keplers readiness-poll (`waitForTunnelReady`) behandelt het ssh-child-exit als fataal en gooit vóór z'n poort-check. De forward zélf werkt (curl door de tunnel geeft HTTP 200); het is een race die Kepler verliest. Server-onafhankelijk (reproduceert ook tegen een kale sshd), dus een Kepler-bug, geen sandbox-fout. **Workaround in het image:** `/etc/zsh/zprofile` rekt de fantoom-login-shell die de mux-slave opent met een korte `sleep` (alleen non-interactieve login-shells; de `zsh -c` probe en interactieve shells blijven ongemoeid), zodat Keplers eerste poll de al-klare poort pakt vóór het child exit. Zie de Dockerfile-comment bij `INSTALL_SSHD`; de smoke-test heeft er een regressie-guard voor (sectie 7). Los dit bij voorkeur upstream op — dan kan de workaround eruit.
 
 ### Testen
-`host-agents/kepler/smoke-test.sh` draait vanaf de **host** (niet in de container) tegen een al draaiende sandbox, en verifieert poortbinding, login, PATH in een non-interactieve sessie, de hardening-weigeringen, de PerSourcePenalties- en tunnel-race-workarounds en de firewall:
+`kepler/smoke-test.sh` draait vanaf de **host** (niet in de container) tegen een al draaiende sandbox, en verifieert poortbinding, login, PATH in een non-interactieve sessie, de hardening-weigeringen, de PerSourcePenalties- en tunnel-race-workarounds en de firewall:
 ```
-./host-agents/kepler/smoke-test.sh -i ~/.ssh/kepler
-./host-agents/kepler/smoke-test.sh -i ~/.ssh/kepler --podman   # gestapelde override
+./kepler/smoke-test.sh -i ~/.ssh/kepler
+./kepler/smoke-test.sh -i ~/.ssh/kepler --podman   # gestapelde override
 ```
 `--help` toont de rest (`--host`/`--port` voor een sandbox in een VM, `--cli podman`). Exit-code 0 = alles groen.
 

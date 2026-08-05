@@ -3,8 +3,8 @@
 # Kepler-remote-opzet: een image gebouwd met INSTALL_SSHD=true, gestart met
 # compose.override.kepler.yml. Zie README 'Kepler (SSH-remote)'.
 #
-#   ./host-agents/kepler/smoke-test.sh -i ~/.ssh/kepler
-#   ./host-agents/kepler/smoke-test.sh -i ~/.ssh/kepler --podman   # gestapelde override
+#   ./kepler/smoke-test.sh -i ~/.ssh/kepler
+#   ./kepler/smoke-test.sh -i ~/.ssh/kepler --podman   # gestapelde override
 #
 # Het script start niets op en bouwt niets: het test de container die al draait.
 # Zo blijft het herhaalbaar tegen precies de opzet die je Kepler ook geeft.

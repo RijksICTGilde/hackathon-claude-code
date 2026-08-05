@@ -163,27 +163,22 @@ case "${MARKETPLACE_AUTOUPDATE:-true}" in
         ;;
 esac
 
-# Optioneel: OpenSSH-server starten zodat GitKraken Kepler via SSH een agent-
-# sessie in deze sandbox kan draaien (image gebouwd met INSTALL_SSHD=true).
-# Gehard bij build: pubkey-only, geen root, alleen user 'claude'. De poort
-# publiceer je host-side op 127.0.0.1 via compose.override.kepler.yml.
-# authorized_keys komt runtime uit KEPLER_SSH_PUBKEY (geen baked keys).
-if command -v sshd >/dev/null 2>&1; then
+# Optioneel: authorized_keys voor de Kepler-remote schrijven (image gebouwd met
+# INSTALL_SSHD=true). De sleutel komt runtime uit KEPLER_SSH_PUBKEY, zodat er
+# geen sleutel in de image gebakken zit. sshd zelf is al gestart in de root-fase.
+#
+# Dat sshd eerder draait dan dit bestand bestaat is geen probleem: sshd leest
+# authorized_keys per connectie, niet bij het starten. Schrijven hoort hier en
+# niet in de root-fase, zodat het bestand van `claude` is — sshd weigert met
+# StrictModes een authorized_keys die de inlogger niet zelf bezit.
+if [[ -x /usr/sbin/sshd ]]; then
     if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
         printf '%s\n' "$KEPLER_SSH_PUBKEY" > "$HOME/.ssh/authorized_keys"
         chmod 600 "$HOME/.ssh/authorized_keys"
         echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
     elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
-        echo "WAARSCHUWING: sshd aanwezig maar geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen. Zet KEPLER_SSH_PUBKEY in .env (zie compose.override.kepler.yml)." >&2
-    fi
-    # sshd bindt poort 22 → root nodig (sudoers-drop-in claude-sshd, alleen dit
-    # binary). Draait als daemon (fork); container blijft leven via 'sleep
-    # infinity' hieronder. Niet-fataal: bij falen draait de sandbox door.
-    if sudo /usr/sbin/sshd; then
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
-    else
-        echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door." >&2
+        echo "WAARSCHUWING: sshd draait maar er is geen KEPLER_SSH_PUBKEY en geen bestaande authorized_keys — Kepler kan niet inloggen. Zet KEPLER_SSH_PUBKEY in .env (zie compose.override.kepler.yml)." >&2
     fi
 fi
 

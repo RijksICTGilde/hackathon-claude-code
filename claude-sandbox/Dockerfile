@@ -233,6 +233,10 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 # compose.override.kepler.yml); de sandbox-firewall laat inbound vanaf het
 # host-netwerk al toe (init-firewall.sh, INPUT -s HOST_NETWORK).
 #
+# Geen sudoers-regel voor sshd: entrypoint-root.sh start hem in de root-fase,
+# vóór de privilege-drop. Zelfde patroon als de firewall — `claude` houdt geen
+# route naar root over. Zie ADR 0001 §2.3.1 "Firewall vóór de privilege-drop".
+#
 # PATH-fix: een non-interactieve SSH-sessie erft de Docker `ENV PATH` NIET, dus
 # `claude` in ~/.local/bin zou "command not found" geven. We zetten PATH in
 # /etc/zsh/zshenv (zsh = login-shell van 'claude', altijd gesourced, ook bij
@@ -277,9 +281,7 @@ RUN case "$INSTALL_SSHD" in \
             printf '\nexport PATH="/home/claude/.local/bin:$PATH"\n' >> /etc/zsh/zshenv && \
             printf 'export PATH="/home/claude/.local/bin:$PATH"\n' > /etc/profile.d/kepler-path.sh && \
             printf '# Kepler tunnel-race workaround (zie Dockerfile-comment + README): rek de\n# fantoom-login-shell van Keplers mux -N -L tunnel-slave zodat de readiness-poll\n# de al-klare poort pakt vóór het ssh-child exit. Alleen non-interactieve\n# login-shells; de `zsh -c` probe en interactieve shells blijven ongemoeid.\nif [[ ! -o interactive ]]; then sleep 0.4; fi\n' \
-              > /etc/zsh/zprofile && \
-            echo "claude ALL=(root) NOPASSWD: /usr/sbin/sshd" > /etc/sudoers.d/claude-sshd && \
-            chmod 0440 /etc/sudoers.d/claude-sshd ;; \
+              > /etc/zsh/zprofile ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
