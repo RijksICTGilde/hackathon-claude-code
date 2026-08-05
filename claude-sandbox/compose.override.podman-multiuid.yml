@@ -2,40 +2,22 @@
 # tweede uid chownen — postgres, mysql, mariadb en de meeste DB-images. In de
 # default single-uid modus faalt zo'n image met `chown: ...: Invalid argument`.
 #
-# STAPEL BOVENOP je platform-override, niet in plaats daarvan:
+# Stapel dit bovenop je platform-override, niet in plaats daarvan:
 #   docker compose -f compose.yml -f compose.override.podman-linux.yml \
 #                  -f compose.override.podman-multiuid.yml up -d --force-recreate
 # En bouw met PODMAN_MULTIUID=true in .env (zet de subuid-range in de image).
 #
-# WAAROM CAP_SYS_ADMIN
-# Multi-uid vereist `newuidmap`, en de kernel laat een uid_map-write alleen toe
-# aan wie CAP_SYS_ADMIN heeft in de doel-namespace óf er de eigenaar van is
-# (ns->owner == euid). `newuidmap` is setuid-root, dus euid 0 terwijl de
-# namespace van uid 1000 is — de eigenaars-route valt weg en de capability is
-# vereist. Op een gewone host geeft setuid-root die vanzelf; Docker sloopt
-# CAP_SYS_ADMIN uit de bounding set, dus setuid-root kán hem niet krijgen →
+# Waarom CAP_SYS_ADMIN nodig is: ADR 0001 §2.2.2 "Single-uid default, multi-uid
+# opt-in". Zonder deze override faalt podman met
 # "newuidmap: write to uid_map failed: Operation not permitted".
 #
-# WAT HET KOST
-# `claude` draait als uid 1000 met CapEff=0 en krijgt CAP_SYS_ADMIN dus niet
-# rechtstreeks in handen; alleen setuid-root-binaries kunnen hem uit de bounding
-# set trekken (hier: newuidmap/newgidmap). Sinds de hardening is er geen sudo en
-# geen sudoers-regel meer, dus de bekende route van uid 1000 naar container-root
-# is dicht.
-#
-# Wat je wél vergroot is de impact áls die escalatie er ooit tóch is. Er is geen
-# userns-remap, dus container-root is host-root-uid — niet container-breed maar
-# host-breed. Met CAP_SYS_ADMIN erbij zou container-root de padgebonden
-# /proc/sys-afscherming van AppArmor kunnen omzeilen via een verse proc-mount.
-# Twee lagen sluiten dat: (1) de Dockerfile stript de setuid-bits behalve
-# newuidmap/newgidmap, zodat er geen setuid-route meer is waarlangs de sandbox-
-# user CAP_SYS_ADMIN in handen krijgt; (2) het AppArmor-profiel weigert de
-# /proc/sys-write. Draai deze opt-in dus niet met een profiel dat op
-# flags=(unconfined) staat, en niet met een image zonder de setuid-strip.
-#
-# Die afweging valt per platform anders uit: op Mac/Windows zit er nog een
-# VM-kernelgrens onder, op Linux met bare Docker niet. Zie de security-balans in
-# docs/adr/0001-maven-testcontainers-sandbox-isolatie.md.
+# Wat het kost: `claude` heeft CapEff=0 en krijgt de capability niet rechtstreeks
+# in handen — alleen setuid-root newuidmap/newgidmap trekken hem uit de bounding
+# set, en die geven geen shell. Wat je wél vergroot is de impact áls er ooit tóch
+# een escalatie naar container-root is: er is geen userns-remap, dus die is
+# host-breed. Draai deze opt-in daarom niet met een AppArmor-profiel op
+# flags=(unconfined) en niet met een image zonder de setuid-strip. Volledige
+# afweging: ADR 0001 §4.2 "Wat open blijft".
 services:
   claude:
     cap_add:

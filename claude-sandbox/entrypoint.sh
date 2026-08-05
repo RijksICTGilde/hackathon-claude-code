@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Draait als `claude`, gestart door /opt/entrypoint-root.sh nadat die de firewall
 # heeft opgezet en naar deze user is gedropt. Hier is geen root meer bereikbaar:
-# er is geen sudo en geen sudoers-regel. Zie entrypoint-root.sh voor het waarom.
+# er is geen sudo en geen sudoers-regel. Zie ADR 0001 §2.4 "Gebruikersfase".
 if [[ "$(id -u)" -eq 0 ]]; then
     echo "FATAL: entrypoint.sh draait als root. Dit script hoort als 'claude' te draaien," \
          "gestart via /opt/entrypoint-root.sh. Start de container via de ENTRYPOINT," \
@@ -19,9 +19,9 @@ fi
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de
 # image werkt niet betrouwbaar: een al bestaand named volume wordt NIET opnieuw
 # uit de image gevuld, dus de image-versie wordt geschaduwd. Daarom hier bij
-# elke start. Storage is altijd vfs; zie ADR 0001 §2.4.1 voor waarom
-# fuse-overlayfs niet ondersteund wordt. ignore_chown_errors alleen in
-# single-uid.
+# elke start. Storage is altijd vfs; waarom fuse-overlayfs niet ondersteund
+# wordt staat in ADR 0001 §2.4.1 "Storage: alleen vfs". ignore_chown_errors
+# alleen in single-uid.
 if command -v podman >/dev/null 2>&1; then
     # Guard tegen een silent misconfig: het image is mét podman gebouwd
     # (INSTALL_PODMAN=true), maar de container kan gestart zijn met ALLEEN
@@ -75,27 +75,14 @@ if command -v podman >/dev/null 2>&1; then
     fi
     printf '[storage]\ndriver = "vfs"\n\n[storage.options.vfs]\n%s' "$chown_opt" > "$storage_conf"
     echo "INFO: rootless podman storage.conf → driver=vfs multiuid=$multiuid ($storage_conf)"
-    # Podman zet default de sysctl net.ipv4.ping_group_range; crun probeert die te
-    # schrijven, maar /proc/sys is read-only in de outer container → "Read-only
-    # file system". Leeg de default-sysctls zodat crun niets probeert te zetten.
-    # default_sysctls=[]: zie ping_group_range hierboven.
-    # netns="pasta": default-netwerkmodus voor álle containers, óók die via de
-    # podman-Docker-API (Testcontainers). Zonder dit zet netavark voor een
-    # bridge-netwerk een IPv6-sysctl op het interface in de outer container-netns,
-    # wat faalt met "netavark: failed to set autoconf sysctl: Permission denied":
-    # die netns wordt door init_user_ns geowned (geen userns-remap), dus rootless
-    # podman mag er /proc/sys/net niet schrijven. pasta geeft elke container een
-    # eigen netwerk met port-forwarding naar localhost en vermijdt de bridge —
-    # precies genoeg voor Testcontainers met published ports. Bonus: nested egress
-    # loopt met pasta als lokaal verkeer via de OUTPUT-chain en valt dus onder de
-    # egress-allowlist van init-firewall.sh — anders dan bij de bridge, die via
-    # FORWARD routeerde en de allowlist kon omzeilen. Beperking: container-naar-
-    # container over netwerknamen (Testcontainers `Network`) werkt niet; dat
-    # vereist userns-remap op de outer container (spike, issue #82).
-    # firewall_driver=iptables: netavark roept default `nft` aan voor bridge-
-    # netwerken, maar die binary zit niet in de image. De iptables-driver gebruikt
-    # iptables-nft (al aanwezig) en heeft de nft-binary niet nodig. Met de
-    # pasta-default is dit alleen nog relevant als iemand expliciet een
+    # default_sysctls=[]: podman zet default net.ipv4.ping_group_range, maar
+    # /proc/sys is read-only in de outer container → "Read-only file system".
+    # Leegmaken zorgt dat crun niets probeert te zetten.
+    # netns="pasta": netwerkmodus voor álle geneste containers, óók die via de
+    # podman-Docker-API (Testcontainers). Waarom geen bridge, en wat het kost:
+    # ADR 0001 §2.4.2 "Netwerk: pasta".
+    # firewall_driver=iptables: netavark roept default `nft` aan, maar die binary
+    # zit niet in de image. Alleen nog relevant als iemand expliciet een
     # bridge-netwerk aanmaakt.
     containers_conf="$conf_dir/containers.conf"
     if [[ ! -f "$containers_conf" ]]; then
@@ -120,18 +107,9 @@ if command -v podman >/dev/null 2>&1; then
         fi
     fi
 
-    # De podman-socket hier starten i.p.v. per build-sessie. Het eerste
-    # podman-commando maakt het pause-proces aan dat de user-namespace vastlegt,
-    # en álles daarna joint dat proces. Lukt die eerste aanmaak níet met de
-    # volledige subuid-range, dan blijft de hele container in single-uid hangen —
-    # ook nadat de oorzaak weg is — en falen DB-images op "chown: Invalid
-    # argument". Dat gebeurt bijvoorbeeld als het eerste commando onder
-    # no_new_privs draait: newuidmap is setuid-root en wint onder die vlag geen
-    # privileges meer ("write to uid_map failed"). Door de socket hier op te
-    # zetten, in een schone omgeving vóór er iets anders draait, joinen latere
-    # aanroepen een gezonde namespace — ook die onder no_new_privs.
-    # De socket geeft geen nieuwe rechten: alles wat als `claude` draait kon al
-    # podman aanroepen.
+    # De podman-socket hier starten i.p.v. per build-sessie, zodat het pause-proces
+    # dat de user-namespace vastlegt in een schone omgeving ontstaat. Waarom dat
+    # uitmaakt: ADR 0001 §2.4.3 "Podman-socket bij container-start".
     if [[ -e /dev/net/tun ]]; then
         # Komt normaal uit de podman-override (zelfde pad als DOCKER_HOST daar);
         # de fallback houdt dit blok zelfstandig werkend. In /tmp en niet onder

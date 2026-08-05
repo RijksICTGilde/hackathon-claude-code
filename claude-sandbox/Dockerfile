@@ -222,28 +222,16 @@ USER root
 # Copy and set up firewall script
 COPY init-firewall.sh /usr/local/bin/
 # Geen sudoers-regel: de firewall draait in de root-fase van de entrypoint, vóór
-# de drop naar `claude`. Een NOPASSWD-regel met SETENV was hier eerder een
-# directe route van uid 1000 naar container-root — zie entrypoint-root.sh.
+# de drop naar `claude`. Zie ADR 0001 §2.3.1 "Firewall vóór de privilege-drop".
 RUN chmod +x /usr/local/bin/init-firewall.sh
 
-# Optioneel: rootless Podman voor Maven+Testcontainers ín de container.
-# Bediening: claude-sandbox/podman/README.md. Ontwerp en meetresultaten:
-# docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md.
-# Default uit — alleen nodig als je Testcontainers nested wil draaien. Vereist
-# runtime de seccomp/apparmor-stand uit compose.override.podman-linux.yml of
-# -macos.yml (zie claude-sandbox/podman/README.md).
+# Optioneel: rootless Podman voor Maven+Testcontainers ín de container. Default
+# uit. Bediening: claude-sandbox/podman/README.md. Afwegingen: ADR 0001 §2.2
+# "Bouwfase (image)".
 #
-# SINGLE-UID (default): het `sed` hieronder verwijdert een eventuele
-# subuid/subgid-range voor `claude`. Zonder subuid-entry mapt podman alleen de
-# eigen uid als root (count 1) en gebruikt `newuidmap` niet — die heeft
-# CAP_SYS_ADMIN nodig, en Docker laat die per default uit de bounding set (zie
-# spec, blokkade #2). Prijs: images die naar een tweede uid chownen (postgres,
-# de meeste DB-images) starten niet.
-#
-# MULTI-UID (PODMAN_MULTIUID=true): zet die range juist wél, zodat `newuidmap`
-# een echte range mapt en zulke images werken. Vereist runtime CAP_SYS_ADMIN via
-# compose.override.podman-multiuid.yml — zonder die override faalt podman met
-# "write to uid_map failed"; de entrypoint waarschuwt daarop.
+# De `sed` verwijdert de subuid/subgid-range voor `claude` (single-uid, default);
+# bij PODMAN_MULTIUID=true wordt hij er juist weer in gezet. Wat dat verschil
+# betekent staat in ADR 0001 §2.2.2 "Single-uid default, multi-uid opt-in".
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
 RUN case "$INSTALL_PODMAN" in \
@@ -262,18 +250,11 @@ RUN case "$INSTALL_PODMAN" in \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
-# Strip setuid/setgid-bits, behalve op de helpers die rootless podman echt nodig
-# heeft: newuidmap/newgidmap (multi-uid uid-mapping). Waarom: de privilege-drop in entrypoint-root.sh laat
-# bewust --no-new-privs weg (dat breekt newuidmap), dus zonder deze strip kan
-# `claude` na de drop euid 0 winnen via élke setuid-root-binary (su, mount, passwd,
-# ...). De kernel vult bij zo'n setuid-exec de permitted caps uit de bounding set —
-# in de multi-uid opt-in inclusief CAP_SYS_ADMIN — waarmee de root-entrypoint-fix
-# te omzeilen zou zijn (mount van een verse procfs → core_pattern → host-root).
-# Dit maakt de root-entrypoint-laag onafhankelijk van de AppArmor-laag. De strip
-# raakt ook de setuid `mount`/`umount`, wat de proc-remount-bypass op binary-niveau
-# dichtzet; rootless podman mount via de syscall in zijn eigen userns, niet via
-# deze binaries. Geverifieerd worden gestript: su, mount, umount, passwd, chsh,
-# chfn, chage, expiry, gpasswd, newgrp, ssh-agent, ssh-keysign, unix_chkpwd.
+# Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
+# heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
+# kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.
+# Verwijder de regel dus niet als een build erop stukloopt — ADR 0001 §2.2.3
+# "Setuid-strip" beschrijft wat er dan open komt te staan.
 RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
       ! -name newuidmap ! -name newgidmap \
       -exec chmod -s {} + 2>/dev/null || true

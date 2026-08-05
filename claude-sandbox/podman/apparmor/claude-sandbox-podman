@@ -10,27 +10,24 @@
 #   3. De rest van docker-defaults deny-regels blijft staan — met name de
 #      /proc/sys-denies.
 #
-# WAAROM DIE /proc/sys-DENIES HIER HET WERK DOEN
-# De podman-override zet `systempaths=unconfined`, waardoor Docker's masked en
-# read-only /proc-paden vervallen en /proc/sys read-write gemount is. Er is geen
+# Waarom die /proc/sys-denies hier het werk doen. De podman-override zet
+# `systempaths=unconfined`, waardoor /proc/sys read-write gemount is. Er is geen
 # userns-remap, dus container-root is host-root-uid, en
-# /proc/sys/kernel/core_pattern is enkel DAC-beschermd (0644 root:root): geen
-# capability-check. Wie root wordt in de container kan daar een usermode-helper
-# in schrijven en die draait bij de eerstvolgende core-dump als echte host-root,
-# buiten alle namespaces.
-# AppArmor mediateert dat schrijfpad los van de vraag of de mount read-only is.
-# Deze regels zijn dus de laatste laag die de escape sluit, ook als
-# systempaths=unconfined blijft staan.
+# /proc/sys/kernel/core_pattern is enkel DAC-beschermd — geen capability-check.
+# Deze regels zijn de laatste laag die dat schrijfpad sluit. Volledige
+# onderbouwing: ADR 0001 §4.3 "Welke laag welke escape sluit".
 #
-# Installeren op de HOST:  ./podman/setup-host.sh
-# Draaien:  docker ... --security-opt apparmor=claude-sandbox-podman
+# Installeren op de host: ./podman/setup-host.sh
+# Toepassen: gebeurt via de compose-override, die
+# `apparmor=claude-sandbox-podman` meegeeft. Je start de container dus gewoon met
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml up -d
 #
-# ITEREREN ALS PODMAN BREEKT
-# Te strak en podman start geen geneste containers meer. Het aa-complain/dmesg/
-# aa-enforce-diagnoserecept staat in claude-sandbox/docs/hardening-verificatie.md
-# (sectie 4). Verruim gericht op basis van de DENIED-regels; val niet terug op
-# flags=(unconfined), want dan is de escape hierboven weer open. Let op: laat het
-# profiel niet in complain staan — entrypoint-root.sh faalt daar bij de start op.
+# Itereren als podman breekt. Te strak en podman start geen geneste containers
+# meer. Het aa-complain/dmesg/aa-enforce-diagnoserecept staat in
+# claude-sandbox/docs/hardening-verificatie.md (sectie 4). Verruim gericht op
+# basis van de DENIED-regels; val niet terug op flags=(unconfined), want dan is
+# de escape hierboven weer open. Laat het profiel niet in complain staan —
+# entrypoint-root.sh faalt daar bij de start op.
 #
 # abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
 # parser, dan strijkt setup-host.sh deze regel er automatisch uit.
