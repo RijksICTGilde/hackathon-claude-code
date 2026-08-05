@@ -204,10 +204,10 @@ else
     fail "/etc/sudoers.d is niet leeg — sshd hoort in de root-fase te starten, niet via sudo"
 fi
 if "$CLI" exec "$CONTAINER" sh -c \
-    'test -z "$(find / -xdev -type f -perm -4000 ! -name newuidmap ! -name newgidmap 2>/dev/null)"'; then
-    pass "geen setuid-binaries buiten newuidmap/newgidmap"
+    'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) ! -name newuidmap ! -name newgidmap 2>/dev/null)"'; then
+    pass "geen setuid/setgid-binaries buiten newuidmap/newgidmap"
 else
-    fail "setuid-root-binary aangetroffen — de setuid-strip in de Dockerfile draait niet ná alle apt-installs"
+    fail "setuid/setgid-binary aangetroffen — de strip in de Dockerfile draait niet ná alle apt-installs"
 fi
 
 # De host-key hoort bij eerste start op het volume te ontstaan, niet in de
@@ -218,10 +218,32 @@ if "$CLI" exec "$CONTAINER" sh -c '! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'
 else
     fail "host-keys in /etc/ssh — die zijn in de image gebakken; de Dockerfile hoort ze na de apt-install te verwijderen"
 fi
-if "$CLI" exec "$CONTAINER" sh -c 'test -f /home/claude/.ssh-host/ssh_host_ed25519_key'; then
-    pass "host-key op het claude-home volume"
+# Eigendom en type expliciet toetsen: `claude` bezit /home/claude en kan het pad
+# vervangen, en sshd accepteert een host-key van een andere user zonder morren.
+if "$CLI" exec "$CONTAINER" sh -c '
+    [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 700" ] &&
+    [ ! -L /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
+    [ -f /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
+    [ "$(stat -c %u /home/claude/.ssh-host/ssh_host_ed25519_key)" = 0 ]'; then
+    pass "host-key op het volume, van root, in een 0700-directory"
 else
-    fail "geen host-key op /home/claude/.ssh-host — entrypoint-root.sh maakt hem daar aan"
+    fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
+fi
+if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0 640" ]'; then
+    pass "auth-log 640 en van root (claude leest mee, schrijft niet)"
+else
+    fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
+fi
+# sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
+# OpenSSH meteen de iptables-regels uit.
+if "$CLI" exec "$CONTAINER" sh -c '
+    pid=$(pgrep -x sshd | head -1) || exit 1
+    bnd=$(awk "/^CapBnd:/ {print \$2}" /proc/$pid/status)
+    # CAP_NET_ADMIN=12, CAP_NET_RAW=13
+    [ $(( 0x$bnd & (1 << 12) )) -eq 0 ] && [ $(( 0x$bnd & (1 << 13) )) -eq 0 ]'; then
+    pass "sshd draait zonder NET_ADMIN/NET_RAW in de bounding set"
+else
+    fail "sshd heeft NET_ADMIN of NET_RAW — de setpriv --bounding-set in entrypoint-root.sh pakt niet"
 fi
 
 section "2. Poortbinding — alleen loopback"

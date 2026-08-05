@@ -153,15 +153,20 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **Geen sleutels in de image**: host-keys worden bij eerste start op het `claude-home` volume aangemaakt, niet tijdens de build — een privésleutel in een image-layer zou iedereen met die image de identiteit van je sandbox geven. Je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY` en wordt gevalideerd voor hij weggeschreven wordt.
 - **Auth-logging**: sshd logt naar `/var/log/sshd.log` in de container (er draait geen syslog-daemon; zonder dit verdwijnt elke login spoorloos). `LogLevel VERBOSE` zet de key-fingerprint erbij.
 - **Auth zonder secret in env**: `ANTHROPIC_API_KEY` via de container-env bereikt een sshd-sessie níet (sshd reset de env). Gebruik `claude login`.
-- **Geen weg naar root voor `claude`**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image.
+- **Geen sudo- of setuid-route naar root**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image, en setuid-bits worden gestript.
+- **sshd erft de firewall-capabilities niet**: hij start via `setpriv --bounding-set=-net_admin,-net_raw`, zodat een lek in OpenSSH niet meteen `iptables -F` kan doen.
+- **`PermitOpen localhost:*`**: Keplers `-L`-tunnel mag alleen naar de container zelf, niet naar de docker-gateway of buurcontainers.
 - **`PerSourcePenalties no`**: OpenSSH ≥9.8 straft per bron-IP. Keplers kortlevende tunnel-connecties tellen als afgebroken sessies, en achter een NAT/port-forward (gvproxy op macOS, Docker's portpublish) ziet sshd élke client als dezelfde bron — die straf treft dus alle clients samen. Met pubkey-only valt er niets te raden, dus de maatregel kost meer dan hij oplevert; `LoginGraceTime`/`MaxAuthTries` dekken de resterende DoS-hoek af. De smoke-test heeft er een regressie-guard voor.
 
 ### Beveiliging (wat het níet dekt)
 - **De loopback-binding geldt alleen vanaf de host.** Binnen de container luistert sshd op `0.0.0.0:22`, en `init-firewall.sh` accepteert inbound vanaf het hele bridge-subnet. Een andere container op datzelfde compose-netwerk bereikt poort 22 dus rechtstreeks, langs de `127.0.0.1`-publish om. Draai geen onvertrouwde containers op dit netwerk.
 - **Een geslaagde login is een volledige shell als `claude`** — inclusief schrijfrechten op de host-bindmount `${PROJECTS_DIR}:/home/claude/projects` en leestoegang tot de `claude login`-credentials op het volume. De SSH-hardening beperkt wie binnenkomt, niet wat die daarna mag.
-- **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee lokale poorten van de container benaderen.
+- **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee poorten op de container zelf benaderen. `PermitOpen localhost:*` houdt dat binnen de container — draait je devserver niet op loopback maar op het container-IP, dan werkt de tunnel ernaartoe niet.
 - **Geen agent-forwarding.** `AllowAgentForwarding no` houdt je host-sleutels buiten de sandbox, maar betekent ook dat je vanuit een Kepler-worktree niet met de host-sleutel kunt pushen. Regel git-toegang ín de container (`gh auth login`).
-- **De auth-log is niet duurzaam.** `/var/log/sshd.log` staat op de container-laag, niet op het volume: een recreate wist hem. Voor bewaren moet je hem zelf wegschrijven.
+- **De auth-log is niet duurzaam en roteert niet.** `/var/log/sshd.log` staat op de container-laag, niet op het volume: een recreate wist hem. Er is geen rotatie, dus veel loginverkeer laat de writable layer groeien. Wil je bewaren, schrijf hem zelf weg.
+- **Een lek in sshd levert container-root op.** De daemon draait als root (nodig voor privilege separation), dus een pre-auth-kwetsbaarheid weegt zwaarder dan een gecompromitteerde sessie als `claude`.
+- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot en buiten de Trivy-filesystemscan. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
+- **Bij een `docker exec` als root** staat `/home/claude/.local/bin` — door `claude` beschrijfbaar — vooraan in `PATH`. Dat is niet nieuw in deze opzet, maar de kring die als `claude` kan draaien wordt met SSH wel groter. Gebruik `docker exec -u claude`.
 
 ### Opzet
 1. **Build met sshd** (opt-in; vereist image-rebuild + volume-recreate zoals elke toggle):

@@ -269,6 +269,16 @@ RUN case "$INSTALL_PODMAN" in \
 # niet, dus `claude` in ~/.local/bin zou "command not found" geven. zsh is de
 # login-shell van `claude` en sourcet zshenv altijd, ook bij `zsh -c`.
 #
+# Ciphers/MACs wel gepind, KexAlgorithms bewust niet: de Debian-defaults laten
+# hmac-sha1 en umac-64 toe, maar de default-kexlijst begint juist met de
+# post-quantum hybride uit OpenSSH 10. Die vastpinnen op curve25519 zou een
+# downgrade zijn.
+#
+# PermitOpen: `AllowTcpForwarding local` laat `-L` naar élke bestemming toe die
+# de firewall doorlaat, en OUTPUT accepteert het hele bridge-subnet. Zonder deze
+# regel kan een sessie langs de loopback-publish heen pivoten naar de
+# docker-gateway en naar buurcontainers.
+#
 # PerSourcePenalties uit: achter een NAT/port-forward deelt elke client één
 # bron-IP, en Keplers kortlevende tunnel-connecties tellen als afgebroken
 # sessies — die straf zou dus alle clients treffen. LoginGraceTime/MaxAuthTries
@@ -302,6 +312,7 @@ RUN case "$INSTALL_SSHD" in \
               'AllowAgentForwarding no' \
               'AllowStreamLocalForwarding no' \
               'AllowTcpForwarding local' \
+              'PermitOpen localhost:*' \
               'GatewayPorts no' \
               'PermitTunnel no' \
               'LogLevel VERBOSE' \
@@ -309,6 +320,9 @@ RUN case "$INSTALL_SSHD" in \
               'MaxAuthTries 3' \
               'ClientAliveInterval 300' \
               'ClientAliveCountMax 2' \
+              'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com' \
+              'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
+              'RequiredRSASize 3072' \
               'PerSourcePenalties no' \
               'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
               > /etc/ssh/sshd_config.d/kepler.conf && \
@@ -323,6 +337,7 @@ RUN case "$INSTALL_SSHD" in \
             sshd -T | grep -qx 'permitrootlogin no' && \
             sshd -T | grep -qx 'allowagentforwarding no' && \
             sshd -T | grep -qx 'allowtcpforwarding local' && \
+            sshd -T | grep -qx 'permitopen localhost:\*' && \
             sshd -T | grep -qx 'allowusers claude' && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \

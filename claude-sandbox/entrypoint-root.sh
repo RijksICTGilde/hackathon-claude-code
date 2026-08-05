@@ -82,7 +82,8 @@ prepare_host_key() {
     if [[ -L "$key" || -L "$key.pub" || ( -e "$key" && ! -f "$key" ) ]]; then
         echo "WAARSCHUWING: host-key-pad op het volume is geen gewoon bestand — vervangen." >&2
         rm -rf -- "$key" "$key.pub" || return 1
-    elif [[ -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ]]; then
+    elif [[ ( -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ) ||
+            ( -f "$key.pub" && "$(stat -c %u "$key.pub" 2>/dev/null)" != 0 ) ]]; then
         echo "WAARSCHUWING: host-key op het volume is niet van root — vervangen door een verse." \
              "Kepler ziet daardoor een gewijzigde host-key (known_hosts-mismatch)." >&2
         rm -f "$key" "$key.pub" || return 1
@@ -100,7 +101,7 @@ case "${ENABLE_SSHD:-false}" in
         if [[ ! -x /usr/sbin/sshd ]]; then
             echo "WAARSCHUWING: ENABLE_SSHD=true maar deze image is zonder INSTALL_SSHD=true gebouwd —" \
                  "er luistert geen sshd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
-        elif [[ -e /home/claude/.ssh-host && ( -L /home/claude/.ssh-host || ! -d /home/claude/.ssh-host ) ]]; then
+        elif [[ -L /home/claude/.ssh-host || ( -e /home/claude/.ssh-host && ! -d /home/claude/.ssh-host ) ]]; then
             echo "WAARSCHUWING: /home/claude/.ssh-host is geen directory (symlink of bestand) — host-key niet aanmaakbaar," \
                  "sshd blijft uit. Verwijder het pad op het claude-home volume." >&2
         elif ! install -d -m 700 -o root -g root /home/claude/.ssh-host; then
@@ -118,7 +119,11 @@ case "${ENABLE_SSHD:-false}" in
 esac
 
 if [[ "$sshd_ready" == true ]]; then
-    if /usr/sbin/sshd -E /var/log/sshd.log; then
+    # Zonder bounding-set draait sshd met de NET_ADMIN/NET_RAW die de container
+    # voor de firewall heeft. sshd heeft die niet nodig, en met die capabilities
+    # zou een pre-auth-lek in OpenSSH meteen `iptables -F` opleveren — precies de
+    # maatregel waar de sandbox op rust.
+    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log; then
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
     else
         {
@@ -127,6 +132,7 @@ if [[ "$sshd_ready" == true ]]; then
             echo "  - poort 22 al bezet in deze netwerk-namespace"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
+            echo "  - setpriv kan de bounding set niet aanpassen (container mist CAP_SETPCAP)"
         } >&2
     fi
 fi
