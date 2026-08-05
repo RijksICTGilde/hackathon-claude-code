@@ -17,6 +17,7 @@ CONTAINER=claude-sandbox
 PODMAN=false
 CLI=docker
 EXPECT_NO_SSHD=false
+TUNNEL_PORT=22322
 
 usage() {
     cat <<'EOF'
@@ -33,6 +34,7 @@ Gebruik: smoke-test.sh -i <private-key> [opties]
       --expect-no-sshd Keer de verwachting om: verifieert dat een container
                        ZONDER de Kepler-opzet geen sshd draait en geen poort
                        publiceert. Vereist geen key.
+      --tunnel-port N  Lokale poort voor de -L tunneltest (default 22322)
   -h, --help           Deze hulp
 EOF
 }
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         -c|--container) need_value "$@"; CONTAINER="$2"; shift 2 ;;
         --podman)       PODMAN=true; shift ;;
         --expect-no-sshd) EXPECT_NO_SSHD=true; shift ;;
+        --tunnel-port)  need_value "$@"; TUNNEL_PORT="$2"; shift 2 ;;
         --cli)          need_value "$@"; CLI="$2"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *) echo "FOUT: onbekende optie '$1'" >&2; usage >&2; exit 2 ;;
@@ -461,12 +464,12 @@ section "8b. Tunnel naar de container (-L)"
 # sshd vergelijkt de bestemming met strcmp, dus een client die 127.0.0.1 stuurt
 # matcht niet op een regel die alleen `localhost` toestaat. Een configcheck
 # vangt dat niet — alleen een echte forward.
-TUNNEL_PORT=22322
-if (exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT") 2>/dev/null; then
-    # Overslaan i.p.v. gokken: luistert hier al iets, dan meet de banner-check
-    # dat andere proces en meldt het script groen zonder ooit een tunnel te
-    # hebben opgezet.
-    fail "poort $TUNNEL_PORT is al bezet op deze host — de tunnel is niet te testen (kies een vrije poort of ruim een blijven hangen 'ssh -N -L' op)"
+if { exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT"; } 2>/dev/null; then
+    exec 3<&-
+    # Rood i.p.v. gokken: luistert hier al iets, dan meet de banner-check dat
+    # andere proces en meldt het script groen zonder ooit een tunnel te hebben
+    # opgezet.
+    fail "poort $TUNNEL_PORT is al bezet op deze host — de tunnel is niet te testen; ruim een blijven hangen 'ssh -N -L' naar deze poort op (--tunnel-port kiest een andere)"
 else
     TUNNEL_ERR="$(mktemp)"
     ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
@@ -479,7 +482,10 @@ else
     # `timeout` is GNU coreutils en ontbreekt op macOS.
     BANNER=""
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        if exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT" 2>/dev/null; then
+        # Brace-group: bij `exec 3<>... 2>/dev/null` worden de redirects van
+        # links naar rechts verwerkt, dus de connect-fout is al geprint voor
+        # /dev/null in beeld komt — dat lekt twee regels per poging.
+        if { exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT"; } 2>/dev/null; then
             IFS= read -r -t 5 BANNER <&3 || BANNER=""
             exec 3<&-
             break
