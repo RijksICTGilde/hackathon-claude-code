@@ -22,12 +22,10 @@
 # `apparmor=claude-sandbox-podman` meegeeft. Je start de container dus gewoon met
 #   docker compose -f compose.yml -f compose.override.podman-linux.yml up -d
 #
-# Itereren als podman breekt. Te strak en podman start geen geneste containers
-# meer. Het aa-complain/dmesg/aa-enforce-diagnoserecept staat in
-# claude-sandbox/docs/hardening-verificatie.md (sectie 4). Verruim gericht op
-# basis van de DENIED-regels; val niet terug op flags=(unconfined), want dan is
-# de escape hierboven weer open. Laat het profiel niet in complain staan —
-# entrypoint-root.sh faalt daar bij de start op.
+# Val niet terug op flags=(unconfined): dan is de escape hierboven weer open. En
+# laat het profiel niet in complain staan — entrypoint-root.sh faalt daar bij de
+# start op. Breekt podman op een weigering van dit profiel, dan staat het
+# diagnoserecept in ADR 0001 §2.5.4 "Als het profiel te strak blijkt".
 #
 # abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
 # parser, dan strijkt setup-host.sh deze regel er automatisch uit.

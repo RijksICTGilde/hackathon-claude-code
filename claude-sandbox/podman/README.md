@@ -54,20 +54,20 @@ container — een openstaande spike (issue #82).
 > netavark-bridge routeerde nested verkeer via de FORWARD-chain, waar de allowlist
 > niet zit — pasta sluit dat gat.
 
-## Welk pad volg je?
+## Installeren
 
-Er zijn drie varianten. Kies er één en sla de andere over:
+Drie varianten van dezelfde stap. Kies er één en sla de andere over:
 
 | Jouw omgeving | Sectie |
 |---|---|
-| Linux met Docker | **"Stappen op Linux"** hieronder |
-| macOS met `podman machine` | "macOS (Podman-machine)" |
-| macOS met Rancher Desktop | "Rancher Desktop op macOS" |
+| Linux met Docker | [Linux](#linux) |
+| macOS met `podman machine` | [macOS met podman machine](#macos-met-podman-machine) |
+| macOS met Rancher Desktop | [macOS met Rancher Desktop](#macos-met-rancher-desktop) |
 
 Heb je database-images nodig (postgres, mysql, mariadb), lees dan daarna ook
-"Multi-uid (opt-in)".
+[Multi-uid](#multi-uid-opt-in-db-images-zoals-postgres).
 
-## Stappen op Linux
+### Linux
 
 Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
 `docs/` zijn vanaf de repo-root. Op macOS gelden deze stappen niet — daar heb je
@@ -123,7 +123,7 @@ geen `setup-host.sh` nodig.
 
 Verwacht: het script print `nested-ok` en eindigt met `OK — Testcontainers werkt`.
 
-## macOS (Podman-machine)
+### macOS met podman machine
 
 Bevestigd op een Mac met een **Podman-machine** (`applehv` → Fedora CoreOS VM):
 rootless podman-in-podman draait, nested containers werken (`nested-ok`) en de
@@ -172,7 +172,7 @@ Podman-machine is rootful (`podman machine inspect ... {{.Rootful}}` → `true`)
 dus `cap_add: SYS_ADMIN` komt daadwerkelijk in de bounding set. Op een rootless
 machine is dat niet verifieerd.
 
-### Eigen build draaien
+#### Eigen build draaien
 Niets voorbereiden: `./mvnw test` werkt. De entrypoint start bij container-start
 de podman-socket op `/tmp/podman-run-1000/podman/podman.sock`, en de
 podman-override zet `DOCKER_HOST`, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`,
@@ -192,7 +192,7 @@ oorzaak weg is. De rij over `uidmap=[{0 1000 1}]` in
 [Fallbacks als het niet meteen draait](#fallbacks-als-het-niet-meteen-draait)
 beschrijft hoe je dat herkent en herstelt.
 
-## Rancher Desktop op macOS
+### macOS met Rancher Desktop
 
 Bevestigd (2026-07-31). Rancher draait een Lima-VM met Alpine en rootful dockerd;
 de container zit in de init-userns. Die VM heeft **geen AppArmor en geen SELinux**

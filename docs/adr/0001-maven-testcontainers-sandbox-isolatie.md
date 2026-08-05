@@ -241,6 +241,27 @@ AppArmor-profiel uit §2.5.2 er moet zijn — zie §4.3.
 
 Op SELinux-hosts staat daarnaast `label=disable`; elders is dat een no-op.
 
+#### 2.5.4 Als het profiel te strak blijkt
+
+Een te strak profiel laat podman geen geneste containers meer starten. Zet het
+dan tijdelijk in klaagmodus, reproduceer de fout, en kijk wat er geweigerd
+wordt:
+
+```
+sudo aa-complain /etc/apparmor.d/claude-sandbox-podman
+# reproduceer de fout
+sudo dmesg | grep -i 'apparmor.*DENIED'
+sudo aa-enforce /etc/apparmor.d/claude-sandbox-podman
+```
+
+`entrypoint-root.sh` weigert standaard te starten zolang het profiel in
+klaagmodus staat (§2.3.2). Recreate de container daarom eenmalig met
+`ALLOW_APPARMOR_COMPLAIN=true` in de environment, en haal die env weg zodra je
+klaar bent.
+
+Verruim het profiel gericht op basis van de `DENIED`-regels. Val niet terug op
+`flags=(unconfined)`: dan staat de escape uit §4.1 weer open.
+
 ## 3. Overwogen en verworpen
 
 - **Host-side Maven-agent** (de vorige oplossing). Verworpen als container→host
@@ -326,7 +347,9 @@ de negatieve tests die aantonen dat de escape dicht is.
 Geschikt voor het reële dreigingsbeeld van #44: Claude die rogue gaat of via
 prompt-injectie wordt aangestuurd, in semi-vertrouwde code. Niet geschikt voor
 volledig vijandige, kernel-exploit-capabele code — daar hoort een eigen kernel
-bij (VM, Kata of gVisor), en die route is uitgesteld.
+bij (VM, Kata of gVisor). Die route is uitgesteld; een eerste uitwerking staat in
+[#99](https://github.com/RijksICTGilde/hackathon-claude-code/pull/99), nog
+ongetest.
 
 ## 5. Consequenties
 
@@ -344,6 +367,7 @@ bij (VM, Kata of gVisor), en die route is uitgesteld.
   `claude-sandbox/podman/README.md`.
 - **Overlay-storage is niet beschikbaar** (§2.4.1). Builds die veel image-lagen
   extraheren zijn daardoor trager dan met fuse-overlayfs.
-- **Een eigen kernel (VM, Kata, gVisor) is uitgesteld**, niet afgewezen. Op Mac
+- **Een eigen kernel (VM, Kata, gVisor) is uitgesteld**, niet afgewezen — zie
+  [#99](https://github.com/RijksICTGilde/hackathon-claude-code/pull/99). Op Mac
   en Windows is die kernelgrens er al, omdat Docker Desktop, Rancher en
   `podman machine` in een VM draaien.
