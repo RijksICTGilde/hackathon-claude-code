@@ -1,41 +1,24 @@
 # Maven + Testcontainers via rootless Podman-in-Docker
 
-Draai Testcontainers **ín** de sandbox via rootless Podman — zonder host-agent,
-`--privileged` of Docker-socket. `mvn` en pom-plugins draaien in de sandbox als
-non-root `claude`, Testcontainers-containers zijn geneste
-rootless-userns-children. Dit is de enige ondersteunde route: de Maven
-host-agent is verwijderd, omdat die per ontwerp een container→host
-code-execution-bridge was (issue #44, ADR 0001).
+Draai Testcontainers **ín** de sandbox via rootless Podman — zonder
+`--privileged` en zonder Docker-socket. `mvn` en pom-plugins draaien in de
+sandbox als non-root `claude`; Testcontainers-containers zijn geneste
+rootless-userns-children.
 
-## Migratie vanaf de host-agent
-
-Draaide je eerder de host-agent? Die code is uit de repo, maar dat stopt geen
-proces of registratie op je eigen machine. Ruim die eenmalig op:
-
-1. Stop een draaiende `run.sh` en controleer dat er niets meer op poort 7777
-   luistert: `ss -ltnp | grep 7777` (leeg = goed). Die listener bond auth-loos
-   op `0.0.0.0`.
-2. Verwijder de MCP-registratie in de container:
-   `docker exec -u claude claude-sandbox claude mcp remove maven`. Die
-   registratie zit in het `claude-home` volume en overleeft een rebuild.
-3. Had je alleen voor de host-agent een `compose.override.yml` met
-   `host.docker.internal`? Die is niet meer nodig.
+Waarom deze opzet zo in elkaar zit, staat in
+[ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md).
 
 ## Ondersteunde platforms
 
 | Platform | Status | Wat je nodig hebt |
 |---|---|---|
-| Gehardend Ubuntu 23.10+ / Tuxedo (`apparmor_restrict_unprivileged_userns=1`) | bevestigd | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
+| Gehardend Ubuntu 23.10+ / Tuxedo (`apparmor_restrict_unprivileged_userns=1`) | bevestigd, ook multi-uid | `setup-host.sh` (laadt AppArmor-`userns`-profiel) + `compose.override.podman-linux.yml` |
 | Linux Docker, niet-gehardend (`sysctl=0`) | bevestigd | `compose.override.podman-linux.yml`; AppArmor-profiel onschadelijk (of override → `apparmor=unconfined`) |
 | Rancher Desktop op macOS (Lima → Alpine, moby) | bevestigd | `compose.override.podman-macos.yml` via Rancher's eigen `docker compose`; geen `setup-host.sh`, geen `podman-compose`. Zie "Rancher Desktop" |
 | macOS `podman machine` (applehv → Fedora CoreOS, rootful) | bevestigd, ook multi-uid | `compose.override.podman-macos.yml` + `podman-compose`; geen `setup-host.sh`. Zie "macOS" |
 | Docker Desktop Mac/Windows, rootless `podman machine`, WSL2 | **niet ondersteund** | niet bevestigd; geen terugvaloptie meer — bevestig eerst zelf met `setup-host.sh` + `smoke-test.sh` |
 
 Check je host: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns`.
-
-Ontwerp, bevindingen en security-balans:
-`docs/superpowers/specs/2026-06-10-maven-podman-in-docker-design.md` en
-`docs/adr/0001-maven-testcontainers-sandbox-isolatie.md`.
 
 Bevestigd op een echt project: een Quarkus-module met Redis-stack Dev-Services +
 integratietests draaide **289 + 46 tests groen** via podman in de sandbox.
@@ -46,7 +29,7 @@ werkt naïeve multi-uid rootless podman niet (host blokkeert userns-maps; de
 privileged `newuidmap`-range faalt). Daarom draait deze opzet in **single-uid
 modus** (geen `newuidmap`) en regelt userns via een **custom AppArmor-profiel**
 i.p.v. de host systeembreed te verzwakken. De volledige keten van aanpassingen
-staat in de spec.
+staat in ADR 0001 §2 "Beslissing".
 
 **Beperking van de default (single-uid):** images die naar een tweede uid
 chownen starten niet — `chown: ...: Invalid argument`. Dat treft postgres, mysql,
@@ -71,10 +54,24 @@ container — een openstaande spike (issue #82).
 > netavark-bridge routeerde nested verkeer via de FORWARD-chain, waar de allowlist
 > niet zit — pasta sluit dat gat.
 
-## Stappen (op de host)
+## Welk pad volg je?
+
+Er zijn drie varianten. Kies er één en sla de andere over:
+
+| Jouw omgeving | Sectie |
+|---|---|
+| Linux met Docker | **"Stappen op Linux"** hieronder |
+| macOS met `podman machine` | "macOS (Podman-machine)" |
+| macOS met Rancher Desktop | "Rancher Desktop op macOS" |
+
+Heb je database-images nodig (postgres, mysql, mariadb), lees dan daarna ook
+"Multi-uid (opt-in)".
+
+## Stappen op Linux
 
 Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
-`docs/` zijn vanaf de repo-root.
+`docs/` zijn vanaf de repo-root. Op macOS gelden deze stappen niet — daar heb je
+geen `setup-host.sh` nodig.
 
 1. In `.env` zetten (vóór de build):
    ```
@@ -87,7 +84,9 @@ Draai alle commando's hieronder vanuit `claude-sandbox/`. Padverwijzingen naar
    `ALLOWED_DOMAINS`. Dit speelt sowieso alleen bij `OPEN_HTTPS=false` (strikte
    whitelist); bij de default `OPEN_HTTPS=true` is al het uitgaand HTTPS
    toegestaan en is de allowlist een no-op.
-2. **AppArmor-profiel laden** (gehardende host; onschadelijk elders):
+2. **AppArmor-profiel laden.** Alleen op Linux, en alleen zinvol als je host
+   userns afgehard heeft (zie de check hierboven). Op een niet-gehardende
+   Linux-host is het onschadelijk; op macOS sla je deze stap over:
    ```
    ./podman/setup-host.sh
    ```
@@ -189,7 +188,9 @@ Waarom de entrypoint dit doet in plaats van jij per build: het éérste
 podman-commando maakt het pause-proces aan dat de user-namespace vastlegt, en
 alles daarna joint dat proces. Lukt die eerste aanmaak niet met de volledige
 subuid-range, dan blijft de hele container in single-uid hangen — ook nadat de
-oorzaak weg is. Zie de `no_new_privs`-rij in de fallback-tabel.
+oorzaak weg is. De rij over `uidmap=[{0 1000 1}]` in
+[Fallbacks als het niet meteen draait](#fallbacks-als-het-niet-meteen-draait)
+beschrijft hoe je dat herkent en herstelt.
 
 ## Rancher Desktop op macOS
 
@@ -236,14 +237,15 @@ Multi-uid lost dat op. Twee dingen aanzetten:
 Vergeet je de override, dan waarschuwt de entrypoint bij de start; zonder
 `CAP_SYS_ADMIN` faalt élke podman-actie met `newuidmap: write to uid_map failed`.
 
-Waarom die capability nodig is en wat hij kost, staat in de kop van
-`compose.override.podman-multiuid.yml`; de meting erachter in de spec, blokkade
-&#35;2. Kort: `newuidmap` is setuid-root en de kernel eist `CAP_SYS_ADMIN` zodra
-je een namespace mapt die je niet zelf bezit — Docker laat die capability per
-default uit de bounding set. `claude` krijgt hem niet rechtstreeks in handen
+Kort: `newuidmap` is setuid-root en de kernel eist `CAP_SYS_ADMIN` zodra je een
+namespace mapt die je niet zelf bezit — Docker laat die capability per default
+uit de bounding set. `claude` krijgt hem niet rechtstreeks in handen
 (`CapEff=0`), maar een root-escalatie ín de container wordt er wel krachtiger
-van. Op Mac/Windows zit er nog een VM-kernelgrens onder, op Linux met bare Docker
-niet. Daarom opt-in.
+van. Op Mac en Windows zit er nog een VM-kernelgrens onder, op Linux met bare
+Docker niet. Daarom opt-in.
+
+De volledige afweging staat in ADR 0001 §2.2.2 "Single-uid default, multi-uid
+opt-in" en §4.2 "Wat open blijft".
 
 `smoke-test.sh` detecteert de modus zelf en draait `PostgresSmokeTest` alleen in
 multi-uid; in single-uid meldt hij die als overgeslagen.
@@ -284,17 +286,16 @@ in de sandbox.
   `Network`, containers die elkáár via netwerknamen bereiken) werkt niet met de
   pasta-default; pasta isoleert elke container met alleen port-forwarding naar de
   host. Dat vereist userns-remap op de outer container — spike, issue #82.
-- Multi-uid is niet getest op gehardend Ubuntu. Blokkade #1 — de
-  AppArmor-userns-restrictie — staat daar los van en blijft gelden.
-- `containers.conf` wordt aangemaakt als hij ontbreekt en krijgt eenmalig de
-  `netns`-regel bijgeplaatst; `storage.conf` wordt elke start herschreven.
-  Overige handmatige aanpassingen in `containers.conf` blijven staan (bewuste
-  ontsnappingsklep) — die drift is de prijs daarvan.
-- seccomp/apparmor verder verfijnen van de huidige stand (zie spec).
+- `storage.conf` wordt bij elke start herschreven, maar `containers.conf` niet:
+  daar wordt alleen eenmalig de `netns`-regel bijgeplaatst als die ontbreekt.
+  Zet je daar zelf iets in, dan blijft dat staan — bedoeld, zodat je
+  podman-instellingen kunt aanpassen zonder de entrypoint te wijzigen. De prijs
+  is dat zo'n aanpassing óók blijft staan als wij de defaults later veranderen,
+  en dan wijkt jouw container af zonder dat iets dat meldt.
 
 ## Maximale isolatie (eigen kernel)
-Deze opzet deelt de host-kernel (restrisico: kernel-escape). Wil je die laag óók
-sluiten: op **Linux** het makkelijkst door de sandbox in een **VM** te draaien
-(podman in Lima/Multipass) — `docs/maximale-isolatie-linux.md` (met Kata/gVisor
-als alternatieven). Op **Mac/Windows** is die kernel-grens er al (Docker
-Desktop/Rancher/`podman machine` draaien in een VM).
+Deze opzet deelt de host-kernel, dus een kernel-escape blijft een restrisico.
+Wil je die laag óók sluiten, dan draai je de sandbox op Linux in een VM (podman
+in Lima of Multipass), met Kata of gVisor als alternatieven. Op Mac en Windows
+is die kernelgrens er al, omdat Docker Desktop, Rancher en `podman machine` in
+een VM draaien. Zie ADR 0001 §4.5 "Weging".

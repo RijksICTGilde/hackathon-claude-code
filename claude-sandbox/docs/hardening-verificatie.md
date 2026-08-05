@@ -1,12 +1,28 @@
 # Hardening verifiëren
 
-Deze hardening doet twee dingen die je niet op het woord moet geloven:
-hij sluit een escape, en hij mag de sandbox niet breken. Dit protocol test
-allebei. Draai het op een echte host, ná `docker compose … up --build -d
---force-recreate` met de podman-override.
+Handmatig testprotocol voor de isolatiemaatregelen van de sandbox-container:
+de setuid-strip, de privilege-drop van root naar `claude`, het AppArmor-profiel
+en de egress-allowlist. Waarom die maatregelen er zijn en welke laag welke
+escape sluit, staat in
+[ADR 0001](../../docs/adr/0001-maven-testcontainers-sandbox-isolatie.md) —
+dit document controleert alleen of ze in de praktijk doen wat daar staat.
 
-De statische controles (shellcheck, JSON-validatie, compose-parse) zijn al in CI
-gedraaid. Wat hieronder staat, kan alleen op een draaiende container.
+**Wanneer draaien.** Na een wijziging aan de Dockerfile, een van de entrypoints,
+`init-firewall.sh`, het AppArmor-profiel of het seccomp-profiel. CI dekt dit
+niet: de statische controles daar (shellcheck, JSON-validatie, compose-parse)
+zeggen niets over het gedrag van een draaiende container.
+
+**Wat je nodig hebt.**
+
+- Een draaiende container, gestart met de podman-override:
+  `docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d --force-recreate`
+- Voor sectie 1 volledig: een Linux-host met AppArmor. Op macOS en Rancher is
+  `apparmor=unconfined` de legitieme stand en zit er een VM-kernelgrens onder;
+  daar is de profielcontrole niet van toepassing.
+- `sudo` op de host voor `aa-status` en `aa-enforce`.
+
+Twee dingen moeten allebei kloppen: de escape is dicht (sectie 1 en 2) én de
+sandbox werkt nog (sectie 3). Een half gedraaid protocol bewijst niets.
 
 ## 1. De escape moet dicht zijn
 
