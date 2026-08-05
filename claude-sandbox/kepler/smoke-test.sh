@@ -98,15 +98,18 @@ ssh_run() {
 # onderscheiden van een trage — een mislukte login is snel, en zou anders als
 # "delay ontbreekt" gerapporteerd worden.
 _timed() {
-    local TIMEFORMAT=%3R dur rc rcfile
+    # LC_NUMERIC=C: de `time`-builtin volgt de locale, en op een Nederlandse
+    # host geeft %3R "0,412" — het decimaalteken weghalen levert dan geen getal
+    # op en de rekenkundige expansie hieronder breekt het script af.
+    local TIMEFORMAT=%3R LC_NUMERIC=C dur rc rcfile
     # De exit-status via een bestand: de `time`-meting draait in een command
     # substitution, dus een variabele die daarbinnen gezet wordt is buiten weg.
-    rcfile="$(mktemp)"
+    rcfile="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
     dur="$( { time { "$@" >/dev/null 2>&1; echo $? >"$rcfile"; } ; } 2>&1 )"
     rc="$(cat "$rcfile")"
     rm -f "$rcfile"
     # 10#: "0412" is anders octaal en telt fout.
-    printf '%s %s\n' "$(( 10#${dur/./} ))" "$rc"
+    printf '%s %s\n' "$(( 10#${dur//[.,]/} ))" "$rc"
 }
 # Kale login-shell: GEEN commando (`ssh host < /dev/null`) → sshd draait de
 # login-shell die /etc/zsh/zprofile sourcet (waar de Kepler-delay zit).
@@ -132,7 +135,7 @@ fi
 # ziet er van buiten uit als een gewone sandbox.
 if [[ "$EXPECT_NO_SSHD" == true ]]; then
     section "SSH hoort uit te staan"
-    if "$CLI" exec "$CONTAINER" sh -c '! pgrep -x sshd >/dev/null'; then
+    if "$CLI" exec "$CONTAINER" sh -c 'command -v pgrep >/dev/null && ! pgrep -x sshd >/dev/null'; then
         pass "geen sshd-proces"
     else
         fail "sshd draait terwijl SSH uit hoort te staan — de start hoort achter ENABLE_SSHD te zitten, niet achter de aanwezigheid van de binary"
@@ -142,10 +145,17 @@ if [[ "$EXPECT_NO_SSHD" == true ]]; then
     else
         fail "poort 22 is gepubliceerd terwijl SSH uit hoort te staan"
     fi
-    if ! "$CLI" logs "$CONTAINER" 2>&1 | grep -qi 'sshd gestart'; then
-        pass "geen sshd-start in de containerlogs"
-    else
+    # Een afwezigheid in de logs bewijst niets als er geen logs zijn: een
+    # logdriver die lezen niet ondersteunt (journald, none) of een geroteerde
+    # log geeft anders een PASS. Daarom eerst een canary die er altijd hoort te
+    # staan.
+    LOGS="$("$CLI" logs "$CONTAINER" 2>&1 || true)"
+    if ! grep -q 'entrypoint OPEN_HTTPS:' <<<"$LOGS"; then
+        fail "containerlogs bevatten de entrypoint-start niet (logdriver leest niet, of logs zijn geroteerd) — een sshd-start is hiermee NIET uit te sluiten"
+    elif grep -qi 'sshd gestart' <<<"$LOGS"; then
         fail "containerlog meldt een sshd-start terwijl SSH uit hoort te staan"
+    else
+        pass "geen sshd-start in de containerlogs"
     fi
     section "Resultaat"
     if [[ "$FAILCOUNT" -eq 0 ]]; then
@@ -178,9 +188,9 @@ else
 fi
 
 section '1b. Geen route naar root voor claude'
-# De hardening haalde sudo volledig uit de image; sshd start daarom in de
-# root-fase. Deze guards vangen een terugkeer van die route af — een sudoers-
-# drop-in of een setuid-binary maakt de privilege-drop betekenisloos.
+# Er hoort geen sudo en geen sudoers-drop-in in de image te zitten: sshd start
+# in de root-fase, vóór de privilege-drop. Een sudoers-regel of een setuid-
+# binary maakt die drop betekenisloos.
 if "$CLI" exec "$CONTAINER" sh -c '! command -v sudo >/dev/null'; then
     pass "geen sudo-binary in de image"
 else
@@ -292,13 +302,10 @@ else
 fi
 
 section "6. Burst — geen per-bron-straf na mislukte auth"
-# Regressie-guard voor PerSourcePenalties (OpenSSH ≥9.8, default aan). Achter de
-# NAT/port-forward (gvproxy op macOS, of Docker's portpublish) ziet sshd élke
-# host-connectie als dezelfde bron; één mislukte auth straft dan alle volgende.
-# Dit test precies dat gat: de hardening-sectie hierboven deed net twee authfails
-# vanaf deze bron. Staat PerSourcePenalties nog aan, dan wordt deze burst van
-# legitieme logins geweigerd — terwijl één losse login (sectie 3) nog slaagt.
-# Daarom een burst i.p.v. een enkele: de bug is onzichtbaar bij gespreide calls.
+# Regressie-guard voor PerSourcePenalties (afweging: README 'Kepler
+# (SSH-remote)'). Een burst en niet één login, want gespreide calls maken het gat
+# onzichtbaar: sectie 5 deed net een authfail vanaf deze bron, en staat de straf
+# nog aan, dan sneuvelt juist een reeks snelle legitieme logins.
 # Parallel, want dat is ook wat Kepler doet (meerdere kanalen tegelijk) — en het
 # maakt de burst een burst in plaats van een reeks gespreide logins.
 BURST=5
@@ -330,24 +337,30 @@ section "7. Kepler tunnel-race workaround actief"
 # probe (sectie 4) mag dat NIET zijn.
 read -r LOGIN_MS LOGIN_RC <<<"$(ssh_timed_login)"
 read -r PROBE_MS PROBE_RC <<<"$(ssh_timed_probe)"
-if [[ "$LOGIN_RC" -ne 0 || "$PROBE_RC" -ne 0 ]]; then
+if [[ ! "$LOGIN_MS$LOGIN_RC$PROBE_MS$PROBE_RC" =~ ^[0-9]+$ ]]; then
+    # _timed draait in een command substitution en erft `set -e` niet, dus een
+    # mislukte mktemp levert lege waarden i.p.v. een afbreking. Zonder deze
+    # guard leest de vergelijking hieronder die als 0 en meldt stellig dat de
+    # workaround ontbreekt.
+    fail "timing-meting leverde geen bruikbare waarden (schrijfbare tempdir?) — sectie 7 zegt niets over de workaround"
+elif [[ "$LOGIN_RC" -ne 0 || "$PROBE_RC" -ne 0 ]]; then
     # Zonder deze tak wordt een kapotte verbinding als "delay ontbreekt"
     # gerapporteerd: een mislukte login is snel, en een hangende raakt de
     # ConnectTimeout. Beide zouden hieronder een zeer stellige, onjuiste
     # diagnose over /etc/zsh/zprofile opleveren.
     fail "SSH-verbinding mislukte tijdens de timing-meting (login rc=$LOGIN_RC, probe rc=$PROBE_RC) — de meting zegt niets over de workaround; zie sectie 3 en 6"
 else
-    if [[ "$LOGIN_MS" -ge 250 && "$LOGIN_MS" -lt 1500 ]]; then
-        pass "kale login-shell vertraagd (${LOGIN_MS}ms) — workaround actief"
-    elif [[ "$LOGIN_MS" -lt 250 ]]; then
-        fail "kale login-shell niet vertraagd (${LOGIN_MS}ms) — /etc/zsh/zprofile-workaround ontbreekt; Kepler faalt met 'ssh exited before the tunnel ... (code 0)'"
+    # Het verschil tussen beide metingen, niet de absolute duur: de handshake
+    # zelf haalt op een sandbox in een VM of op een trage host de 250 ms al, en
+    # een absolute drempel zou daar een vals-rood over de zprofile-workaround
+    # geven.
+    DELTA=$(( LOGIN_MS - PROBE_MS ))
+    if [[ "$DELTA" -ge 250 && "$DELTA" -lt 1500 ]]; then
+        pass "kale login-shell ${DELTA}ms trager dan de probe (${LOGIN_MS}ms vs ${PROBE_MS}ms) — workaround actief"
+    elif [[ "$DELTA" -lt 250 ]]; then
+        fail "kale login-shell niet vertraagd t.o.v. de probe (${LOGIN_MS}ms vs ${PROBE_MS}ms) — /etc/zsh/zprofile-workaround ontbreekt; Kepler faalt met 'ssh exited before the tunnel ... (code 0)'"
     else
-        fail "kale login-shell veel te traag (${LOGIN_MS}ms) — de sleep in /etc/zsh/zprofile staat te hoog; elke Kepler-login betaalt dat"
-    fi
-    if [[ "$PROBE_MS" -lt 250 ]]; then
-        pass "zsh -c probe blijft snel (${PROBE_MS}ms) — delay raakt alleen login-shells"
-    else
-        fail "zsh -c probe óók vertraagd (${PROBE_MS}ms) — delay staat te breed (hoort in zprofile, niet zshenv); vertraagt Keplers probe onnodig"
+        fail "kale login-shell ${DELTA}ms trager dan de probe — de sleep in /etc/zsh/zprofile staat te hoog; elke Kepler-login betaalt dat"
     fi
 fi
 

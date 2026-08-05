@@ -160,6 +160,8 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **De loopback-binding geldt alleen vanaf de host.** Binnen de container luistert sshd op `0.0.0.0:22`, en `init-firewall.sh` accepteert inbound vanaf het hele bridge-subnet. Een andere container op datzelfde compose-netwerk bereikt poort 22 dus rechtstreeks, langs de `127.0.0.1`-publish om. Draai geen onvertrouwde containers op dit netwerk.
 - **Een geslaagde login is een volledige shell als `claude`** — inclusief schrijfrechten op de host-bindmount `${PROJECTS_DIR}:/home/claude/projects` en leestoegang tot de `claude login`-credentials op het volume. De SSH-hardening beperkt wie binnenkomt, niet wat die daarna mag.
 - **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee lokale poorten van de container benaderen.
+- **Geen agent-forwarding.** `AllowAgentForwarding no` houdt je host-sleutels buiten de sandbox, maar betekent ook dat je vanuit een Kepler-worktree niet met de host-sleutel kunt pushen. Regel git-toegang ín de container (`gh auth login`).
+- **De auth-log is niet duurzaam.** `/var/log/sshd.log` staat op de container-laag, niet op het volume: een recreate wist hem. Voor bewaren moet je hem zelf wegschrijven.
 
 ### Opzet
 1. **Build met sshd** (opt-in; vereist image-rebuild + volume-recreate zoals elke toggle):

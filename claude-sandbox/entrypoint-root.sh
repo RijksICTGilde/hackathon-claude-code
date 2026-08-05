@@ -56,35 +56,71 @@ esac
 #
 # Host-keys op het volume in plaats van in de image: een privésleutel in een
 # image-layer geeft iedereen met die image de identiteit van elke container die
-# eruit draait. Op het volume overleven ze bovendien een rebuild, dus Kepler
-# krijgt geen known_hosts-mismatch meer na elke build.
+# eruit draait. Op het volume overleeft de sleutel een image-rebuild, dus Kepler
+# houdt dezelfde known_hosts-entry.
+#
+# Eigendom wordt elke start getoetst. `/home/claude` is van `claude`, dus die kan
+# `.ssh-host` hernoemen en er een eigen sleutel neerzetten; sshd accepteert een
+# host-key van een ándere user zonder morren. Daarmee zou de ingesloten partij
+# kiezen welke identiteit Kepler in known_hosts pint.
 #
 # -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
 # vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
 # bestand vóór het daemoniseren, dus het overleeft de fd-reset. `claude` mag
-# meelezen via de groep, niet schrijven.
-if [[ "${ENABLE_SSHD:-false}" == "true" ]]; then
-    if [[ ! -x /usr/sbin/sshd ]]; then
-        echo "WAARSCHUWING: ENABLE_SSHD=true maar deze image is zonder INSTALL_SSHD=true gebouwd —" \
-             "er luistert geen sshd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
-    else
-        install -d -m 700 -o root -g root /home/claude/.ssh-host
-        if [[ ! -f /home/claude/.ssh-host/ssh_host_ed25519_key ]]; then
-            ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key
-            echo "INFO: nieuwe SSH-host-key aangemaakt op het claude-home volume"
-        fi
-        install -m 640 -o root -g claude /dev/null /var/log/sshd.log
-        if /usr/sbin/sshd -E /var/log/sshd.log; then
-            echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+# meelezen via de groep, niet schrijven. Het bestand wordt alleen aangemaakt als
+# het nog niet bestaat: opnieuw aanmaken zou bij elke restart het auth-spoor
+# wissen.
+#
+# De hele voorbereiding is niet-fataal. `/home/claude` is van `claude` en
+# persistent, dus de inhoud van `.ssh-host` ligt buiten onze controle; een
+# gesloopt of vervangen pad mag de sandbox niet onstartbaar maken. Daarom eerst
+# controleren dat het een echte directory is en geen symlink — root die blind in
+# een door de sandbox-gebruiker beheerd pad schrijft, is precies de route die de
+# privilege-drop moet afsluiten.
+prepare_host_key() {
+    local key=/home/claude/.ssh-host/ssh_host_ed25519_key
+    if [[ -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ]]; then
+        echo "WAARSCHUWING: host-key op het volume is niet van root — vervangen door een verse." \
+             "Kepler ziet daardoor een gewijzigde host-key (known_hosts-mismatch)." >&2
+        rm -f "$key" "$key.pub"
+    fi
+    [[ -f "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key"
+}
+
+sshd_ready=false
+case "${ENABLE_SSHD:-false}" in
+    true)
+        if [[ ! -x /usr/sbin/sshd ]]; then
+            echo "WAARSCHUWING: ENABLE_SSHD=true maar deze image is zonder INSTALL_SSHD=true gebouwd —" \
+                 "er luistert geen sshd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
+        elif [[ -e /home/claude/.ssh-host && ( -L /home/claude/.ssh-host || ! -d /home/claude/.ssh-host ) ]]; then
+            echo "WAARSCHUWING: /home/claude/.ssh-host is geen directory (symlink of bestand) — host-key niet aanmaakbaar," \
+                 "sshd blijft uit. Verwijder het pad op het claude-home volume." >&2
+        elif ! install -d -m 700 -o root -g root /home/claude/.ssh-host; then
+            echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
+        elif ! prepare_host_key; then
+            echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
+        elif [[ ! -f /var/log/sshd.log ]] && ! install -m 640 -o root -g claude /dev/null /var/log/sshd.log; then
+            echo "WAARSCHUWING: /var/log/sshd.log niet aanmaakbaar — sshd blijft uit (zonder auth-log is een login niet te herleiden)." >&2
         else
-            {
-                echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
-                echo "Veelvoorkomende oorzaken:"
-                echo "  - poort 22 al bezet in deze netwerk-namespace"
-                echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
-                echo "  - /run/sshd of de host-key op het volume niet aanmaakbaar"
-            } >&2
-        fi
+            sshd_ready=true
+        fi ;;
+    false) ;;
+    *)
+        echo "WAARSCHUWING: ENABLE_SSHD='${ENABLE_SSHD}' is ongeldig (verwacht 'true' of 'false') — sshd blijft uit." >&2 ;;
+esac
+
+if [[ "$sshd_ready" == true ]]; then
+    if /usr/sbin/sshd -E /var/log/sshd.log; then
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+    else
+        {
+            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
+            echo "Veelvoorkomende oorzaken:"
+            echo "  - poort 22 al bezet in deze netwerk-namespace"
+            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
+            echo "  - /run/sshd niet aanwezig"
+        } >&2
     fi
 fi
 

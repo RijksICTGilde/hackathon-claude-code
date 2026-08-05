@@ -29,26 +29,45 @@ fi
 if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
     if [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         # Valideren vóór schrijven: een pad in plaats van de sleutelinhoud, een
-        # per ongeluk geplakte privésleutel of een meerregelige waarde zou
-        # anders een werkende authorized_keys op het volume overschrijven, mét
-        # een geslaagd-melding erachteraan. Meerregelig is bovendien een
-        # toegangsconfiguratie op zich: authorized_keys accepteert per regel
-        # `command=`/`permitopen=`.
-        if [[ "$(printf '%s' "$KEPLER_SSH_PUBKEY" | wc -l)" -gt 0 ]]; then
-            echo "FOUT: KEPLER_SSH_PUBKEY bevat een regeleinde. De var houdt één sleutel;" \
+        # geplakte privésleutel of een meerregelige waarde zou anders een
+        # werkende authorized_keys overschrijven mét een geslaagd-melding
+        # erachteraan. Meerregelig is bovendien een toegangsconfiguratie op zich:
+        # authorized_keys accepteert per regel `command=`/`permitopen=`.
+        #
+        # Eerst afsluitende witruimte eraf — een waarde uit een YAML block scalar
+        # eindigt op een newline, en die zou als tweede sleutel gelezen worden.
+        pubkey="$KEPLER_SSH_PUBKEY"
+        while [[ "$pubkey" == *[[:space:]] ]]; do pubkey="${pubkey%[[:space:]]}"; done
+        if [[ "$(printf '%s' "$pubkey" | wc -l)" -gt 0 ]]; then
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY bevat een regeleinde. De var houdt één sleutel;" \
                  "meerdere sleutels beheer je zelf in ~/.ssh/authorized_keys op het volume." \
                  "authorized_keys is ONGEWIJZIGD gelaten." >&2
-        elif ! printf '%s\n' "$KEPLER_SSH_PUBKEY" | ssh-keygen -l -f - >/dev/null 2>&1; then
-            echo "FOUT: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel — authorized_keys is" \
-                 "ONGEWIJZIGD gelaten. Verwacht de inhoud van je .pub-bestand" \
-                 "('ssh-ed25519 AAAA... kepler'), niet het pad ernaartoe en niet de privésleutel." >&2
+        # Het keytype vooraan asserten, niet alleen `ssh-keygen -l` draaien: die
+        # slaat een eerste veld over voor known_hosts-hostnamen en keurt daardoor
+        # ook een known_hosts-regel of een authorized_keys-regel mét opties goed.
+        # Zo'n regel schrijft prima weg en wordt door sshd alsnog geweigerd.
+        elif [[ ! "$pubkey" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]] ]]; then
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY begint niet met een SSH-keytype — authorized_keys is" \
+                 "ONGEWIJZIGD gelaten. Verwacht de kále inhoud van je .pub-bestand" \
+                 "('ssh-ed25519 AAAA... kepler'): geen regel uit known_hosts (hostnaam ervoor), geen" \
+                 "authorized_keys-regel met command=/permitopen=, geen pad en geen privésleutel." >&2
+        elif ! printf '%s\n' "$pubkey" | ssh-keygen -l -f - >/dev/null 2>&1; then
+            echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is geen geldige publieke SSH-sleutel — authorized_keys is" \
+                 "ONGEWIJZIGD gelaten." >&2
         elif ! mkdir -p "$HOME/.ssh" || ! chmod 700 "$HOME/.ssh"; then
             echo "WAARSCHUWING: $HOME/.ssh niet aanmaakbaar — Kepler kan niet inloggen." \
                  "Controleer de rechten op het claude-home volume." >&2
-        else
-            printf '%s\n' "$KEPLER_SSH_PUBKEY" > "$HOME/.ssh/authorized_keys"
-            chmod 600 "$HOME/.ssh/authorized_keys"
+        # Via een tempbestand: `>` trunceert vóór printf draait, dus een vol of
+        # read-only volume zou een lege authorized_keys achterlaten — precies wat
+        # de validatie hierboven moet voorkomen.
+        elif tmp="$HOME/.ssh/.authorized_keys.$$" &&
+             printf '%s\n' "$pubkey" > "$tmp" && chmod 600 "$tmp" &&
+             mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
             echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
+        else
+            rm -f "${tmp:-}"
+            echo "WAARSCHUWING: authorized_keys niet kunnen schrijven (vol volume of rechten) —" \
+                 "een bestaande sleutel is ongewijzigd gebleven." >&2
         fi
     elif [[ ! -s "$HOME/.ssh/authorized_keys" ]]; then
         {
@@ -57,9 +76,12 @@ if [[ "${ENABLE_SSHD:-false}" == "true" && -x /usr/sbin/sshd ]]; then
             echo "  - Of beheer ~/.ssh/authorized_keys zelf op het claude-home volume; een bestaand, niet-leeg bestand blijft ongemoeid."
         } >&2
     fi
+elif [[ -n "${KEPLER_SSH_PUBKEY:-}" && ! -x /usr/sbin/sshd ]]; then
+    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet, maar deze image bevat geen sshd — de sleutel wordt" \
+         "genegeerd. Herbouw met 'INSTALL_SSHD=true docker compose build'." >&2
 elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
-    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
-         "Start met '-f compose.override.kepler.yml' (die zet ENABLE_SSHD) en bouw de image met INSTALL_SSHD=true." >&2
+    echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar ENABLE_SSHD niet — de sleutel wordt genegeerd." \
+         "Start met '-f compose.override.kepler.yml'." >&2
 fi
 
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de

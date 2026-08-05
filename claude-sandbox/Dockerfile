@@ -260,29 +260,31 @@ RUN case "$INSTALL_PODMAN" in \
 # apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
 # over de openssh-bestanden gaat.
 #
-# Host-keys worden hier NIET gegenereerd: dat zijn privésleutels en die horen
-# niet in een image-layer — wie de image heeft, kan de sandbox anders
-# impersoneren tegenover Kepler. entrypoint-root.sh maakt ze bij eerste start op
-# het claude-home volume.
+# Geen host-keys in de image: dat zijn privésleutels, en wie de image heeft zou
+# de sandbox anders kunnen impersoneren tegenover Kepler. entrypoint-root.sh
+# maakt ze bij eerste start op het claude-home volume. De `rm` is nodig omdat
+# Debians openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
 #
 # PATH-fix in zshenv: een non-interactieve SSH-sessie erft de Docker `ENV PATH`
 # niet, dus `claude` in ~/.local/bin zou "command not found" geven. zsh is de
 # login-shell van `claude` en sourcet zshenv altijd, ook bij `zsh -c`.
 #
-# PerSourcePenalties uit: OpenSSH ≥9.8 straft per bron-IP. Keplers kortlevende
-# tunnel-connecties tellen als afgebroken sessies, en achter een NAT/port-forward
-# ziet sshd élke client als dezelfde bron — die straf treft dus alle clients
-# samen. Op een loopback-only, pubkey-only poort weegt dat niet op tegen de
-# winst; LoginGraceTime/MaxAuthTries dekken de resterende DoS-hoek af.
+# PerSourcePenalties uit: achter een NAT/port-forward deelt elke client één
+# bron-IP, en Keplers kortlevende tunnel-connecties tellen als afgebroken
+# sessies — die straf zou dus alle clients treffen. LoginGraceTime/MaxAuthTries
+# dekken de DoS-hoek af. Volledige afweging: README 'Kepler (SSH-remote)'.
 #
 # `sshd -t`/`sshd -T` in dezelfde laag: zonder die controle levert een niet-
 # toegepaste drop-in (Include weg, optie onbekend in deze OpenSSH) een groene
-# build met stil uitgevallen hardening. De wegwerp-hostkey is alleen voor die
-# controle nodig en verdwijnt in dezelfde laag.
+# build met stil uitgevallen hardening. De controle draait tegen het echte
+# HostKey-pad — met `sshd -h` erlangs zou sshd de config-HostKey er alleen bij
+# nemen en per aanroep een ERROR-regel over de ontbrekende sleutel printen. De
+# wegwerpsleutel verdwijnt weer in dezelfde laag.
 RUN case "$INSTALL_SSHD" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends openssh-server && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
             mkdir -p /run/sshd && \
             printf '%s\n' \
               'PasswordAuthentication no' \
@@ -314,13 +316,15 @@ RUN case "$INSTALL_SSHD" in \
               >> /etc/zsh/zshenv && \
             printf '\n# Kepler tunnel-race workaround — zie README "Kepler (SSH-remote)".\nif [[ ! -o interactive && -n "$SSH_CONNECTION" && $SHLVL -eq 1 ]]; then sleep 0.4; fi\n' \
               >> /etc/zsh/zprofile && \
-            ssh-keygen -q -t ed25519 -N '' -f /tmp/hostkey-check && \
-            sshd -t -h /tmp/hostkey-check && \
-            sshd -T -h /tmp/hostkey-check | grep -qx 'passwordauthentication no' && \
-            sshd -T -h /tmp/hostkey-check | grep -qx 'permitrootlogin no' && \
-            sshd -T -h /tmp/hostkey-check | grep -qx 'allowagentforwarding no' && \
-            sshd -T -h /tmp/hostkey-check | grep -qx 'allowusers claude' && \
-            rm -f /tmp/hostkey-check /tmp/hostkey-check.pub ;; \
+            mkdir -p /home/claude/.ssh-host && \
+            ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
+            sshd -t && \
+            sshd -T | grep -qx 'passwordauthentication no' && \
+            sshd -T | grep -qx 'permitrootlogin no' && \
+            sshd -T | grep -qx 'allowagentforwarding no' && \
+            sshd -T | grep -qx 'allowtcpforwarding local' && \
+            sshd -T | grep -qx 'allowusers claude' && \
+            rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
