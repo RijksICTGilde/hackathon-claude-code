@@ -59,8 +59,10 @@ jobs:
           platforms: linux/amd64
           push: false
           build-args: INSTALL_SSHD=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,scope=sshd
+          cache-from: |
+            type=gha,scope=sshd
+            type=gha
+          cache-to: type=gha,mode=min,scope=sshd
           provenance: false
           sbom: false
 

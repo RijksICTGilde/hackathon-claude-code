@@ -79,7 +79,16 @@ section() { printf '\n== %s ==\n' "$1"; }
 # known_hosts-hygiëne. De host-key staat op het volume en overleeft een rebuild,
 # maar niet een volume-recreate.
 KNOWN_HOSTS="$(mktemp)"
-trap 'rm -f "$KNOWN_HOSTS"' EXIT
+TUNNEL_ERR=""
+TUNNEL_PID=""
+# Eén opruimpunt: de tunneltest verderop start een achtergrondproces, en een
+# tweede trap-string zou bij uitbreiding stilletjes uit elkaar lopen.
+cleanup() {
+    rm -f "$KNOWN_HOSTS" ${TUNNEL_ERR:+"$TUNNEL_ERR"}
+    [[ -n "$TUNNEL_PID" ]] && kill "$TUNNEL_PID" 2>/dev/null
+    return 0
+}
+trap cleanup EXIT
 
 # BatchMode: nooit om een wachtwoord of passphrase vragen — een test die blijft
 # hangen op een prompt is erger dan een test die faalt.
@@ -448,29 +457,44 @@ section "8b. Tunnel naar de container (-L)"
 # matcht niet op een regel die alleen `localhost` toestaat. Een configcheck
 # vangt dat niet — alleen een echte forward.
 TUNNEL_PORT=22322
-ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
-    -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
-    >/dev/null 2>&1 &
-TUNNEL_PID=$!
-trap 'rm -f "$KNOWN_HOSTS"; kill "$TUNNEL_PID" 2>/dev/null' EXIT
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    (exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT") 2>/dev/null && break
-    sleep 0.3
-done
-# De banner van de sshd aan de andere kant bewijst dat de forward data draagt;
-# een openstaande poort alleen zegt niets.
-BANNER="$(timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$TUNNEL_PORT; head -1 <&3" 2>/dev/null || true)"
-BANNER="${BANNER%$'\r'}"
-if [[ "$BANNER" == SSH-2.0-* ]]; then
-    pass "-L tunnel naar 127.0.0.1 draagt verkeer ($BANNER)"
-elif ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-    fail "-L tunnel geweigerd — PermitOpen in sshd_config.d/kepler.conf staat 127.0.0.1 niet toe (sshd matcht de bestemming letterlijk, zonder naamresolutie); Kepler kan zo geen remote opzetten"
+if (exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT") 2>/dev/null; then
+    # Overslaan i.p.v. gokken: luistert hier al iets, dan meet de banner-check
+    # dat andere proces en meldt het script groen zonder ooit een tunnel te
+    # hebben opgezet.
+    fail "poort $TUNNEL_PORT is al bezet op deze host — de tunnel is niet te testen (kies een vrije poort of ruim een blijven hangen 'ssh -N -L' op)"
 else
-    fail "-L tunnel staat open maar draagt geen verkeer (geen SSH-banner terug)"
+    TUNNEL_ERR="$(mktemp)"
+    ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
+        -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
+        >/dev/null 2>"$TUNNEL_ERR" &
+    TUNNEL_PID=$!
+    # De banner van de sshd aan de andere kant bewijst dat de forward data
+    # draagt; een openstaande poort alleen zegt niets. Bash-native lezen, want
+    # `timeout` is GNU coreutils en ontbreekt op macOS.
+    BANNER=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT" 2>/dev/null; then
+            IFS= read -r -t 5 BANNER <&3 || BANNER=""
+            exec 3<&-
+            break
+        fi
+        sleep 0.3
+    done
+    BANNER="${BANNER%$'\r'}"
+    if [[ "$BANNER" == SSH-2.0-* ]]; then
+        pass "-L tunnel naar 127.0.0.1 draagt verkeer ($BANNER)"
+    elif kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        # ExitOnForwardFailure dekt alleen het lokaal binden; een PermitOpen-
+        # weigering is een per-kanaal CHANNEL_OPEN_FAILURE en laat ssh leven.
+        # Dit is dus de tak waarin die weigering landt, niet de andere.
+        fail "-L tunnel opgezet maar het kanaal draagt niets — PermitOpen in sshd_config.d/kepler.conf staat 127.0.0.1 mogelijk niet toe (sshd matcht de bestemming letterlijk, zonder naamresolutie): $(tr '\n' ' ' <"$TUNNEL_ERR")"
+    else
+        fail "ssh stopte voor de tunnel stond (login mislukt of lokale poort $TUNNEL_PORT geweigerd): $(tr '\n' ' ' <"$TUNNEL_ERR")"
+    fi
+    kill "$TUNNEL_PID" 2>/dev/null || true
+    TUNNEL_PID=""
 fi
-kill "$TUNNEL_PID" 2>/dev/null || true
-trap 'rm -f "$KNOWN_HOSTS"' EXIT
 
 if [[ "$PODMAN" == true ]]; then
     section "9. Gestapelde podman-override"

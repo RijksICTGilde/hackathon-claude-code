@@ -125,12 +125,17 @@ if [[ "$sshd_ready" == true ]]; then
     # maatregel waar de sandbox op rust.
     # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
     # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
-    # pas ná het binden geschreven, en is daarmee het bruikbare signaal.
+    # pas ná het binden geschreven en is daarmee het bruikbare signaal; het pad
+    # ligt vast via PidFile in kepler.conf. /run is een verse tmpfs per start,
+    # dus de rm ruimt hooguit een restant van deze run op.
     rm -f /run/sshd.pid
     if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
-       { for _ in 1 2 3 4 5; do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
+       { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
     else
+        # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
+        # pidfile uit, dan luistert er iets terwijl het log zegt van niet.
+        pkill -x sshd 2>/dev/null || true
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"

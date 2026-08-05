@@ -326,6 +326,7 @@ RUN case "$INSTALL_SSHD" in \
               'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com' \
               'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
               'RequiredRSASize 3072' \
+              'PidFile /run/sshd.pid' \
               'PerSourcePenalties no' \
               'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
               > /etc/ssh/sshd_config.d/kepler.conf && \
@@ -342,6 +343,7 @@ RUN case "$INSTALL_SSHD" in \
             sshd -T | grep -qx 'allowtcpforwarding local' && \
             sshd -T | grep -qx 'permitopen localhost:\* 127\.0\.0\.1:\* \[::1\]:\*' && \
             sshd -T | grep -qx 'allowusers claude' && \
+            sshd -T | grep -qx 'pidfile /run/sshd.pid' && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
