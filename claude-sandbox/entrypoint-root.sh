@@ -123,13 +123,18 @@ if [[ "$sshd_ready" == true ]]; then
     # voor de firewall heeft. sshd heeft die niet nodig, en met die capabilities
     # zou een pre-auth-lek in OpenSSH meteen `iptables -F` opleveren — precies de
     # maatregel waar de sandbox op rust.
-    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log; then
+    # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
+    # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
+    # pas ná het binden geschreven, en is daarmee het bruikbare signaal.
+    rm -f /run/sshd.pid
+    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
+       { for _ in 1 2 3 4 5; do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
     else
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 22 al bezet in deze netwerk-namespace"
+            echo "  - poort 22 al bezet in deze netwerk-namespace (zie /var/log/sshd.log)"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
             echo "  - setpriv kan de bounding set niet aanpassen (container mist CAP_SETPCAP)"

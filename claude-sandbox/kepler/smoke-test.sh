@@ -236,12 +236,22 @@ else
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
-if "$CLI" exec "$CONTAINER" sh -c '
-    pid=$(pgrep -x sshd | head -1) || exit 1
-    bnd=$(awk "/^CapBnd:/ {print \$2}" /proc/$pid/status)
-    # CAP_NET_ADMIN=12, CAP_NET_RAW=13
-    [ $(( 0x$bnd & (1 << 12) )) -eq 0 ] && [ $(( 0x$bnd & (1 << 13) )) -eq 0 ]'; then
-    pass "sshd draait zonder NET_ADMIN/NET_RAW in de bounding set"
+# De exitstatus van een pipeline is die van het laatste onderdeel, dus `pgrep |
+# head` geeft 0 ook zonder treffer; zonder de -n-controle zou een ontbrekende
+# sshd hier als "heeft NET_ADMIN" binnenkomen.
+if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
+    fail "geen sshd-proces — capabilities niet te controleren"
+elif "$CLI" exec "$CONTAINER" sh -c '
+    pid=$(pgrep -x sshd | head -1); [ -n "$pid" ] || exit 1
+    # CAP_NET_ADMIN=12, CAP_NET_RAW=13. Naast de bounding set ook permitted en
+    # effective: de bounding set alleen bewijst dat hij ze niet kán winnen, niet
+    # dat hij ze niet heeft.
+    for f in CapBnd CapPrm CapEff; do
+        v=$(awk -v k="^$f:" "\$0 ~ k {print \$2}" /proc/$pid/status)
+        [ -n "$v" ] || exit 1
+        [ $(( 0x$v & ((1 << 12) | (1 << 13)) )) -eq 0 ] || exit 1
+    done'; then
+    pass "sshd draait zonder NET_ADMIN/NET_RAW (bounding, permitted en effective)"
 else
     fail "sshd heeft NET_ADMIN of NET_RAW — de setpriv --bounding-set in entrypoint-root.sh pakt niet"
 fi
@@ -320,6 +330,8 @@ else
         'allowagentforwarding no' \
         'x11forwarding no' \
         'permituserrc no' \
+        'allowtcpforwarding local' \
+        'permitopen localhost:* 127.0.0.1:* [::1]:*' \
         'permittunnel no' \
         'gatewayports no'
     do
@@ -429,6 +441,36 @@ if ssh_run 'curl -sS --max-time 5 -o /dev/null https://example.com' >/dev/null 2
 else
     pass "example.com geblokkeerd (strikte allowlist actief)"
 fi
+
+section "8b. Tunnel naar de container (-L)"
+# Dit is wat Kepler feitelijk doet, en het enige dat PermitOpen kan breken:
+# sshd vergelijkt de bestemming met strcmp, dus een client die 127.0.0.1 stuurt
+# matcht niet op een regel die alleen `localhost` toestaat. Een configcheck
+# vangt dat niet — alleen een echte forward.
+TUNNEL_PORT=22322
+ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
+    -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
+    >/dev/null 2>&1 &
+TUNNEL_PID=$!
+trap 'rm -f "$KNOWN_HOSTS"; kill "$TUNNEL_PID" 2>/dev/null' EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    (exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT") 2>/dev/null && break
+    sleep 0.3
+done
+# De banner van de sshd aan de andere kant bewijst dat de forward data draagt;
+# een openstaande poort alleen zegt niets.
+BANNER="$(timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$TUNNEL_PORT; head -1 <&3" 2>/dev/null || true)"
+BANNER="${BANNER%$'\r'}"
+if [[ "$BANNER" == SSH-2.0-* ]]; then
+    pass "-L tunnel naar 127.0.0.1 draagt verkeer ($BANNER)"
+elif ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    fail "-L tunnel geweigerd — PermitOpen in sshd_config.d/kepler.conf staat 127.0.0.1 niet toe (sshd matcht de bestemming letterlijk, zonder naamresolutie); Kepler kan zo geen remote opzetten"
+else
+    fail "-L tunnel staat open maar draagt geen verkeer (geen SSH-banner terug)"
+fi
+kill "$TUNNEL_PID" 2>/dev/null || true
+trap 'rm -f "$KNOWN_HOSTS"' EXIT
 
 if [[ "$PODMAN" == true ]]; then
     section "9. Gestapelde podman-override"

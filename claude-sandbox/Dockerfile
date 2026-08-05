@@ -269,15 +269,18 @@ RUN case "$INSTALL_PODMAN" in \
 # niet, dus `claude` in ~/.local/bin zou "command not found" geven. zsh is de
 # login-shell van `claude` en sourcet zshenv altijd, ook bij `zsh -c`.
 #
-# Ciphers/MACs wel gepind, KexAlgorithms bewust niet: de Debian-defaults laten
-# hmac-sha1 en umac-64 toe, maar de default-kexlijst begint juist met de
-# post-quantum hybride uit OpenSSH 10. Die vastpinnen op curve25519 zou een
-# downgrade zijn.
+# Ciphers wel gepind, KexAlgorithms bewust niet: de default-kexlijst begint met
+# de post-quantum hybride uit OpenSSH 10, en vastpinnen op curve25519 zou een
+# downgrade zijn. De MACs-regel is een vangnet: bij deze AEAD-only cipherlijst
+# onderhandelt OpenSSH sowieso geen aparte MAC, maar hij vangt een latere
+# cipher-wijziging af.
 #
 # PermitOpen: `AllowTcpForwarding local` laat `-L` naar élke bestemming toe die
 # de firewall doorlaat, en OUTPUT accepteert het hele bridge-subnet. Zonder deze
 # regel kan een sessie langs de loopback-publish heen pivoten naar de
-# docker-gateway en naar buurcontainers.
+# docker-gateway en naar buurcontainers. Alle drie de loopback-vormen staan
+# erin omdat sshd de bestemming met strcmp vergelijkt — geen naamresolutie, dus
+# een client die `127.0.0.1` stuurt matcht niet op `localhost`.
 #
 # PerSourcePenalties uit: achter een NAT/port-forward deelt elke client één
 # bron-IP, en Keplers kortlevende tunnel-connecties tellen als afgebroken
@@ -312,7 +315,7 @@ RUN case "$INSTALL_SSHD" in \
               'AllowAgentForwarding no' \
               'AllowStreamLocalForwarding no' \
               'AllowTcpForwarding local' \
-              'PermitOpen localhost:*' \
+              'PermitOpen localhost:* 127.0.0.1:* [::1]:*' \
               'GatewayPorts no' \
               'PermitTunnel no' \
               'LogLevel VERBOSE' \
@@ -337,7 +340,7 @@ RUN case "$INSTALL_SSHD" in \
             sshd -T | grep -qx 'permitrootlogin no' && \
             sshd -T | grep -qx 'allowagentforwarding no' && \
             sshd -T | grep -qx 'allowtcpforwarding local' && \
-            sshd -T | grep -qx 'permitopen localhost:\*' && \
+            sshd -T | grep -qx 'permitopen localhost:\* 127\.0\.0\.1:\* \[::1\]:\*' && \
             sshd -T | grep -qx 'allowusers claude' && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
