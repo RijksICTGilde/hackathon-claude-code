@@ -607,8 +607,10 @@ elif ! HAVE_FP="$("$CLI" exec -u claude "$CONTAINER" ssh-keygen -lf /home/claude
     fail "authorized_keys niet te lezen als claude: $(tr '\n' ' ' <"$KEY_ERR")"
 # Zoeken of de gewenste vingerafdruk vóórkomt, niet of hij de enige is: staan er
 # meerdere sleutels in het bestand, dan geeft ssh-keygen -lf een regel per stuk
-# en zou een gelijkheidstest vals-rood geven.
-elif cut -d' ' -f2 <<<"$HAVE_FP" | grep -qxF "$(cut -d' ' -f2 <<<"$WANT_FP")"; then
+# en zou een gelijkheidstest vals-rood geven. Zonder pipe, want `grep -q` sluit
+# af zodra hij matcht en de producent krijgt dan SIGPIPE — onder pipefail telt
+# dat als mislukt, dus juist een vroege treffer zou vals-rood geven.
+elif grep -qF " $(cut -d' ' -f2 <<<"$WANT_FP") " <<<"$HAVE_FP"; then
     pass "authorized_keys bevat de sleutel uit de container-env"
 else
     fail "authorized_keys komt niet overeen met KEPLER_SSH_PUBKEY — je logt in met een oudere sleutel van het volume (env: $WANT_FP / bestand: $HAVE_FP)"
