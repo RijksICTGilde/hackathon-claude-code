@@ -140,7 +140,11 @@ if [[ "$sshd_ready" == true ]]; then
     # ligt vast via PidFile in kepler.conf. /run is een verse tmpfs per start,
     # dus de rm ruimt hooguit een restant van deze run op.
     rm -f /run/sshd.pid
-    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
+    # `env -u`: sshd erft anders de volledige container-env, en zijn pre-auth-child
+    # erft die over de fork heen. Een pre-auth-lek in OpenSSH leest dan de
+    # API-sleutel uit zijn eigen /proc/self/environ, zonder authenticatie. sshd
+    # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
+    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
