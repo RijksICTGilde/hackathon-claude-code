@@ -217,10 +217,18 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # luistert kost niets, en default-deny hoort niet van een runtime-vlag af te
 # hangen. Anders staat de poort open zodra iemand er later iets op start.
 #
-# SSHD_PORT is de enige plek waar het poortnummer staat: wie sshd verplaatst,
-# zet hem hier mee om. compose.override.kepler.yml geeft de waarde door.
-iptables -A INPUT -p tcp --dport "${SSHD_PORT:-22}" ! -s "$HOST_IP" -j DROP
-echo "SSH inbound (poort ${SSHD_PORT:-22}) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
+# SSHD_PORT komt uit compose.override.kepler.yml. Hij moet gelijk zijn aan de
+# poort waarop sshd bindt; de smoke-test toetst dat tegen `sshd -T`, want een
+# stilzwijgend verschil betekent dat deze regel een dichte poort beschermt
+# terwijl de echte openstaat. Gevalideerd zoals de andere externe waarden in dit
+# script: een range als '1:65535' zou anders alle inbound TCP dichtzetten.
+SSHD_PORT="${SSHD_PORT:-22}"
+if ! [[ "$SSHD_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$SSHD_PORT" -gt 65535 ]; then
+    echo "ERROR: SSHD_PORT='$SSHD_PORT' is geen geldig poortnummer" >&2
+    exit 1
+fi
+iptables -A INPUT -p tcp --dport "$SSHD_PORT" ! -s "$HOST_IP" -j DROP
+echo "SSH inbound (poort $SSHD_PORT) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
 
 # Allow host network communication (needed for Docker DNS forwarding, IDE connections, etc.)
 # Docker NAT rewrites 127.0.0.11 to the real DNS server before the filter chain,
