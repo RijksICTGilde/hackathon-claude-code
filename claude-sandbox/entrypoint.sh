@@ -27,8 +27,9 @@ fi
 # Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
 # KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
 # volume, en dat kan niet in een directory die root heeft aangemaakt.
-# SSHD_STATUS komt uit de root-fase. ENABLE_SSHD hier opnieuw interpreteren zou
-# betekenen dat deze fase niet weet of sshd daadwerkelijk luistert.
+# SSHD_STATUS komt uit de root-fase: die zet klaar wat root vereist (host-key,
+# pidfile-directory) en meldt hier of dat gelukt is. ENABLE_SSHD hier opnieuw
+# interpreteren zou die uitkomst negeren en sshd starten op een halve opzet.
 #
 # `ready` is de gangbare status hier: de root-fase heeft de host-key klaargezet
 # en sshd start verderop in dit script. `failed` telt ook mee — de gebruiker
@@ -141,8 +142,7 @@ fi
 if [[ "$SSHD_STATUS" == ready ]]; then
     # `-r` erbij: /run is onder Docker geen tmpfs, en `claude` mag in deze
     # directory schrijven. Een `mkdir` op het pidfile-pad zou `rm -f` laten falen
-    # en met errexit de container in een herstartlus brengen — de enige
-    # sshd-faalroute die niet niet-fataal is.
+    # en met errexit de container in een herstartlus brengen.
     rm -rf -- /run/sshd-claude/sshd.pid
     /usr/sbin/sshd -D -e &
     sshd_pid=$!
