@@ -330,6 +330,15 @@ else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
+# De poortbinding hierboven dekt alleen het pad vanaf de host. Binnen het
+# container-netwerk luistert sshd op 0.0.0.0:22; de firewall hoort inbound naar
+# 22 te beperken tot de gateway.
+if "$CLI" exec "$CONTAINER" sh -c 'iptables -S INPUT' 2>/dev/null | grep -q -- '--dport 22 .*-j DROP'; then
+    pass "firewall beperkt inbound naar poort 22 tot de gateway"
+else
+    fail "geen DROP-regel voor poort 22 in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh, gate op ENABLE_SSHD)"
+fi
+
 section "3. SSH-login met key"
 if ssh_run 'echo ok' >/dev/null 2>&1; then
     pass "login als 'claude' met pubkey"

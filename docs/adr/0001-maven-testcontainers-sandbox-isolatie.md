@@ -341,9 +341,9 @@ dat wel.
   container-root. De proc-mount-bypass in het profiel zelf blokkeren vergt
   vermoedelijk een child-profiel voor de geneste runtime.
 - **De optionele sshd** (§2.3.4) voegt inbound oppervlak toe. De poort wordt
-  host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
-  luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
-  een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
+  host-side alleen op `127.0.0.1` gepubliceerd; binnen het container-netwerk
+  luistert sshd op `0.0.0.0:22`, maar `init-firewall.sh` dropt inbound naar 22
+  van elke bron behalve de gateway, zodat een buurcontainer er niet bij kan. De daemon
   draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
   gecompromitteerde sessie. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
