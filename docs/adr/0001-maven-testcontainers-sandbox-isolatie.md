@@ -161,8 +161,9 @@ waar `claude` zelf in schrijft.
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit
 van elke container die eruit draait. Omdat `/home/claude` van `claude` is, wordt
-type en eigendom van dat pad elke start gecontroleerd — anders kiest de
-ingesloten partij zelf welke host-identiteit Kepler in `known_hosts` pint. `authorized_keys` schrijft
+type en eigendom van dat pad elke start gecontroleerd. Dat houdt de rotatie van
+de identiteit bij root; het maakt de sleutel niet geheim, want in deze opzet
+leest sshd hem als `claude` en kan `claude` hem dus ook lezen. `authorized_keys` schrijft
 `entrypoint.sh` ná de drop, zodat `~/.ssh` van `claude` blijft: wie de
 env-variabele leeg laat, beheert dat bestand zelf op het volume.
 
@@ -348,7 +349,12 @@ dat wel.
   luistert sshd op `0.0.0.0:2222` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
   draait als `claude`, dus een pre-auth-kwetsbaarheid levert geen root op, maar
-  OpenSSH's eigen privilege separation is er niet. `openssh-server` komt ongepind uit apt en valt
+  OpenSSH's eigen privilege separation is er niet: pre-auth-code draait ongechroot
+  als `claude`, met de host-bindmount en de `claude login`-credentials binnen
+  bereik. Twee restrisico's komen daarbij: `claude` kan de host-key lezen en
+  daarmee zelf een sshd met dezelfde identiteit opzetten, en het auth-spoor gaat
+  naar de containerlog waar elk proces van `claude` in kan schrijven — een
+  verzonnen auth-regel is er niet van een echte te onderscheiden. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
   gebouwde variant daarom met Trivy (`scan-type: image`), zodat een kwetsbare
   sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen

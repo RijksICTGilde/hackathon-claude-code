@@ -139,7 +139,11 @@ fi
 # ontbreekt hij, dan start sshd alsnog — geen gat (zonder authorized_keys komt
 # niemand binnen) maar wel een blijvende toestand, geen venster.
 if [[ "$SSHD_STATUS" == ready ]]; then
-    rm -f /run/sshd-claude/sshd.pid
+    # `-r` erbij: /run is onder Docker geen tmpfs, en `claude` mag in deze
+    # directory schrijven. Een `mkdir` op het pidfile-pad zou `rm -f` laten falen
+    # en met errexit de container in een herstartlus brengen — de enige
+    # sshd-faalroute die niet niet-fataal is.
+    rm -rf -- /run/sshd-claude/sshd.pid
     /usr/sbin/sshd -D -e &
     sshd_pid=$!
     for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
