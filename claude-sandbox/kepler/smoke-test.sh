@@ -342,9 +342,13 @@ fi
 # de variabele bestaat — sshd op een andere poort dan de regel beschermt.
 if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
     fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
-elif ! LISTEN_PORT="$("$CLI" exec "$CONTAINER" sh -c "sshd -T 2>&1 | awk '/^port /{print \$2; exit}'")" ||
+# Eerst de ruwe uitvoer, dan pas filteren: met `2>&1 | awk` gaan de foutregels
+# de awk in en filtert die ze weg, waarna de melding leeg blijft. De exitcode van
+# een pipeline is bovendien die van awk, dus altijd 0.
+elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')" ||
+     ! LISTEN_PORT="$(awk '/^port /{print $2; exit}' <<<"$SSHD_T")" ||
      [[ ! "$LISTEN_PORT" =~ ^[0-9]+$ ]]; then
-    fail "kon de sshd-poort niet uit 'sshd -T' halen ($(tr '\n' ' ' <<<"$LISTEN_PORT")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
+    fail "kon de sshd-poort niet uit 'sshd -T' halen ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
 elif ! FW_PORT="$("$CLI" exec "$CONTAINER" printenv SSHD_PORT 2>&1)" && [[ -n "$FW_PORT" ]]; then
     fail "SSHD_PORT niet uit de container-env te lezen: $(tr '\n' ' ' <<<"$FW_PORT")"
 else
