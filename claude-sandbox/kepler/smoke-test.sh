@@ -337,9 +337,9 @@ fi
 # Positie én bronbeperking toetsen, niet alleen aanwezigheid: een DROP ná de
 # subnet-ACCEPT doet niets, en een DROP zonder `! -s` sluit juist iedereen buiten.
 # Op allebei blijft een kale grep op '--dport … -j DROP' groen.
-# De poort komt uit `sshd -T`, niet uit de env: SSHD_PORT stuurt alleen de
-# firewall, dus die tegen zichzelf vergelijken zou het scenario missen waarvoor
-# de variabele bestaat — sshd op een andere poort dan de regel beschermt.
+# De poort komt uit `sshd -T`: dat is de toestand die sshd echt draait. De DROP
+# wordt daartegen gezocht, dus loopt de firewall ooit achter op de drop-in, dan
+# vindt deze assertie geen regel in plaats van de verkeerde goed te keuren.
 if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
     fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
 # De ruwe uitvoer eerst opvangen en pas daarna filteren: bij `2>&1 | awk` gaan de
@@ -347,11 +347,6 @@ if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
 # er niets over om te tonen.
 elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
     fail "'sshd -T' faalde ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
-# Dezelfde fallback als init-firewall.sh, inclusief de `:-` die ook een lege
-# waarde afvangt. In de container en niet via `printenv`, want die geeft zowel
-# bij een niet gezette variabele als bij een gefaalde exec een lege string.
-elif ! FW_PORT="$("$CLI" exec "$CONTAINER" sh -c 'printf %s "${SSHD_PORT:-22}"' 2>&1)"; then
-    fail "SSHD_PORT niet uit de container-env te lezen: $(tr '\n' ' ' <<<"$FW_PORT")"
 else
     LISTEN_PORT="$(awk '/^port /{print $2; exit}' <<<"$SSHD_T")"
     GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
@@ -361,8 +356,6 @@ else
     subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1)
     if [[ ! "$LISTEN_PORT" =~ ^[0-9]+$ ]]; then
         fail "geen poortregel in 'sshd -T' ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
-    elif [[ "$FW_PORT" != "$LISTEN_PORT" ]]; then
-        fail "SSHD_PORT ($FW_PORT) wijkt af van de poort waarop sshd luistert ($LISTEN_PORT) — de firewallregel beschermt een andere poort dan de open staande"
     elif [[ -z "$drop_line" ]]; then
         fail "geen DROP-regel voor poort $LISTEN_PORT in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh)"
     elif [[ -z "$subnet_line" ]]; then
