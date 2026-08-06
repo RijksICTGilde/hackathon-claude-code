@@ -7,3 +7,23 @@
 # `exec sleep infinity`. Geen service om health van te checken — pid 1
 # healthy zegt niets over de bruikbaarheid van de sandbox.
 DS-0026
+
+# DS-0002 (HIGH): Last USER command in Dockerfile should not be 'root'
+# De container start als root omdat init-firewall.sh NET_ADMIN nodig heeft, en
+# dropt in entrypoint-root.sh onherroepelijk naar `claude` (setpriv) vóór er
+# iets draait dat de gebruiker aanstuurt. Er is geen weg terug: geen sudo, geen
+# sudoers-regel, en de setuid/setgid-bits zijn image-breed gestript (Dockerfile,
+# "Strip setuid/setgid-bits") op de podman-helpers na.
+#
+# De check gaat over de gedeclareerde image-gebruiker, niet over wie de workload
+# draait. De agent bereikt de root-fase nooit. De twee paden die er wél nog naar
+# leiden — `docker exec` zonder -u, en een eigen --entrypoint — vereisen allebei
+# toegang tot de Docker-CLI op de host; wie die heeft kan ook `docker run
+# --privileged` en is al host-root. Dat ligt buiten de grens die deze sandbox
+# bewaakt. Er is geen docker-socket in de container gemount.
+#
+# Het alternatief (firewall in een aparte init-service, hoofdcontainer zonder
+# root) is onderzocht en afgevallen: bij `restart: unless-stopped` komt de
+# container na een herstart terug zonder dat die service opnieuw draait, wat een
+# sandbox met open egress oplevert. Zie #98.
+DS-0002

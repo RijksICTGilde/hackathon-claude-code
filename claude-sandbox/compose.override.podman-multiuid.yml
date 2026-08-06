@@ -1,0 +1,24 @@
+# Opt-in: multi-uid rootless Podman ín de sandbox. Nodig voor images die naar een
+# tweede uid chownen — postgres, mysql, mariadb en de meeste DB-images. In de
+# default single-uid modus faalt zo'n image met `chown: ...: Invalid argument`.
+#
+# Stapel dit bovenop je platform-override, niet in plaats daarvan:
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml \
+#                  -f compose.override.podman-multiuid.yml up -d --force-recreate
+# En bouw met PODMAN_MULTIUID=true in .env (zet de subuid-range in de image).
+#
+# Waarom CAP_SYS_ADMIN nodig is: ADR 0001 §2.2.2 "Single-uid default, multi-uid
+# opt-in". Zonder deze override faalt podman met
+# "newuidmap: write to uid_map failed: Operation not permitted".
+#
+# Wat het kost: `claude` heeft CapEff=0 en krijgt de capability niet rechtstreeks
+# in handen — alleen setuid-root newuidmap/newgidmap trekken hem uit de bounding
+# set, en die geven geen shell. Wat je wél vergroot is de impact áls er ooit tóch
+# een escalatie naar container-root is: er is geen userns-remap, dus die is
+# host-breed. Draai deze opt-in daarom niet met een AppArmor-profiel op
+# flags=(unconfined) en niet met een image zonder de setuid-strip. Volledige
+# afweging: ADR 0001 §4.2 "Wat open blijft".
+services:
+  claude:
+    cap_add:
+      - SYS_ADMIN

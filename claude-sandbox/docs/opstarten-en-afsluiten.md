@@ -64,10 +64,15 @@ Start daarna de container met docker compose
 ```
 docker compose up --build --detach
 ```
+
+> **Nested podman (`INSTALL_PODMAN=true`)?** Dit commando gebruikt alleen `compose.yml` en laat de runtime-relaxaties weg die nested/detached containers nodig hebben (device `/dev/net/tun` + security-opts). Start dan met de override erbij; het exacte commando verschilt per OS en staat in [`podman/README.md`](../podman/README.md). Vergeet je de override, dan start de container gewoon, maar waarschuwt de entrypoint bij opstart dat nested containers zullen falen — controleer die log dus na een (her)start.
+
 Je kunt nu connecten met de draaiende container, bijvoorbeeld om een shell (bash, zsh) te starten of om Claude te starten:
-- `docker compose exec claude bash`
-- `docker compose exec claude claude --dangerously-skip-permissions`
+- `docker compose exec -u claude claude bash`
+- `docker compose exec -u claude claude claude --dangerously-skip-permissions`
 - `docker exec -tiu claude claude-sandbox bash`
+
+> `-u claude` is nodig: de container start als root om de firewall op te zetten en dropt daarna naar `claude`. Zonder `-u claude` krijg je een root-shell. In `docker compose exec -u claude claude …` is de eerste `claude` de user en de tweede de service-naam.
 
 Je landt automatisch in de 'projects' directory.
 
