@@ -342,16 +342,18 @@ fi
 # de variabele bestaat — sshd op een andere poort dan de regel beschermt.
 if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
     fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
-elif ! LISTEN_PORT="$("$CLI" exec "$CONTAINER" sh -c "sshd -T 2>/dev/null | awk '/^port /{print \$2; exit}'")" ||
+elif ! LISTEN_PORT="$("$CLI" exec "$CONTAINER" sh -c "sshd -T 2>&1 | awk '/^port /{print \$2; exit}'")" ||
      [[ ! "$LISTEN_PORT" =~ ^[0-9]+$ ]]; then
-    fail "kon de sshd-poort niet uit 'sshd -T' halen — of de firewallregel de juiste poort dekt is niet vast te stellen"
+    fail "kon de sshd-poort niet uit 'sshd -T' halen ($(tr '\n' ' ' <<<"$LISTEN_PORT")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
 elif ! FW_PORT="$("$CLI" exec "$CONTAINER" printenv SSHD_PORT 2>&1)" && [[ -n "$FW_PORT" ]]; then
     fail "SSHD_PORT niet uit de container-env te lezen: $(tr '\n' ' ' <<<"$FW_PORT")"
 else
     # printenv geeft 0 bij een lege waarde; init-firewall.sh valt dan op 22 terug.
     FW_PORT="${FW_PORT:-22}"
     GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
-    drop_line=$(grep -nE -- "--dport ${LISTEN_PORT}( |$)" <<<"$INPUT_RULES" | grep -- '-j DROP' | head -1 | cut -d: -f1)
+    # `-p tcp` mee: een UDP-DROP op dezelfde poort zou anders slagen terwijl TCP
+    # open blijft voor het hele subnet.
+    drop_line=$(grep -nE -- "-p tcp .*--dport ${LISTEN_PORT}( |$)" <<<"$INPUT_RULES" | grep -- '-j DROP' | head -1 | cut -d: -f1)
     subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1)
     if [[ "$FW_PORT" != "$LISTEN_PORT" ]]; then
         fail "SSHD_PORT ($FW_PORT) wijkt af van de poort waarop sshd luistert ($LISTEN_PORT) — de firewallregel beschermt een andere poort dan de open staande"
