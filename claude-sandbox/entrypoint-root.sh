@@ -58,13 +58,16 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# `-D -e` naar de containerlog, niet syslog en niet een eigen bestand: er draait
-# geen syslog-daemon in deze image, en een bestand op de container-laag overleeft
-# geen recreate en roteert niet. Via de containerlog geldt de rotatie van de
-# logdriver en blijft het spoor bewaard waar de operator toch al kijkt.
+# Auth-log op het claude-home volume, niet op de container-laag en niet naar de
+# containerlog:
+#   - er draait geen syslog-daemon, dus zonder -E verdwijnt elke login spoorloos;
+#   - een bestand onder /var/log staat op de container-laag en is bij een
+#     recreate weg — net als de containerlog zelf, die per container bestaat;
+#   - de containerlog is bovendien de stroom waar `claude` na de drop zelf in
+#     schrijft, dus daar is een auth-regel niet van een verzonnen regel te
+#     onderscheiden. Op het volume schrijft alleen root en leest `claude` mee.
 #
-# -D betekent dat sshd niet daemoniseert, dus hij gaat naar de achtergrond met
-# `&` en overleeft de setpriv-drop als eigen proces.
+# sshd opent het bestand vóór het daemoniseren, dus het overleeft de fd-reset.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -101,6 +104,19 @@ prepare_host_key() {
 # een sleutel weg met een INFO-regel terwijl er geen sshd luistert, of geeft hij
 # advies over een var die wél gezet is. setpriv laat de omgeving ongemoeid.
 export SSHD_STATUS=disabled
+# 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
+# De gelogde partij mag het spoor niet kunnen aanpassen, wissen of verdringen.
+SSHD_LOG=/home/claude/.sshd-log/sshd.log
+prepare_auth_log() {
+    local dir=${SSHD_LOG%/*}
+    [[ ! -e "$dir" || ( -d "$dir" && ! -L "$dir" ) ]] || return 1
+    install -d -m 750 -o root -g claude "$dir" || return 1
+    [[ -f "$SSHD_LOG" ]] || install -m 640 -o root -g claude /dev/null "$SSHD_LOG" || return 1
+    # Rechten elke start terugzetten: het bestand staat op een volume dat een
+    # eerdere image met andere waarden kan hebben achtergelaten.
+    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG"
+}
+
 sshd_ready=false
 case "${ENABLE_SSHD:-false}" in
     true)
@@ -116,6 +132,9 @@ case "${ENABLE_SSHD:-false}" in
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
+        elif ! prepare_auth_log; then
+            echo "WAARSCHUWING: auth-log niet aan te maken op het volume — sshd blijft uit" \
+                 "(zonder auth-log is een login niet te herleiden)." >&2
         else
             sshd_ready=true
         fi ;;
@@ -130,17 +149,16 @@ if [[ "$sshd_ready" == true ]]; then
     # voor de firewall heeft. sshd heeft die niet nodig, en met die capabilities
     # zou een pre-auth-lek in OpenSSH meteen `iptables -F` opleveren — precies de
     # maatregel waar de sandbox op rust.
-    # Met `-D` keert sshd niet terug, dus de exit-code zegt niets over succes.
-    # /run/sshd.pid wordt pas ná het binden geschreven en is het bruikbare
-    # signaal; het pad ligt vast via PidFile in kepler.conf. /run is een verse
-    # tmpfs per start, dus de rm ruimt hooguit een restant van deze run op.
+    # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
+    # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
+    # pas ná het binden geschreven en is het bruikbare signaal; het pad ligt vast
+    # via PidFile in kepler.conf. /run is een verse tmpfs per start, dus de rm
+    # ruimt hooguit een restant van deze run op.
     rm -f /run/sshd.pid
-    setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -D -e &
-    sshd_pid=$!
-    for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done
-    if [[ -s /run/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
+    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG" &&
+       { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-events staan in de containerlog)"
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in $SSHD_LOG)"
     else
         # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
         # pidfile uit, dan luistert er iets terwijl het log zegt van niet.

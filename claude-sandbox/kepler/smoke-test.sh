@@ -88,19 +88,23 @@ section() { printf '\n== %s ==\n' "$1"; }
 # Als functie, want de hardste exits zitten midden in het script en zouden die
 # bron anders juist overslaan.
 dump_logs() {
-    local raw
+    local raw err
     echo
     echo "Containerlog (relevante regels):"
     # Geen enkele fout wegfilteren: dit draait als het al mis is, en de reden
     # ("No such container", daemon onbereikbaar) zou anders door de grep of door
     # een vervangende tekst verdwijnen — inclusief een eigen diagnose die dan
     # onwaar kan zijn.
-    # sshd logt met -e naar de containerlog, dus auth-events staan hier ook in.
-    if ! raw="$("$CLI" logs --tail 200 "$CONTAINER" 2>&1)"; then
+    if ! raw="$("$CLI" logs --tail 100 "$CONTAINER" 2>&1)"; then
         echo "  ('$CLI logs' faalde: $(tr '\n' ' ' <<<"$raw"))"
     else
-        grep -iE 'sshd|kepler|WAARSCHUWING|FATAL|Accepted|Authentication refused' <<<"$raw" ||
-            echo "  (geen sshd/kepler-regels in de laatste 200)"
+        grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
+    fi
+    echo "sshd-auth-log (laatste 20):"
+    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /home/claude/.sshd-log/sshd.log 2>&1)"; then
+        echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
+    else
+        printf '%s\n' "$err"
     fi
 }
 
@@ -285,12 +289,21 @@ if "$CLI" exec "$CONTAINER" sh -c '
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-# Auth-events horen in de containerlog te staan; met LogLevel VERBOSE staat de
-# key-fingerprint erbij. Positief toetsen op een regel die sshd zelf schrijft.
-if "$CLI" logs --tail 200 "$CONTAINER" 2>&1 | grep -qiE 'sshd.*(listening on|Server listening)'; then
-    pass "sshd logt naar de containerlog"
+# Het auth-spoor is de reden dat deze log bestaat, dus toets het event zelf en
+# niet de startbanner: na de geslaagde login uit sectie 3 hoort er een
+# 'Accepted publickey' in te staan, met LogLevel VERBOSE inclusief fingerprint.
+if ! AUTH_LOG="$("$CLI" exec "$CONTAINER" cat /home/claude/.sshd-log/sshd.log 2>&1)"; then
+    fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_LOG")"
+elif grep -q 'Accepted publickey for claude' <<<"$AUTH_LOG"; then
+    pass "auth-log bevat het geslaagde login-event"
 else
-    fail "geen sshd-regels in de containerlog — draait sshd met '-e'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+    fail "geen 'Accepted publickey' in /home/claude/.sshd-log/sshd.log terwijl de login in sectie 3 slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+fi
+# De gelogde partij mag het spoor niet kunnen aanpassen.
+if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /home/claude/.sshd-log/sshd.log)" = "0 640" ]'; then
+    pass "auth-log is van root en 640 (claude leest mee, schrijft niet)"
+else
+    fail "auth-log heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
