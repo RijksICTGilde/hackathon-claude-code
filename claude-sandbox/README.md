@@ -165,7 +165,7 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **Geen agent-forwarding.** `AllowAgentForwarding no` houdt je host-sleutels buiten de sandbox, maar betekent ook dat je vanuit een Kepler-worktree niet met de host-sleutel kunt pushen. Regel git-toegang ín de container (`gh auth login`).
 - **De auth-log is niet duurzaam en roteert niet.** `/var/log/sshd.log` staat op de container-laag, niet op het volume: een recreate wist hem. Er is geen rotatie, dus veel loginverkeer laat de writable layer groeien. Wil je bewaren, schrijf hem zelf weg.
 - **Een lek in sshd levert container-root op.** De daemon draait als root (nodig voor privilege separation), dus een pre-auth-kwetsbaarheid weegt zwaarder dan een gecompromitteerde sessie als `claude`.
-- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot. CI scant de sshd-variant wel met Trivy, dus een kwetsbare sshd blokkeert de PR; de fix is een rebuild. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
+- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot. CI scant de os-pakketten van de sshd-variant wel met Trivy, dus een kwetsbare sshd blokkeert de PR; de fix is een rebuild. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
 - **Bij een `docker exec` als root** staat `/home/claude/.local/bin` — door `claude` beschrijfbaar — vooraan in `PATH`. Dat is niet nieuw in deze opzet, maar de kring die als `claude` kan draaien wordt met SSH wel groter. Gebruik `docker exec -u claude`.
 
 ### Opzet
