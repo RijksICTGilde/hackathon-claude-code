@@ -13,10 +13,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-  # Python-deps van de Maven host-agent. Zonder deze entry scant Dependabot
-  # requirements.txt niet (geen pip in de dependency graph), waardoor o.a.
-  # cryptography/starlette/python-multipart stil verouderden tot Trivy ze ving.
-  - package-ecosystem: "pip"
-    directory: "/claude-sandbox/host-agents/maven"
+  # Het sample-project waarmee de podman-set wordt gerookttest. Zonder deze
+  # entry krijgt het alleen security-updates; version-updates blijven uit,
+  # waardoor de smoke-test op verouderde afhankelijkheden blijft draaien.
+  - package-ecosystem: "maven"
+    directory: "/claude-sandbox/podman/sample"
     schedule:
       interval: "weekly"
