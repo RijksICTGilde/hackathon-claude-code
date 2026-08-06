@@ -258,6 +258,10 @@ RUN case "$INSTALL_PODMAN" in \
 # Poort 2222 en niet 22: sshd draait als `claude`, en een poort onder 1024 vereist
 # root. Daarmee is er geen root-daemon meer in de container — een pre-auth-lek in
 # OpenSSH levert dan `claude` op in plaats van root.
+#
+# `UsePAM no` is daarvoor een voorwaarde, geen smaak: sshd_config(5) stelt dat je
+# sshd met UsePAM aan niet als niet-root kunt draaien, en Debian zet hem in de
+# meegeleverde config op yes. De sessiemodules verwachten root.
 # Let op: houd de README-tools-tabel + Kepler-sectie in sync.
 #
 # Staat achter de podman-installatie zodat een flip van INSTALL_SSHD niet de
@@ -305,6 +309,7 @@ RUN case "$INSTALL_SSHD" in \
               'PasswordAuthentication no' \
               'KbdInteractiveAuthentication no' \
               'PermitEmptyPasswords no' \
+              'UsePAM no' \
               'HostbasedAuthentication no' \
               'IgnoreRhosts yes' \
               'PubkeyAuthentication yes' \
@@ -330,7 +335,7 @@ RUN case "$INSTALL_SSHD" in \
               'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
               'RequiredRSASize 3072' \
               'Port 2222' \
-              'PidFile /home/claude/.ssh-host/sshd.pid' \
+              'PidFile /run/sshd-claude/sshd.pid' \
               'PerSourcePenalties no' \
               'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
               > /etc/ssh/sshd_config.d/kepler.conf && \
@@ -340,14 +345,13 @@ RUN case "$INSTALL_SSHD" in \
               >> /etc/zsh/zprofile && \
             mkdir -p /home/claude/.ssh-host && \
             ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
-            chgrp claude /home/claude/.ssh-host/ssh_host_ed25519_key && \
-            chmod 640 /home/claude/.ssh-host/ssh_host_ed25519_key && \
             sshd -t && \
             effective="$(sshd -T)" && \
             for d in 'passwordauthentication no' 'permitrootlogin no' \
                      'allowagentforwarding no' 'allowtcpforwarding local' \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
-                     'allowusers claude' 'pidfile /home/claude/.ssh-host/sshd.pid' \
+                     'allowusers claude' 'pidfile /run/sshd-claude/sshd.pid' \
+                     'usepam no' \
                      'port 2222' \
                      'authorizedkeysfile .ssh/authorized_keys' \
                      'requiredrsasize 3072'; do \

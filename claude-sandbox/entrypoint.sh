@@ -19,10 +19,10 @@ fi
 # authorized_keys voor de Kepler-remote. De sleutel komt runtime uit
 # KEPLER_SSH_PUBKEY, zodat er geen sleutel in de image gebakken zit.
 #
-# Bovenaan dit script, want sshd luistert al vanaf de root-fase: alles wat hier
-# vóór zou staan (podman-wachtlus, marketplace-update over het netwerk) is tijd
-# waarin een client verbindt en `Permission denied` krijgt terwijl het log even
-# later meldt dat de sleutel geschreven is.
+# Direct na de sshd-start hierboven: die luistert al voordat deze sleutel er
+# staat, dus alles wat hier tussen zou komen (podman-wachtlus, marketplace-update
+# over het netwerk) is tijd waarin een client verbindt en `Permission denied`
+# krijgt terwijl het log even later meldt dat de sleutel geschreven is.
 #
 # Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
 # KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
@@ -40,15 +40,18 @@ case "$SSHD_STATUS" in ready|running|failed) sshd_active=true ;; *) sshd_active=
 # root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
 # er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
 if [[ "$SSHD_STATUS" == ready ]]; then
-    rm -f /home/claude/.ssh-host/sshd.pid
+    rm -f /run/sshd-claude/sshd.pid
     /usr/sbin/sshd -D -e &
     sshd_pid=$!
-    for _ in $(seq 1 15); do [[ -s /home/claude/.ssh-host/sshd.pid ]] && break; sleep 0.2; done
-    if [[ -s /home/claude/.ssh-host/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
+    for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
+    if [[ -s /run/sshd-claude/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
         SSHD_STATUS=running
         echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
     else
         SSHD_STATUS=failed
+        # Opruimen vóór we "mislukt" melden: bindt sshd wél maar bleef het pidfile
+        # uit, dan luistert er iets terwijl het log zegt van niet.
+        kill "$sshd_pid" 2>/dev/null || true
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"

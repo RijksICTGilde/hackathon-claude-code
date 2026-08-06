@@ -88,7 +88,8 @@ prepare_host_key() {
     # vreemde sleutel laten starten.
     [[ -f "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key" </dev/null || return 1
     # Root-eigendom met groepsleesrecht: sshd draait als `claude` en moet de
-    # sleutel kunnen lezen, maar niet kunnen vervangen.
+    # sleutel kunnen lezen. Schrijven kan hij niet — maar lezen is genoeg om de
+    # identiteit over te nemen; zie de beperkingen in de README.
     chgrp claude "$key" && chmod 640 "$key" || return 1
     [[ "$(stat -c %u "$key" 2>/dev/null)" == 0 ]]
 }
@@ -112,8 +113,6 @@ case "${ENABLE_SSHD:-false}" in
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
-        elif [[ ! -f /var/log/sshd.log ]] && ! install -m 640 -o root -g claude /dev/null /var/log/sshd.log; then
-            echo "WAARSCHUWING: /var/log/sshd.log niet aanmaakbaar — sshd blijft uit (zonder auth-log is een login niet te herleiden)." >&2
         else
             sshd_ready=true
         fi ;;
@@ -124,12 +123,14 @@ case "${ENABLE_SSHD:-false}" in
 esac
 
 if [[ "$sshd_ready" == true ]]; then
-    # De directory moet voor `claude` schrijfbaar zijn: sshd draait straks als
-    # die gebruiker en schrijft er zijn pidfile.
-    install -d -m 750 -o root -g claude /home/claude/.ssh-host || sshd_ready=false
+    # `claude` moet zijn pidfile kwijt kunnen, maar niet in .ssh-host: schrijfrecht
+    # daar zou betekenen dat hij de host-key kan unlinken en vervangen. /run is
+    # een verse tmpfs per start, dus een restant van een vorige run kan de
+    # startdetectie niet ten onrechte laten slagen.
+    install -d -m 700 -o claude -g claude /run/sshd-claude || sshd_ready=false
     SSHD_STATUS=$([[ "$sshd_ready" == true ]] && echo ready || echo failed)
     [[ "$sshd_ready" == true ]] ||
-        echo "WAARSCHUWING: /home/claude/.ssh-host niet op de juiste rechten te zetten — sshd blijft uit." >&2
+        echo "WAARSCHUWING: /run/sshd-claude niet aanmaakbaar — sshd blijft uit." >&2
 fi
 
 # HOME expliciet zetten: de container draait nu als root, dus Docker zet HOME op

@@ -137,7 +137,7 @@ De bescherming die `--no-new-privs` zou geven, komt in plaats daarvan van de
 setuid-strip uit §2.2.3. De bounding set blijft staan omdat setuid-root
 `newuidmap` daar in de multi-uid opt-in `CAP_SYS_ADMIN` uit moet kunnen trekken.
 
-#### 2.3.4 Optionele sshd in de rootfase
+#### 2.3.4 Optionele sshd na de privilege-drop
 
 `INSTALL_SSHD=true` bouwt een OpenSSH-server mee; `ENABLE_SSHD=true` (gezet door
 `compose.override.kepler.yml`) start hem. De schakelaar is de runtime-var en niet
@@ -146,9 +146,10 @@ gebouwd is niet bij elke start een poort openzet.
 
 sshd draait als `claude` op poort 2222 en start ná de privilege-drop: een poort
 boven 1024 vereist geen root, dus er is geen root-daemon in de container en een
-pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is dat
-OpenSSH's eigen privilege separation vervalt — die vereist root om het pre-auth-
-proces af te splitsen.
+pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is tweeledig: OpenSSH's eigen privilege
+separation vervalt — die vereist root om het pre-auth-proces af te splitsen — en
+de host-key is leesbaar voor `claude`, waarmee de serveridentiteit en alle
+sshd-hardening onder controle staan van de partij die ze moeten beperken.
 
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit
@@ -342,7 +343,7 @@ dat wel.
   vermoedelijk een child-profiel voor de geneste runtime.
 - **De optionele sshd** (§2.3.4) voegt inbound oppervlak toe. De poort wordt
   host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
-  luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
+  luistert sshd op `0.0.0.0:2222` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
   draait als `claude`, dus een pre-auth-kwetsbaarheid levert geen root op, maar
   OpenSSH's eigen privilege separation is er niet. `openssh-server` komt ongepind uit apt en valt

@@ -88,7 +88,7 @@ section() { printf '\n== %s ==\n' "$1"; }
 # Als functie, want de hardste exits zitten midden in het script en zouden die
 # bron anders juist overslaan.
 dump_logs() {
-    local raw err
+    local raw
     echo
     echo "Containerlog (relevante regels):"
     # Geen enkele fout wegfilteren: dit draait als het al mis is, en de reden
@@ -99,12 +99,6 @@ dump_logs() {
         echo "  ('$CLI logs' faalde: $(tr '\n' ' ' <<<"$raw"))"
     else
         grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
-    fi
-    echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
-    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>&1)"; then
-        echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
-    else
-        printf '%s\n' "$err"
     fi
 }
 
@@ -202,11 +196,11 @@ if [[ "$EXPECT_NO_SSHD" == true ]]; then
     # überhaupt bindings kán rapporteren — anders telt een gewijzigd
     # outputformaat of een andere CLI als "geen poort".
     if ! "$CLI" port "$CONTAINER" >/dev/null 2>&1; then
-        fail "'$CLI port $CONTAINER' faalt — of poort 22 gepubliceerd is, is hiermee niet vast te stellen"
-    elif [[ -z "$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)" ]]; then
-        pass "poort 22 niet gepubliceerd"
+        fail "'$CLI port $CONTAINER' faalt — of poort 2222 gepubliceerd is, is hiermee niet vast te stellen"
+    elif [[ -z "$("$CLI" port "$CONTAINER" 2222 2>/dev/null || true)" ]]; then
+        pass "poort 2222 niet gepubliceerd"
     else
-        fail "poort 22 is gepubliceerd terwijl SSH uit hoort te staan"
+        fail "poort 2222 is gepubliceerd terwijl SSH uit hoort te staan"
     fi
     # Een afwezigheid in de logs bewijst niets als er geen logs zijn: een
     # logdriver die lezen niet ondersteunt (journald, none) of een geroteerde
@@ -282,6 +276,7 @@ fi
 # vervangen, en sshd accepteert een host-key van een andere user zonder morren.
 if "$CLI" exec "$CONTAINER" sh -c '
     [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 700" ] &&
+    [ "$(stat -c "%u %a" /home/claude/.ssh-host/ssh_host_ed25519_key)" = "0 640" ] &&
     [ ! -L /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ -f /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ "$(stat -c %u /home/claude/.ssh-host/ssh_host_ed25519_key)" = 0 ]'; then
@@ -289,21 +284,21 @@ if "$CLI" exec "$CONTAINER" sh -c '
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0 640" ]'; then
-    pass "auth-log 640 en van root (claude leest mee, schrijft niet)"
-else
-    fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
-fi
-# Een proces dat als `claude` draait heeft geen capabilities; expliciet toetsen
-# dat de effectieve set leeg is, want dat is de winst van de niet-root-opzet.
-if "$CLI" exec "$CONTAINER" sh -c '
+# Permitted én effective moeten leeg zijn — dat is de winst van de niet-root-opzet.
+# De bounding set blijft bewust staan: die wordt niet verkleind bij de drop, omdat
+# rootless podman hem nodig heeft voor setuid-root newuidmap.
+if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
+    fail "geen sshd-proces — capabilities niet te controleren"
+elif "$CLI" exec "$CONTAINER" sh -c '
     pid=$(pgrep -x sshd | head -1); [ -n "$pid" ] || exit 1
-    eff=$(awk "/^CapEff:/ {print \$2}" /proc/$pid/status)
-    [ -n "$eff" ] || exit 1
-    [ $(( 0x$eff )) -eq 0 ]'; then
-    pass "sshd heeft een lege effectieve capability-set"
+    for f in CapPrm CapEff; do
+        v=$(awk -v k="^$f:" "\$0 ~ k {print \$2}" /proc/$pid/status)
+        [ -n "$v" ] || exit 1
+        [ $(( 0x$v )) -eq 0 ] || exit 1
+    done'; then
+    pass "sshd heeft een lege permitted- en effective-capability-set"
 else
-    fail "sshd heeft capabilities — draait hij toch als root? De niet-root-opzet levert dan niets op"
+    fail "sshd heeft capabilities in permitted of effective — draait hij toch als root? De niet-root-opzet levert dan niets op"
 fi
 
 section "2. Poortbinding — alleen loopback"
@@ -311,9 +306,9 @@ section "2. Poortbinding — alleen loopback"
 # 0.0.0.0/:: staan. Publiceren op een wildcard-adres zet een agent-shell open
 # voor het hele netwerk. Positief asserten, niet de wildcards uitsluiten: een
 # LAN-adres als 192.168.64.2 is geen wildcard en zou anders slagen.
-BINDING="$("$CLI" port "$CONTAINER" 22 || true)"
+BINDING="$("$CLI" port "$CONTAINER" 2222 || true)"
 if [[ -z "$BINDING" ]]; then
-    fail "poort 22 niet gepubliceerd — draai je met compose.override.kepler.yml?"
+    fail "poort 2222 niet gepubliceerd — draai je met compose.override.kepler.yml?"
 elif grep -qE '^(127\.[0-9.]+|\[::1\]):' <<<"$BINDING"; then
     pass "poort alleen op loopback ($BINDING)"
 else
