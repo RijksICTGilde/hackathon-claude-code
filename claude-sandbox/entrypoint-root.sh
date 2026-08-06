@@ -73,7 +73,10 @@ prepare_host_key() {
     # kapotte symlink zou ssh-keygen als root buiten .ssh-host laten schrijven,
     # en op een directory of fifo blokkeert het op zijn overwrite-prompt — met
     # stdin_open uit compose.yml hangt de container-start dan onbeperkt.
-    if [[ -L "$key" || -L "$key.pub" || ( -e "$key" && ! -f "$key" ) ]]; then
+    # Het `.pub`-pad telt hier net zo goed mee: ssh-keygen schrijft beide, dus een
+    # fifo daar blokkeert de start even hard als een fifo op de private sleutel.
+    if [[ -L "$key" || -L "$key.pub" ||
+          ( -e "$key" && ! -f "$key" ) || ( -e "$key.pub" && ! -f "$key.pub" ) ]]; then
         echo "WAARSCHUWING: host-key-pad op het volume is geen gewoon bestand — vervangen." >&2
         rm -rf -- "$key" "$key.pub" || return 1
     elif [[ ( -f "$key" && "$(stat -c %u "$key" 2>/dev/null)" != 0 ) ||
