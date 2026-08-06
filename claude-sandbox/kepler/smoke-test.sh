@@ -290,10 +290,14 @@ else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
-if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /home/claude/.sshd-log/sshd.log)" = "0 640" ]'; then
-    pass "auth-log is van root en 640 (claude leest mee, schrijft niet)"
+# Directory én bestand: de 750 op de directory is wat `claude` belet regels te
+# verwijderen, want het bestand staat in zijn eigen home.
+if "$CLI" exec "$CONTAINER" sh -c '
+    [ "$(stat -c "%U %G %a" /home/claude/.sshd-log)" = "root claude 750" ] &&
+    [ "$(stat -c "%U %G %a" /home/claude/.sshd-log/sshd.log)" = "root claude 640" ]'; then
+    pass "auth-log 640 root:claude in een 750 root:claude-directory"
 else
-    fail "auth-log heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen"
+    fail "auth-log of de directory eromheen heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen of verwijderen"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.

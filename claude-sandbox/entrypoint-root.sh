@@ -105,7 +105,9 @@ prepare_host_key() {
 # advies over een var die wél gezet is. setpriv laat de omgeving ongemoeid.
 export SSHD_STATUS=disabled
 # 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
-# De gelogde partij mag het spoor niet kunnen aanpassen, wissen of verdringen.
+# De gelogde partij kan bestaande regels niet aanpassen of verwijderen. De
+# directory zelf staat in zijn home, dus wegschuiven kan hij hem wel — dan maakt
+# de volgende start een verse aan.
 SSHD_LOG=/home/claude/.sshd-log/sshd.log
 # Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
 # aangeroepen, en daar staat errexit uit.
@@ -181,7 +183,7 @@ if [[ "$sshd_ready" == true ]]; then
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 22 al bezet in deze netwerk-namespace (zie de sshd-regels in de containerlog)"
+            echo "  - poort 22 al bezet in deze netwerk-namespace (zie $SSHD_LOG)"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
             echo "  - onbruikbare host-key op het volume (verwijder /home/claude/.ssh-host)"
