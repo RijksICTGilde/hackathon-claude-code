@@ -69,7 +69,9 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       # PR builds zijn amd64-only om CI-tijd te besparen; arm64-regressies
-      # komen pas op main aan het licht. provenance/sbom worden alleen op
+      # komen pas op main aan het licht. Ze moeten single-arch blijven: de
+      # image-scan hieronder leunt op `load`, en de docker-exporter kan geen
+      # manifest lists exporteren. provenance/sbom worden alleen op
       # main/tag gegenereerd: ze worden bij push: false toch gebouwd
       # (buildx genereert ze tijdens build, niet tijdens push), dus uitzetten
       # op PR scheelt echt CI-tijd. Push gebeurt alleen op main/tag — een
@@ -91,21 +93,35 @@ jobs:
           provenance: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
           sbom: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
 
-      # De Trivy-runs in trivy.yml zijn allemaal `scan-type: fs` en kijken naar
-      # manifesten in de repo, nooit naar wat er in de image zit. Node.js komt
-      # als tarball van nodejs.org en apt-pakketten worden nergens gescand — die
-      # laag was daarmee onzichtbaar.
+      # trivy.yml scant alleen manifesten in de repo; Node.js komt als tarball van
+      # nodejs.org en apt-pakketten zitten uitsluitend in de image. Deze stap dekt
+      # die laag.
       #
-      # Hier en niet in een eigen job: die zou de image een tweede keer moeten
-      # bouwen. Op een PR is de build toch al amd64-only en dus laadbaar, zodat
-      # dezelfde image gescand wordt die net gebouwd is. Op main/tag is de build
-      # multi-arch en niet laadbaar; daar is de PR die het commit opleverde de
-      # gate geweest.
+      # Inline in deze job: de PR-build staat al in de lokale daemon (`load`), dus
+      # er valt niets opnieuw te bouwen.
       #
-      # ignore-unfixed houdt het actionable: alleen CVE's met een beschikbare fix
-      # blokkeren. Bewust geaccepteerde bevindingen staan met reden in
-      # .trivyignore, per CVE-ID — een nieuwe kwetsbaarheid in dezelfde pakketten
-      # laat de scan dus alsnog vallen.
+      # Alleen op PR — wat deze gate dus NIET dekt: de multi-arch build op
+      # main/tag (inclusief arm64, dat op PR niet gebouwd wordt), en tijdsverloop,
+      # want niets herscant een ongewijzigde image tegen een bewegende CVE-database.
+      #
+      # `ignore-unfixed` beperkt de gate bewust tot CVE's waar upstream een fix
+      # voor heeft: Debian markeert veel bevindingen als deferred of no-DSA, en
+      # daarop blokkeren zou betekenen dat er niets meer kan landen tot Debian
+      # beweegt. Een groene stap betekent hier dus "geen fixbare CRITICAL/HIGH",
+      # niet "geen CRITICAL/HIGH". Uitzonderingen staan met reden in .trivyignore.
+      # Symmetrisch met de sign-stap hieronder: een lege waarde uit de buildstap
+      # mag geen stap opleveren die iets anders scant dan bedoeld.
+      - name: Assert image ID present
+        if: github.event_name == 'pull_request'
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        run: |
+          set -euo pipefail
+          if [ -z "${IMAGE_ID}" ]; then
+            echo "Lege imageid uit de buildstap; weigeren te scannen." >&2
+            exit 1
+          fi
+
       - name: Trivy image scan (CRITICAL/HIGH)
         if: github.event_name == 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

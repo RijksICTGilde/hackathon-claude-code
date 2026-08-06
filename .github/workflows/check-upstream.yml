@@ -178,6 +178,73 @@ jobs:
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
+  # Job 2a-bis: npm — eigen release-lijn, los van Node. De npm die met de
+  # Node-tarball meekomt loopt achter, en die achterstand zit in modules die npm
+  # bundelt (tar, undici, brace-expansion). Zonder deze job is een Trivy-melding
+  # het enige signaal, en dat is reactief: pas als iemand een CVE publiceert.
+  #
+  # Blijft binnen dezelfde major als de pin: een major-bump hoort een eigen
+  # afweging te zijn en zou hier wekelijks dezelfde PR opleveren.
+  npm-version:
+    name: npm-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine latest npm within the pinned major and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | head -1 | cut -d= -f2)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          major=${current%%.*}
+          # Alleen stabiele versies binnen dezelfde major; pre-releases (11.0.0-pre)
+          # sorteren anders mee en leveren een onbruikbare pin op.
+          latest=$(curl -fsSL https://registry.npmjs.org/npm \
+            | jq -r --arg m "$major" '.versions | keys[] | select(test("^" + $m + "\\.[0-9]+\\.[0-9]+$"))' \
+            | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste npm-versie binnen major $major niet bepalen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "major=$major"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open auto-PR if npm changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/npm
+          delete-branch: true
+          commit-message: "chore(deps): bump npm to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump npm to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe npm-release binnen major ${{ steps.compare.outputs.major }} gedetecteerd op registry.npmjs.org.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+
+            npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
+            `ip-address`). Loop bij het reviewen `.trivyignore` na: staat er een
+            suppressie voor een module die deze release bumpt, haal die dan weg.
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+
   # Job 2b: git-delta — GitHub release-tracking + per-arch SHAs (zelf berekenen,
   # geen officiële SHA-feed beschikbaar).
   delta-version:

@@ -1,5 +1,6 @@
 # Trivy-suppressions (misconfig-check-IDs en CVE's). Format: één ID per regel.
-# Misconfig/secret-scans worden ongefilterd gegated in .github/workflows/trivy.yml;
+# Gelezen door zowel .github/workflows/trivy.yml als de image-scan in
+# build-image.yml. Misconfig/secret-scans worden ongefilterd gegated;
 # bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
 
 # DS-0026 (LOW): Add HEALTHCHECK instruction in your Dockerfile
@@ -30,37 +31,24 @@ DS-0002
 
 
 # ── npm-bundel in de Node.js-tarball ──────────────────────────────────────────
-# Deze CVE's zitten in dependencies die npm zélf meebrengt binnen de officiële
-# Node.js-tarball (/usr/local/lib/node_modules/npm/node_modules). Wij installeren
-# ze niet en kunnen ze niet verhelpen:
+# Deze CVE's zitten in dependencies die npm bundelt
+# (/usr/local/lib/node_modules/npm/node_modules). De Dockerfile pint npm op de
+# nieuwste 11.x, wat tar, undici en één brace-expansion-CVE verhelpt; voor de drie
+# hieronder brengt geen enkele npm-release een gefixte versie mee. `apt-get
+# upgrade` raakt ze niet: Node komt van nodejs.org, niet uit apt.
 #
-#   - `apt-get upgrade` in de Dockerfile raakt ze niet: Node komt van
-#     nodejs.org, niet uit apt.
-#   - Een Node-bump lost niets op. npm 11.17.0 (Node v24.19.0, de nieuwste v24
-#     LTS) bundelt brace-expansion, ip-address en undici ongewijzigd, en tar op
-#     7.5.16 terwijl CVE-2026-59873 om 7.5.19 vraagt. Nagegaan tegen de
-#     gepubliceerde npm-tarball, niet aangenomen.
-#   - `npm install -g npm` helpt evenmin: 11.17.0 is de nieuwste release.
+# Het zijn twee DoS-bevindingen in een sandbox die geen dienst aanbiedt, en een
+# SSRF in npm's proxy-afhandeling die alleen speelt als npm een vijandige
+# registry of proxyconfiguratie verwerkt.
 #
-# Alleen npm kan zijn eigen dependencies bumpen. Zes van de zeven zijn
-# Denial-of-Service in een lokale dev-sandbox die geen dienst aanbiedt; de
-# zevende (ip-address) is SSRF in npm's proxy-afhandeling, bereikbaar wanneer npm
-# een vijandige registry of proxyconfiguratie verwerkt.
-#
-# Per CVE-ID en niet per pakket: een nieuwe kwetsbaarheid in dezelfde modules
-# laat de scan opnieuw falen. Haal een regel weg zodra npm de dependency bumpt.
+# LET OP — een regel hier geldt repo-breed en per CVE-ID, niet per pakket: ook de
+# fs-scans in trivy.yml en elke andere kopie van dezelfde module vallen eronder.
+# Haal een regel weg zodra npm de dependency bumpt; check-upstream.yml opent een
+# PR bij een nieuwe npm-release, wat het moment is om dat na te lopen.
 
-# tar 7.5.15 — gzip-bomb DoS (CRITICAL), fix in 7.5.19
-CVE-2026-59873
-# tar 7.5.15 — DoS via malformed header, fix in 7.5.18
-CVE-2026-59874
-# brace-expansion 5.0.6 — DoS, exponentiële complexiteit
-CVE-2026-13149
-# brace-expansion 5.0.6 — DoS via geheugenuitputting in expand()
+# brace-expansion — DoS via geheugenuitputting in expand(), fix in 5.0.8
 CVE-2026-14257
-# brace-expansion 5.0.6 — DoS via onbegrensde tussenarrays
+# brace-expansion — DoS via onbegrensde tussenarrays, fix in 5.0.9
 CVE-2026-69152
-# ip-address 10.2.0 — SSRF door inconsistente IP-parsing
+# ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1
 CVE-2026-69192
-# undici 6.26.0 — DoS via onbegrensde geheugengroei over WebSocket
-CVE-2026-12151
