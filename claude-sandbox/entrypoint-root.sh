@@ -58,16 +58,19 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# Auth-log op het claude-home volume, niet op de container-laag en niet naar de
-# containerlog:
+# Auth-log op een eigen volume onder /var/log, niet op de container-laag, niet
+# in `/home/claude` en niet naar de containerlog:
 #   - er draait geen syslog-daemon, dus zonder -E verdwijnt elke login spoorloos;
-#   - een bestand onder /var/log staat op de container-laag en is bij een
-#     recreate weg — net als de containerlog zelf, die per container bestaat;
-#   - de containerlog is bovendien de stroom waar `claude` na de drop zelf in
-#     schrijft, dus daar is een auth-regel niet van een verzonnen regel te
-#     onderscheiden. Op het volume schrijft alleen root en leest `claude` mee.
+#   - de containerlog is de stroom waar `claude` na de drop zelf in schrijft, dus
+#     daar is een auth-regel niet van een verzonnen regel te onderscheiden;
+#   - een pad in `/home/claude` is weliswaar root-eigen te maken, maar de ouder
+#     is van `claude`: hij kan de directory hernoemen en er een eigen sshd.log
+#     voor in de plaats zetten. Het echte spoor loopt dan door op de open fd
+#     terwijl iedereen die het gedocumenteerde pad leest de vervalsing ziet;
+#   - /var/log is van root, dus die hernoeming kan daar niet, en het volume
+#     zorgt dat het spoor een recreate overleeft.
 #
-# sshd opent het bestand vóór het daemoniseren, dus het overleeft de fd-reset.
+# sshd opent het pad vóór het daemoniseren, dus het overleeft de fd-reset.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -105,10 +108,16 @@ prepare_host_key() {
 # advies over een var die wél gezet is. setpriv laat de omgeving ongemoeid.
 export SSHD_STATUS=disabled
 # 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
-# De gelogde partij kan bestaande regels niet aanpassen of verwijderen. De
-# directory zelf staat in zijn home, dus wegschuiven kan hij hem wel — dan maakt
-# de volgende start een verse aan.
-SSHD_LOG=/home/claude/.sshd-log/sshd.log
+# De gelogde partij kan bestaande regels niet aanpassen of verwijderen, en omdat
+# de ouder (/var/log) van root is ook het pad zelf niet omleggen.
+SSHD_LOG=/var/log/sshd/sshd.log
+# OpenSSH zet zelf geen datum of tijd voor een regel: het schrijfpad achter -E/-e
+# is `"%s%s%.*s\r\n"`, waarin alleen de progname-prefix optioneel is. Een spoor
+# zonder tijd beantwoordt niet wie wanneer binnenkwam, dus sshd schrijft naar een
+# fifo en een leesluis zet de tijd erbij. De luis draait als root en is het enige
+# dat in het bestand schrijft; valt hij weg, dan loopt de fifo vol en blokkeert
+# sshd — geen login zonder spoor.
+SSHD_LOG_FIFO=/run/sshd-log.fifo
 # Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
 # aangeroepen, en daar staat errexit uit.
 prepare_auth_log() {
@@ -131,7 +140,17 @@ prepare_auth_log() {
     [[ -f "$SSHD_LOG" ]] || install -m 640 -o root -g claude /dev/null "$SSHD_LOG" || return 1
     # Rechten elke start terugzetten: het bestand staat op een volume dat een
     # eerdere image met andere waarden kan hebben achtergelaten.
-    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG"
+    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG" || return 1
+    # Vers per start: een restant op de container-laag zou een fifo kunnen zijn
+    # waar al iemand anders aan de leeskant zit.
+    rm -f -- "$SSHD_LOG_FIFO" || return 1
+    mkfifo -m 600 "$SSHD_LOG_FIFO" || return 1
+    # De leesluis draait als root en is de enige schrijver van het spoor.
+    # `read -r` zonder IFS-splitsing houdt de regel intact; printf '%(…)T' is een
+    # bash-builtin, dus er komt geen extra proces per regel bij.
+    while IFS= read -r line; do
+        printf '%(%Y-%m-%dT%H:%M:%S%z)T %s\n' -1 "$line"
+    done <"$SSHD_LOG_FIFO" >>"$SSHD_LOG" &
 }
 
 sshd_ready=false
@@ -172,7 +191,7 @@ if [[ "$sshd_ready" == true ]]; then
     # via PidFile in kepler.conf. /run is een verse tmpfs per start, dus de rm
     # ruimt hooguit een restant van deze run op.
     rm -f /run/sshd.pid
-    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG" &&
+    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG_FIFO" &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in $SSHD_LOG)"
