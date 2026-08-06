@@ -340,6 +340,11 @@ RUN case "$INSTALL_SSHD" in \
             ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
             sshd -t && \
             effective="$(sshd -T)" && \
+            # `-i` op de grep hieronder: `sshd -T` dumpt de sleutelnamen vandaag in
+            # lowercase, maar dat is geen toegezegd formaat. Zou een latere versie
+            # er mixed case van maken, dan faalt de build met de melding dat de
+            # drop-in niet toegepast is, wat de verkeerde kant op wijst. De -i
+            # kost hier niets: geen van deze waarden onderscheidt zich op casing.
             for d in 'passwordauthentication no' 'permitrootlogin no' \
                      'allowagentforwarding no' 'allowtcpforwarding local' \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
