@@ -60,6 +60,8 @@ jobs:
           file: claude-sandbox/Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
+          tags: claude-sandbox:sshd-scan
           build-args: INSTALL_SSHD=true
           cache-from: |
             type=gha,scope=sshd
@@ -67,6 +69,22 @@ jobs:
           cache-to: type=gha,mode=min,scope=sshd
           provenance: false
           sbom: false
+
+      # De andere Trivy-runs zijn `scan-type: fs` en zien daarmee geen enkel
+      # apt-pakket. openssh-server komt ongepind uit apt en valt buiten
+      # Dependabot, dus zonder deze scan is er geen enkel signaal op een
+      # kwetsbare sshd. ignore-unfixed houdt het actionable: alleen CVE's met
+      # een beschikbare fix blokkeren, en die fix is een rebuild.
+      - name: Trivy image scan op de sshd-variant (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: claude-sandbox:sshd-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          exit-code: '1'
 
   build:
     name: build-and-push

@@ -345,9 +345,11 @@ dat wel.
   luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
   draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
-  gecompromitteerde sessie. `openssh-server` komt bovendien ongepind uit apt en
-  valt buiten Dependabot en de Trivy-filesystemscan, waardoor regelmatig
-  herbouwen hier een beveiligingseis is in plaats van hygiëne. Draai deze opt-in
+  gecompromitteerde sessie. `openssh-server` komt ongepind uit apt en valt
+  buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
+  gebouwde variant daarom met Trivy (`scan-type: image`), zodat een kwetsbare
+  sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
+  is hier een beveiligingseis, geen hygiëne. Draai deze opt-in
   bij voorkeur in een VM.
 - **Kernel-escapes** blijven buiten bereik van al deze maatregelen.
 
