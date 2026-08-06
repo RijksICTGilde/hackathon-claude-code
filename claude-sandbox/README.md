@@ -41,19 +41,19 @@ De image bevat een firewall die uitgaand verkeer beperkt. Zie [Firewall](#firewa
 <!-- Houd deze lijst in sync met de apt-get install in de Dockerfile (sudo is weggelaten: alleen intern gebruikt door firewall) -->
 De image bevat de volgende tools:
 
-| Categorie           | Tools                                                                                                   |
-|---------------------|---------------------------------------------------------------------------------------------------------|
-| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                       |
-| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                         |
-| Netwerk             | curl, openssh-client, ca-certificates                                                                   |
-| Zoeken              | ripgrep, file                                                                                           |
-| Data & scripting    | jq                                                                                                      |
-| Archivering         | zip, unzip, gnupg2, xz-utils                                                                            |
-| Systeem             | procps                                                                                                  |
-| Runtimes            | Node.js 22 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                        |
+| Categorie           | Tools                                                                                                                                 |
+|---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                                                     |
+| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                                                       |
+| Netwerk             | curl, openssh-client, ca-certificates                                                                                                 |
+| Zoeken              | ripgrep, file                                                                                                                         |
+| Data & scripting    | jq                                                                                                                                    |
+| Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
+| Systeem             | procps                                                                                                                                |
+| Runtimes            | Node.js 24 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                                                      |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
-| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                          |
+| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
 
 ## Plugins en skills
 <!-- Houd deze lijsten in sync met de plugin installs in de Dockerfile -->
@@ -142,13 +142,16 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 ## Dependency-onderhoud
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
-1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh`, `get.sdkman.io` en de gepinde `rtk` v0.35.0 staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
+1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
 2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+
+`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v0.44.1) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
 - een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
+- een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL en `RTK_VERSION` samen bij)
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 

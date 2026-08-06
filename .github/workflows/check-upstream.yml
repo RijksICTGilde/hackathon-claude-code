@@ -23,11 +23,16 @@ defaults:
     working-directory: claude-sandbox
 
 jobs:
-  # Job 1: vendored install-scripts (claude, sdkman, rtk).
+  # Job 1: vendored install-scripts (claude, sdkman).
   # De Dockerfile gebruikt vendor/install-scripts/<name>.sh, niet upstream.
   # Deze job detecteert wanneer upstream is gewijzigd en opent een PR die het
   # vendored bestand vervangt — de PR-diff toont meteen de echte wijziging in
   # het script (wat ook nodig is voor review).
+  #
+  # Alleen scripts met een ongeversioneerde upstream-URL horen hier: daar
+  # detecteert een sha256-vergelijking een wijziging. Een script dat per
+  # release-tag wordt gevendord (rtk) heeft een inhoudelijk onveranderlijke URL
+  # en hoort in de rtk-version-job hieronder.
   vendored-scripts:
     name: "vendored-scripts (${{ matrix.name }})"
     runs-on: ubuntu-latest
@@ -44,9 +49,6 @@ jobs:
           - name: sdkman
             url: https://get.sdkman.io
             file: vendor/install-scripts/sdkman.sh
-          - name: rtk
-            url: https://raw.githubusercontent.com/rtk-ai/rtk/v0.35.0/install.sh
-            file: vendor/install-scripts/rtk.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -142,7 +144,7 @@ jobs:
           sed -i "s|NODE_VERSION=${current}|NODE_VERSION=${latest}|" Dockerfile
           sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
           sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
-          # README tools-tabel verwijst naar 'Node.js 22 LTS' — als de major-versie
+          # README tools-tabel verwijst naar 'Node.js 24 LTS' — als de major-versie
           # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
           old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
           new_major=$(echo "$latest"  | sed -E 's/^v([0-9]+)\..*$/\1/')
@@ -247,3 +249,74 @@ jobs:
             - **Release notes:** https://github.com/dandavison/delta/releases/tag/${{ steps.compare.outputs.latest }}
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+
+  # Job 2c: rtk — volgt de release-tag zelf, omdat het script per tag wordt
+  # gevendord en een sha256-diff tegen die URL dus nooit iets detecteert.
+  # Bumpt de drie plekken die samen moeten verschuiven: het vendored script, de
+  # herkomst-URL en RTK_VERSION. Een aparte SHA-pin voor de binary is niet
+  # nodig: het script verifieert die tegen de checksums.txt van dezelfde release.
+  rtk-version:
+    name: rtk-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine latest rtk release and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name)
+          # De tag komt uit een repository van derden en belandt hieronder in
+          # curl- en sed-argumenten: alleen strikte semver toelaten.
+          case "$latest" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "FOUT: onverwachte rtk-tag '$latest' (verwacht: vX.Y.Z)" >&2; exit 1;;
+          esac
+          current=$(grep -oE 'RTK_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige RTK_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Byte-identiek aan de upstream-tag houden, zodat de herkomst
+          # controleerbaar blijft.
+          curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
+            -o vendor/install-scripts/rtk.sh
+          # Binary-pin, herkomst-URL in de Dockerfile en de versie in de README.
+          sed -i "s|RTK_VERSION=${current}|RTK_VERSION=${latest}|" Dockerfile
+          sed -i "s|rtk-ai/rtk/${current}/install.sh|rtk-ai/rtk/${latest}/install.sh|" Dockerfile
+          sed -i "s|\`rtk\` ${current}|\`rtk\` ${latest}|" README.md
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if rtk changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/rtk
+          delete-branch: true
+          commit-message: "chore(deps): bump rtk to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump rtk to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe rtk-release gedetecteerd op GitHub. Bijgewerkt zijn het vendored
+            install-script, de herkomst-URL in de `Dockerfile` en de `RTK_VERSION`-pin.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **Release notes:** https://github.com/rtk-ai/rtk/releases/tag/${{ steps.compare.outputs.latest }}
+
+            Bekijk de diff van `vendor/install-scripts/rtk.sh`: dat script draait tijdens
+            de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
+            voor je merget.
