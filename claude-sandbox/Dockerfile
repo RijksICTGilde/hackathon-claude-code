@@ -254,6 +254,10 @@ RUN case "$INSTALL_PODMAN" in \
 # Optioneel: OpenSSH-server zodat GitKraken Kepler via SSH een agent-sessie ín
 # deze sandbox kan draaien. Default uit. Bediening, beperkingen en de Kepler-bug
 # waarvoor hieronder een workaround staat: README-sectie "Kepler (SSH-remote)".
+#
+# Poort 2222 en niet 22: sshd draait als `claude`, en een poort onder 1024 vereist
+# root. Daarmee is er geen root-daemon meer in de container — een pre-auth-lek in
+# OpenSSH levert dan `claude` op in plaats van root.
 # Let op: houd de README-tools-tabel + Kepler-sectie in sync.
 #
 # Staat achter de podman-installatie zodat een flip van INSTALL_SSHD niet de
@@ -325,7 +329,8 @@ RUN case "$INSTALL_SSHD" in \
               'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com' \
               'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
               'RequiredRSASize 3072' \
-              'PidFile /run/sshd.pid' \
+              'Port 2222' \
+              'PidFile /home/claude/.ssh-host/sshd.pid' \
               'PerSourcePenalties no' \
               'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
               > /etc/ssh/sshd_config.d/kepler.conf && \
@@ -335,12 +340,15 @@ RUN case "$INSTALL_SSHD" in \
               >> /etc/zsh/zprofile && \
             mkdir -p /home/claude/.ssh-host && \
             ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
+            chgrp claude /home/claude/.ssh-host/ssh_host_ed25519_key && \
+            chmod 640 /home/claude/.ssh-host/ssh_host_ed25519_key && \
             sshd -t && \
             effective="$(sshd -T)" && \
             for d in 'passwordauthentication no' 'permitrootlogin no' \
                      'allowagentforwarding no' 'allowtcpforwarding local' \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
-                     'allowusers claude' 'pidfile /run/sshd.pid' \
+                     'allowusers claude' 'pidfile /home/claude/.ssh-host/sshd.pid' \
+                     'port 2222' \
                      'authorizedkeysfile .ssh/authorized_keys' \
                      'requiredrsasize 3072'; do \
               grep -qxF "$d" <<<"$effective" || \

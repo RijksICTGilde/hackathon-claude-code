@@ -243,12 +243,12 @@ if "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
 else
     fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint-root.sh"
 fi
-# sshd hoort als root te draaien: hij start in de root-fase, vóór de
-# privilege-drop. Een sshd als `claude` kan zijn privilege separation niet doen.
-if "$CLI" exec "$CONTAINER" sh -c 'ps -o user= -p "$(pgrep -x sshd | head -1)" 2>/dev/null | grep -qw root'; then
-    pass "sshd draait als root (gestart in de root-fase)"
+# sshd hoort juist NIET als root te draaien: hij start ná de privilege-drop op
+# poort 2222, zodat een pre-auth-lek in OpenSSH `claude` oplevert en geen root.
+if "$CLI" exec "$CONTAINER" sh -c 'ps -o user= -p "$(pgrep -x sshd | head -1)" 2>/dev/null | grep -qw claude'; then
+    pass "sshd draait als claude (geen root-daemon in de container)"
 else
-    fail "sshd draait niet als root — hij hoort in entrypoint-root.sh te starten, vóór de privilege-drop"
+    fail "sshd draait niet als claude — hij hoort ná de privilege-drop te starten (entrypoint.sh), op poort 2222"
 fi
 
 section '1b. Geen route naar root voor claude'
@@ -294,26 +294,16 @@ if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0
 else
     fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
 fi
-# sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
-# OpenSSH meteen de iptables-regels uit.
-# De exitstatus van een pipeline is die van het laatste onderdeel, dus `pgrep |
-# head` geeft 0 ook zonder treffer; zonder de -n-controle zou een ontbrekende
-# sshd hier als "heeft NET_ADMIN" binnenkomen.
-if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
-    fail "geen sshd-proces — capabilities niet te controleren"
-elif "$CLI" exec "$CONTAINER" sh -c '
+# Een proces dat als `claude` draait heeft geen capabilities; expliciet toetsen
+# dat de effectieve set leeg is, want dat is de winst van de niet-root-opzet.
+if "$CLI" exec "$CONTAINER" sh -c '
     pid=$(pgrep -x sshd | head -1); [ -n "$pid" ] || exit 1
-    # CAP_NET_ADMIN=12, CAP_NET_RAW=13. Naast de bounding set ook permitted en
-    # effective: de bounding set alleen bewijst dat hij ze niet kán winnen, niet
-    # dat hij ze niet heeft.
-    for f in CapBnd CapPrm CapEff; do
-        v=$(awk -v k="^$f:" "\$0 ~ k {print \$2}" /proc/$pid/status)
-        [ -n "$v" ] || exit 1
-        [ $(( 0x$v & ((1 << 12) | (1 << 13)) )) -eq 0 ] || exit 1
-    done'; then
-    pass "sshd draait zonder NET_ADMIN/NET_RAW (bounding, permitted en effective)"
+    eff=$(awk "/^CapEff:/ {print \$2}" /proc/$pid/status)
+    [ -n "$eff" ] || exit 1
+    [ $(( 0x$eff )) -eq 0 ]'; then
+    pass "sshd heeft een lege effectieve capability-set"
 else
-    fail "sshd heeft NET_ADMIN of NET_RAW — de setpriv --bounding-set in entrypoint-root.sh pakt niet"
+    fail "sshd heeft capabilities — draait hij toch als root? De niet-root-opzet levert dan niets op"
 fi
 
 section "2. Poortbinding — alleen loopback"
@@ -396,6 +386,7 @@ else
         'allowagentforwarding no' \
         'x11forwarding no' \
         'permituserrc no' \
+        'port 2222' \
         'authorizedkeysfile .ssh/authorized_keys' \
         'allowtcpforwarding local' \
         'requiredrsasize 3072' \
@@ -536,7 +527,7 @@ else
     TUNNEL_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
     ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
-        -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
+        -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:2222" "claude@$HOST" \
         >/dev/null 2>"$TUNNEL_ERR" &
     TUNNEL_PID=$!
     # De banner van de sshd aan de andere kant bewijst dat de forward data

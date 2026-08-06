@@ -34,7 +34,30 @@ fi
 # klaar te staan voor een volgende start. De melding erbij zegt wel dat er nu
 # niets luistert.
 SSHD_STATUS="${SSHD_STATUS:-disabled}"
-case "$SSHD_STATUS" in running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
+case "$SSHD_STATUS" in ready|running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
+
+# sshd start hier, als `claude`: poort 2222 vereist geen root, dus er draait geen
+# root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
+# er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
+if [[ "$SSHD_STATUS" == ready ]]; then
+    rm -f /home/claude/.ssh-host/sshd.pid
+    /usr/sbin/sshd -D -e &
+    sshd_pid=$!
+    for _ in $(seq 1 15); do [[ -s /home/claude/.ssh-host/sshd.pid ]] && break; sleep 0.2; done
+    if [[ -s /home/claude/.ssh-host/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
+        SSHD_STATUS=running
+        echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
+    else
+        SSHD_STATUS=failed
+        {
+            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
+            echo "Veelvoorkomende oorzaken:"
+            echo "  - poort 2222 al bezet in deze netwerk-namespace"
+            echo "  - host-key niet leesbaar voor $(id -un) (verwacht 640 root:claude in /home/claude/.ssh-host)"
+            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
+        } >&2
+    fi
+fi
 if [[ "$sshd_active" == true ]]; then
     # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
     # vers volume is er niets te beschermen, en dan is de juiste boodschap dat

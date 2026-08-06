@@ -144,11 +144,11 @@ setuid-strip uit §2.2.3. De bounding set blijft staan omdat setuid-root
 de aanwezigheid van de binary, zodat een image die één keer met de toggle
 gebouwd is niet bij elke start een poort openzet.
 
-De start staat hier om dezelfde reden als de firewall: sshd bindt poort 22 en
-heeft root nodig voor zijn privilege separation, en na de drop is dat er niet
-meer. Hij draait wel met een verkleinde bounding set (`-net_admin,-net_raw`) —
-die capabilities heeft de container voor de firewall, en een pre-auth-lek in
-OpenSSH zou er anders `iptables -F` mee kunnen doen.
+sshd draait als `claude` op poort 2222 en start ná de privilege-drop: een poort
+boven 1024 vereist geen root, dus er is geen root-daemon in de container en een
+pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is dat
+OpenSSH's eigen privilege separation vervalt — die vereist root om het pre-auth-
+proces af te splitsen.
 
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit
@@ -344,8 +344,8 @@ dat wel.
   host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
   luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
-  draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
-  gecompromitteerde sessie. `openssh-server` komt ongepind uit apt en valt
+  draait als `claude`, dus een pre-auth-kwetsbaarheid levert geen root op, maar
+  OpenSSH's eigen privilege separation is er niet. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
   gebouwde variant daarom met Trivy (`scan-type: image`), zodat een kwetsbare
   sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen

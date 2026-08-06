@@ -13,7 +13,7 @@ services:
     # host, niet dat vanaf het container-netwerk — zie README 'Kepler
     # (SSH-remote)', sectie Beveiliging.
     ports:
-      - "127.0.0.1:2222:22"
+      - "127.0.0.1:2222:2222"
     environment:
       # Zet sshd aan in déze run. Zonder deze var start de entrypoint geen sshd,
       # ook niet in een image die met INSTALL_SSHD=true gebouwd is: SSH hoort
