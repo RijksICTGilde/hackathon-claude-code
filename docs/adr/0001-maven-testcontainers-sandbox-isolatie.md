@@ -151,10 +151,12 @@ gebouwd is niet bij elke start een poort openzet.
 
 sshd draait als `claude` op poort 2222 en start ná de privilege-drop: een poort
 boven 1024 vereist geen root, dus er is geen root-daemon in de container en een
-pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is tweeledig: OpenSSH's eigen privilege
-separation vervalt — die vereist root om het pre-auth-proces af te splitsen — en
-de host-key is leesbaar voor `claude`, waarmee de serveridentiteit en alle
-sshd-hardening onder controle staan van de partij die ze moeten beperken.
+pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is drieledig: OpenSSH's eigen privilege
+separation vervalt — die vereist root om het pre-auth-proces af te splitsen — de
+host-key is leesbaar voor `claude`, waarmee de serveridentiteit en alle
+sshd-hardening onder controle staan van de partij die ze moeten beperken, en het
+auth-spoor wordt vervalsbaar: sshd schrijft als `claude` naar dezelfde stroom
+waar `claude` zelf in schrijft.
 
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit

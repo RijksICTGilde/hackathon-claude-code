@@ -358,6 +358,8 @@ RUN case "$INSTALL_SSHD" in \
               grep -qxF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \
+            { [ "$(grep -c '^port ' <<<"$effective")" = 1 ] || \
+                { echo "FOUT: meer dan één Port-regel in de effectieve config — sshd luistert dan op meerdere poorten terwijl de firewall er één dekt" >&2; exit 1; }; } && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \

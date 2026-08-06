@@ -315,6 +315,14 @@ else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
+# Regelnummer van de containerlog vóór de login: sshd logt met `-e` daarheen, en
+# een event van een eerdere start mag de assertie verderop niet groen houden.
+if ! AUTH_LOG_OFFSET="$("$CLI" logs "$CONTAINER" 2>&1 | wc -l)" ||
+   [[ ! "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]]; then
+    fail "kon de omvang van de containerlog niet bepalen — de login-assertie verderop zou een event van een vorige run kunnen tellen"
+    AUTH_LOG_OFFSET=""
+fi
+
 section "3. SSH-login met key"
 if ssh_run 'echo ok' >/dev/null 2>&1; then
     pass "login als 'claude' met pubkey"
@@ -337,6 +345,18 @@ if "$CLI" exec -u claude "$CONTAINER" sh -c \
     pass "authorized_keys van claude en niet schrijfbaar voor groep/anderen"
 else
     fail "authorized_keys ontbreekt, is niet van claude (dan is hij in de root-fase geschreven), of /home/claude, ~/.ssh of het bestand is schrijfbaar voor groep/anderen (dan weigert sshd de login): chmod 755 /home/claude; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
+fi
+
+# `-e` bestaat om te voorkomen dat een login spoorloos verdwijnt, dus toets dat
+# ook. Alleen de regels sinds de offset hierboven tellen mee.
+if [[ -z "$AUTH_LOG_OFFSET" ]]; then
+    : # offset onbekend; hierboven al gemeld
+elif ! AUTH_NEW="$("$CLI" logs "$CONTAINER" 2>&1 | tail -n +$((AUTH_LOG_OFFSET + 1)))"; then
+    fail "containerlog niet te lezen voor de auth-controle"
+elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
+    pass "containerlog bevat het login-event van deze run"
+else
+    fail "geen 'Accepted publickey' in de containerlog terwijl de login hierboven slaagde — draait sshd met '-e'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 fi
 
 section "4. PATH in een non-interactieve sessie"

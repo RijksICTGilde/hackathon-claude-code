@@ -30,9 +30,9 @@ fi
 # SSHD_STATUS komt uit de root-fase. ENABLE_SSHD hier opnieuw interpreteren zou
 # betekenen dat deze fase niet weet of sshd daadwerkelijk luistert.
 #
-# `failed` telt mee als actief: de gebruiker wilde SSH, dus de sleutel hoort
-# klaar te staan voor een volgende start. De melding erbij zegt wel dat er nu
-# niets luistert.
+# `ready` is de gangbare status hier: de root-fase heeft de host-key klaargezet
+# en sshd start verderop in dit script. `failed` telt ook mee — de gebruiker
+# wilde SSH, dus de sleutel hoort klaar te staan voor een volgende start.
 SSHD_STATUS="${SSHD_STATUS:-disabled}"
 case "$SSHD_STATUS" in ready|running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
 
@@ -87,7 +87,9 @@ if [[ "$sshd_active" == true ]]; then
         elif tmp="$HOME/.ssh/.authorized_keys.$$" &&
              printf '%s\n' "$pubkey" > "$tmp" && chmod 600 "$tmp" &&
              mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
-            if [[ "$SSHD_STATUS" == running ]]; then
+            # `ready` is de status op dit punt: sshd start pas verderop. Alleen
+            # bij een status die dat pad niet meer haalt is de waarschuwing terecht.
+            if [[ "$SSHD_STATUS" == ready || "$SSHD_STATUS" == running ]]; then
                 echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
             else
                 echo "WAARSCHUWING: Kepler-pubkey weggeschreven, maar sshd luistert niet" \
@@ -132,8 +134,10 @@ fi
 # root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
 # er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
 #
-# Ná het authorized_keys-blok hierboven, zodat er geen venster is waarin sshd
-# luistert zonder dat er een sleutel staat.
+# Ná het authorized_keys-blok hierboven, zodat sshd niet gaat luisteren terwijl
+# een geldige sleutel nog weggeschreven moet worden. Is die sleutel geweigerd of
+# ontbreekt hij, dan start sshd alsnog — geen gat (zonder authorized_keys komt
+# niemand binnen) maar wel een blijvende toestand, geen venster.
 if [[ "$SSHD_STATUS" == ready ]]; then
     rm -f /run/sshd-claude/sshd.pid
     /usr/sbin/sshd -D -e &
