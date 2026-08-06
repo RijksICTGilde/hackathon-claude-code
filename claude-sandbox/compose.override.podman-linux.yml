@@ -1,0 +1,60 @@
+# Runtime-vereisten voor rootless Podman ín de sandbox. Waarom elke relaxatie
+# nodig is: ADR 0001 §2.5 "Relaxaties op de buitenste container".
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml — dat zou
+# auto-laden en de relaxaties op elke `docker compose up` afdwingen):
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml up --build -d
+services:
+  claude:
+    environment:
+      # Client-env voor Testcontainers. Op containerniveau en niet in een
+      # shell-profiel: /etc/profile.d geldt alleen voor login-shells en ~/.bashrc
+      # alleen voor interactieve; hier erft élk proces het, ook `bash -c`.
+      # Vaste uid 1000: de image draait als `claude`.
+      #
+      # XDG_RUNTIME_DIR in /tmp en niet onder $HOME: dat is een persistent volume,
+      # en libpod-runtime-state die een container-herstart overleeft (pause.pid,
+      # alive) laat podman naar processen wijzen die niet meer bestaan.
+      - XDG_RUNTIME_DIR=/tmp/podman-run-1000
+      # De socket die entrypoint.sh bij de start opzet.
+      - DOCKER_HOST=unix:///tmp/podman-run-1000/podman/podman.sock
+      - TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/tmp/podman-run-1000/podman/podman.sock
+      # Ryuk (resource-reaper) is in nested rootless setups instabiel.
+      - TESTCONTAINERS_RYUK_DISABLED=true
+      # Pasta publisht poorten op localhost (ADR 0001 §2.4.2 "Netwerk: pasta").
+      # Testcontainers leidt de container-host niet altijd goed af en valt dan
+      # terug op een gateway-adres → port-wait timeouts op alles dat op een poort
+      # wacht (Postgres, Redis, Quarkus Dev Services). Deze override maakt het
+      # expliciet.
+      - TESTCONTAINERS_HOST_OVERRIDE=localhost
+    devices:
+      # pasta/slirp4netns maken een tap-device voor de rootless container-netwerken
+      # → /dev/net/tun nodig. Ontbreekt die op de host: `sudo modprobe tun`.
+      # NET_ADMIN (al in compose.yml) is óók vereist om de tap op te zetten.
+      - "/dev/net/tun"
+    security_opt:
+      # Tailored seccomp-blocklist i.p.v. unconfined; strikt veiliger. Welke
+      # syscalls en waarom geen allowlist: ADR 0001 §2.5.1 "seccomp-blocklist".
+      # Compose leest dit profiel client-side en resolvet een relatief pad tegen
+      # de PROJECTDIRECTORY: de map van het eerste -f-bestand (te overrulen met
+      # --project-directory), niet tegen CWD en niet tegen dit bestand. Omdat
+      # compose.yml in claude-sandbox/ staat, klopt het pad zolang je compose.yml
+      # als eerste -f meegeeft; draai bij voorkeur vanuit claude-sandbox/.
+      # Ontbreekt het bestand, dan faalt de start hard (os.ReadFile) — er is geen
+      # stille terugval naar unconfined.
+      # Faalt een build op een geblokkeerde syscall: haal hem uit de blocklist of
+      # zet tijdelijk "seccomp=unconfined".
+      - "seccomp=podman/seccomp/podman-sandbox.json"
+      # Custom profiel dat userns toestaat zonder de host-hardening systeembreed
+      # uit te zetten — ADR 0001 §2.5.2 "AppArmor-profiel met userns". Laad het
+      # eerst op de host met ./setup-host.sh, anders faalt de container-start met
+      # "AppArmor profile not found". Op een host zonder AppArmor: vervang door
+      # "apparmor=unconfined".
+      - "apparmor=claude-sandbox-podman"
+      # Nodig op SELinux-hosts (Fedora/RHEL); no-op elders.
+      - "label=disable"
+      # Heft de gemaskeerde en read-only /proc-paden op de buitenste container op;
+      # zonder dit mag een geneste container geen eigen procfs mounten. Dit pelt de
+      # hardening van de buitenste sandbox verder af, en is de reden dat het
+      # AppArmor-profiel hierboven er moet zijn — ADR 0001 §2.5.3
+      # "systempaths=unconfined".
+      - "systempaths=unconfined"

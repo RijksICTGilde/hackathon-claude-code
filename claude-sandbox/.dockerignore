@@ -1,0 +1,12 @@
+# Build-context = claude-sandbox/. Deze paden worden NIET ge-COPY'd in de image
+# (zie de COPY-regels in de Dockerfile: alleen vendor/, skills/, init-firewall.sh
+# en entrypoint.sh) en hoeven dus niet naar de daemon. Scheelt bij elke --build
+# het inpakken en versturen van de projecten-checkouts en build-output; de image
+# wordt er niet door geraakt. De podman/-set (seccomp/apparmor/sample) wordt
+# runtime client-side gelezen via de compose-overrides, niet tijdens de build.
+projects/
+podman/
+docs/
+.claude/
+.env
+compose.override*.yml

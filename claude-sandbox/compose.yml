@@ -12,6 +12,9 @@ services:
         INSTALL_ANTHROPIC_PLUGINS: "${INSTALL_ANTHROPIC_PLUGINS:?stel INSTALL_ANTHROPIC_PLUGINS in op true of false in .env}"
         INSTALL_LOCAL_SKILLS: "${INSTALL_LOCAL_SKILLS:?stel INSTALL_LOCAL_SKILLS in op true of false in .env}"
         INSTALL_CAVEMAN: "${INSTALL_CAVEMAN:?stel INSTALL_CAVEMAN in op true of false in .env}"
+        # Optioneel, default false: nieuwe flag mag bestaande .env niet breken.
+        INSTALL_PODMAN: "${INSTALL_PODMAN:-false}"
+        PODMAN_MULTIUID: "${PODMAN_MULTIUID:-false}"
     container_name: claude-sandbox
     restart: unless-stopped
     # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset) — zonder
@@ -22,18 +25,6 @@ services:
     stdin_open: true
     tty: true
     init: true
-    # host.docker.internal is ingebouwd op Docker Desktop en Rancher Desktop
-    # (Mac/Windows) — daar werkt het out-of-the-box. Op Linux Docker en Podman
-    # NIET; daar moet je een compose.override.yml toevoegen met:
-    #   services:
-    #     claude:
-    #       extra_hosts:
-    #         - "host.docker.internal:host-gateway"
-    # Zie compose.override.linux.yml.example in deze repo: kopieer naar
-    # compose.override.yml op Linux/Podman.
-    # NB: doe dit NIET op Rancher Desktop op Mac/Windows — daar resolveert
-    # host-gateway naar de docker0-gateway IN de Lima-VM en niet naar de
-    # echte host. Gebruik daar de ingebouwde host.docker.internal.
     environment:
       - ANTHROPIC_API_KEY
       - OPEN_HTTPS

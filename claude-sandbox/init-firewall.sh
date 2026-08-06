@@ -129,6 +129,18 @@ if [ "$OPEN_HTTPS" != "true" ]; then
         "get.sdkman.io"
         "broker.sdkman.io"
     )
+    # Container-registries voor Testcontainers — alleen toevoegen als rootless
+    # podman in de image zit. Dan pullt Testcontainers images van docker.io en
+    # moeten die registries door de strikte whitelist. Zonder podman verbreedt
+    # dit de whitelist niet. (Bij OPEN_HTTPS=true is deze hele lijst een no-op.)
+    if command -v podman >/dev/null 2>&1; then
+        DOMAINS+=(
+            "registry-1.docker.io"
+            "auth.docker.io"
+            "production.cloudflare.docker.com"
+            "docker.io"
+        )
+    fi
     if [ -n "${ALLOWED_DOMAINS:-}" ]; then
         IFS=',' read -ra EXTRA <<< "$ALLOWED_DOMAINS"
         DOMAINS+=("${EXTRA[@]}")
@@ -186,21 +198,6 @@ if [[ ! "$HOST_NETWORK" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]
 fi
 echo "Host network detected as: $HOST_NETWORK (via $HOST_IFACE)"
 
-# Resolve host.docker.internal voor de OUTPUT-allow hieronder. Op Linux Docker
-# is dit de bridge-gateway (al gedekt door HOST_NETWORK); op Docker Desktop en
-# Rancher Desktop is het een VM-intern IP buiten HOST_NETWORK (bv. 192.168.5.2),
-# dus expliciet toestaan is nodig om de host (en MCP-servers daarop) te bereiken.
-# Op Podman geldt hetzelfde patroon als Linux Docker mits extra_hosts:host-gateway
-# is gezet (zie compose.override.linux.yml.example).
-HOST_DOCKER_INTERNAL=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}' || true)
-if [ -n "$HOST_DOCKER_INTERNAL" ]; then
-    if [[ ! "$HOST_DOCKER_INTERNAL" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        echo "ERROR: host.docker.internal resolves to non-IPv4 address: $HOST_DOCKER_INTERNAL"
-        exit 1
-    fi
-    echo "host.docker.internal resolves to: $HOST_DOCKER_INTERNAL"
-fi
-
 # Set default policies to DROP
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
@@ -215,13 +212,6 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # so post-NAT DNS traffic targets an IP within HOST_NETWORK — covered by this rule.
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
-
-# Allow uitgaand verkeer naar host.docker.internal als dat buiten HOST_NETWORK
-# valt (Docker Desktop / Rancher Desktop). Op Linux Docker is dit doorgaans de
-# bridge-gateway en al gedekt; de extra regel is dan een no-op.
-if [ -n "${HOST_DOCKER_INTERNAL:-}" ]; then
-    iptables -A OUTPUT -d "$HOST_DOCKER_INTERNAL" -j ACCEPT
-fi
 
 # Allow DNS to Docker's internal resolver (pre-NAT destination)
 iptables -A OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT
