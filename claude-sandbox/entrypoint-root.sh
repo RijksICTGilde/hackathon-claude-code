@@ -119,6 +119,9 @@ prepare_auth_log() {
     # `-f` dereferencet, dus zonder deze guard laat een symlink op de plek van de
     # log het auth-spoor ergens anders belanden — en zet de chown hieronder een
     # bestand naar keuze op root:claude. `rm -f` haalt de link weg, niet het doel.
+    # Dekt geen hardlink: die is van een gewoon bestand niet te onderscheiden.
+    # Het spoor blijft dan wel root-only schrijfbaar, maar deelt zijn inode met
+    # een ander bestand op het volume.
     if [[ -L "$SSHD_LOG" || ( -e "$SSHD_LOG" && ! -f "$SSHD_LOG" ) ]]; then
         echo "WAARSCHUWING: $SSHD_LOG is geen gewoon bestand — vervangen." >&2
         rm -f -- "$SSHD_LOG" || return 1

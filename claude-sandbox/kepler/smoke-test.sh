@@ -334,8 +334,17 @@ fi
 # Regelnummer vóór de login vastleggen: het bestand staat op het volume en
 # overleeft een recreate, dus een 'Accepted publickey' van een vorige run zou de
 # assertie hieronder voorgoed groen houden.
-AUTH_LOG_OFFSET="$("$CLI" exec "$CONTAINER" sh -c 'wc -l < /home/claude/.sshd-log/sshd.log 2>/dev/null || echo 0')"
-[[ "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]] || AUTH_LOG_OFFSET=0
+# Alleen "bestand bestaat nog niet" mag 0 opleveren. Een mislukte of onleesbare
+# meting stil op 0 zetten betekent "tel het hele bestand", en dan houdt een
+# 'Accepted publickey' van een vorige run de assertie voorgoed groen — precies
+# het gat dat deze offset dicht.
+if ! AUTH_LOG_OFFSET="$("$CLI" exec "$CONTAINER" sh -c '
+        [ -e /home/claude/.sshd-log/sshd.log ] || { echo 0; exit 0; }
+        wc -l < /home/claude/.sshd-log/sshd.log' 2>&1)" ||
+   [[ ! "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]]; then
+    fail "kon de omvang van de auth-log niet bepalen ($(tr '\n' ' ' <<<"$AUTH_LOG_OFFSET")) — de login-assertie verderop zou een event van een vorige run kunnen tellen"
+    AUTH_LOG_OFFSET=""
+fi
 
 section "3. SSH-login met key"
 if ssh_run 'echo ok' >/dev/null 2>&1; then
@@ -364,7 +373,9 @@ fi
 # Het auth-spoor is de reden dat deze log bestaat, dus toets het event zelf en
 # niet de startbanner. Alleen de regels die ná de offset hierboven zijn
 # bijgekomen tellen, zodat een event van een vorige run niet meetelt.
-if ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /home/claude/.sshd-log/sshd.log" 2>&1)"; then
+if [[ -z "$AUTH_LOG_OFFSET" ]]; then
+    : # offset onbekend; hierboven al gemeld, niet nog eens falen
+elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /home/claude/.sshd-log/sshd.log" 2>&1)"; then
     fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_NEW")"
 elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
     pass "auth-log bevat het login-event van deze run"
