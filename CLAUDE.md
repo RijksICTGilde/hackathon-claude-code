@@ -21,7 +21,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/init-firewall.sh`, `entrypoint.sh` | Netwerkrestricties en containerstart |
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
 | `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
-| `docs/oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
+| `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
 | `.github/workflows/` | build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
 
 ## Commando's
