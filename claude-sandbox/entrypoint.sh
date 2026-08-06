@@ -144,10 +144,8 @@ if [[ "$SSHD_STATUS" == ready ]]; then
     sshd_pid=$!
     for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
     if [[ -s /run/sshd-claude/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
-        SSHD_STATUS=running
         echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
     else
-        SSHD_STATUS=failed
         # Opruimen vóór we "mislukt" melden: bindt sshd wél maar bleef het pidfile
         # uit, dan luistert er iets terwijl het log zegt van niet.
         kill "$sshd_pid" 2>/dev/null || true
