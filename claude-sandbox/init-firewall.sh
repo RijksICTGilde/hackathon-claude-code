@@ -223,31 +223,53 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # regel in het log erbij. Staat er geen Port-directive, dan luistert sshd op zijn
 # eigen default 22.
 #
-# Port is cumulatief: elke regel voegt een luisterpoort toe, dus er is een DROP
-# per poort nodig. sshd accepteert `Port 22` en `Port=22`, hoofdletterongevoelig;
-# de `sub` maakt van beide vormen hetzelfde. Waarden worden gevalideerd zoals de
-# andere externe invoer in dit script — een range als '1:65535' zou anders alle
-# inbound TCP dichtzetten — en met `10#` genormaliseerd, zodat `Port 0022` net als
-# bij sshd 22 oplevert in plaats van een harde fout.
-SSHD_CONF=/etc/ssh/sshd_config.d/kepler.conf
-sshd_ports=()
-if [ -r "$SSHD_CONF" ]; then
-    mapfile -t sshd_ports < <(awk '{ sub(/=/, " "); if (tolower($1) == "port" && $2 != "") print $2 }' "$SSHD_CONF")
+# Port is cumulatief en ListenAddress kan er zelf een dragen, dus er is een DROP
+# per luisterpoort nodig. Alle drop-ins worden gelezen, want sshd doet `Include
+# /etc/ssh/sshd_config.d/*.conf` en een tweede bestand telt net zo hard mee.
+#
+# sshd accepteert `Port 22`, `Port=22` en `Port "22"`, hoofdletterongevoelig; de
+# gsub/sub hieronder maken daar één vorm van. Bij ListenAddress telt alleen een
+# expliciete poort: `[::]:2200` en `0.0.0.0:2200` wel, een kaal `::1` niet — dat
+# is een adres, geen poort.
+#
+# Alleen bij ENABLE_SSHD=true: een onleesbare of ongeldige waarde laat dit script
+# hard falen, en dat zou anders elke container onstartbaar maken, ook zonder SSH.
+if [ "${ENABLE_SSHD:-false}" = true ]; then
+    sshd_ports=()
+    for sshd_conf in /etc/ssh/sshd_config.d/*.conf; do
+        [ -r "$sshd_conf" ] || continue
+        while read -r conf_port; do
+            sshd_ports+=("$conf_port")
+        done < <(awk '
+            { gsub(/"/, ""); sub(/=/, " ") }
+            tolower($1) == "port" && $2 != "" { print $2 }
+            tolower($1) == "listenaddress" {
+                a = $2
+                if (a ~ /\]:[0-9]+$/)                        { sub(/.*\]:/, "", a); print a }
+                else if (a !~ /:.*:/ && a ~ /:[0-9]+$/)      { sub(/.*:/,   "", a); print a }
+            }' "$sshd_conf")
+    done
+    # Geen enkele directive gevonden: sshd luistert dan op zijn eigen default.
+    [ ${#sshd_ports[@]} -gt 0 ] || sshd_ports=(22)
+    seen_ports=""
+    for conf_port in "${sshd_ports[@]}"; do
+        if ! [[ "$conf_port" =~ ^[0-9]{1,5}$ ]]; then
+            echo "ERROR: poort '$conf_port' uit /etc/ssh/sshd_config.d is geen geldig poortnummer" >&2
+            exit 1
+        fi
+        # 10#: `Port 0022` is bij sshd gewoon 22, en octaal zou hier iets anders
+        # opleveren dan de poort waarop hij luistert.
+        sshd_port=$((10#$conf_port))
+        if [ "$sshd_port" -lt 1 ] || [ "$sshd_port" -gt 65535 ]; then
+            echo "ERROR: poort '$conf_port' uit /etc/ssh/sshd_config.d valt buiten 1-65535" >&2
+            exit 1
+        fi
+        case " $seen_ports " in *" $sshd_port "*) continue ;; esac
+        seen_ports="$seen_ports $sshd_port"
+        iptables -A INPUT -p tcp --dport "$sshd_port" ! -s "$HOST_IP" -j DROP
+        echo "SSH inbound (poort $sshd_port) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
+    done
 fi
-[ ${#sshd_ports[@]} -gt 0 ] || sshd_ports=(22)
-for conf_port in "${sshd_ports[@]}"; do
-    if ! [[ "$conf_port" =~ ^[0-9]{1,5}$ ]]; then
-        echo "ERROR: Port '$conf_port' uit $SSHD_CONF is geen geldig poortnummer" >&2
-        exit 1
-    fi
-    sshd_port=$((10#$conf_port))
-    if [ "$sshd_port" -lt 1 ] || [ "$sshd_port" -gt 65535 ]; then
-        echo "ERROR: Port '$conf_port' uit $SSHD_CONF valt buiten 1-65535" >&2
-        exit 1
-    fi
-    iptables -A INPUT -p tcp --dport "$sshd_port" ! -s "$HOST_IP" -j DROP
-    echo "SSH inbound (poort $sshd_port) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
-done
 
 # Allow host network communication (needed for Docker DNS forwarding, IDE connections, etc.)
 # Docker NAT rewrites 127.0.0.11 to the real DNS server before the filter chain,

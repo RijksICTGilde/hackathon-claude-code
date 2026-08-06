@@ -350,7 +350,15 @@ if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
 elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
     fail "'sshd -T' faalde ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
 else
-    mapfile -t LISTEN_PORTS < <(awk 'tolower($1) == "port" { print $2 }' <<<"$SSHD_T")
+    # Ook listenaddress: die kan een eigen poort dragen, en sshd rapporteert hem
+    # niet als `port`-regel. Een kaal IPv6-adres telt niet mee.
+    mapfile -t LISTEN_PORTS < <(awk '
+        tolower($1) == "port" { print $2 }
+        tolower($1) == "listenaddress" {
+            a = $2
+            if (a ~ /\]:[0-9]+$/)                   { sub(/.*\]:/, "", a); print a }
+            else if (a !~ /:.*:/ && a ~ /:[0-9]+$/) { sub(/.*:/,   "", a); print a }
+        }' <<<"$SSHD_T" | sort -u)
     GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
     # `|| true`: een lege grep geeft rc 1, en met pipefail zou de toewijzing het
     # script hier neerleggen — precies bij de regressie die de takken hieronder
