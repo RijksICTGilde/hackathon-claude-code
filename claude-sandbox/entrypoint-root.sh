@@ -59,6 +59,11 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
+# Directory 750 root:claude: sshd draait als `claude` en moet erdoorheen kunnen
+# om de sleutel te lezen. Géén 770 — schrijfrecht op de directory betekent dat de
+# sleutel te unlinken en te vervangen is, en dat is precies wat de
+# eigendomscontrole hierboven moet voorkomen. De pidfile staat daarom in /run.
+#
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
 prepare_host_key() {
@@ -109,7 +114,7 @@ case "${ENABLE_SSHD:-false}" in
         elif [[ -L /home/claude/.ssh-host || ( -e /home/claude/.ssh-host && ! -d /home/claude/.ssh-host ) ]]; then
             echo "WAARSCHUWING: /home/claude/.ssh-host is geen directory (symlink of bestand) — host-key niet aanmaakbaar," \
                  "sshd blijft uit. Verwijder het pad op het claude-home volume." >&2
-        elif ! install -d -m 700 -o root -g root /home/claude/.ssh-host; then
+        elif ! install -d -m 750 -o root -g claude /home/claude/.ssh-host; then
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2

@@ -275,7 +275,7 @@ fi
 # Eigendom en type expliciet toetsen: `claude` bezit /home/claude en kan het pad
 # vervangen, en sshd accepteert een host-key van een andere user zonder morren.
 if "$CLI" exec "$CONTAINER" sh -c '
-    [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 700" ] &&
+    [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 750" ] &&
     [ "$(stat -c "%u %a" /home/claude/.ssh-host/ssh_host_ed25519_key)" = "0 640" ] &&
     [ ! -L /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ -f /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
