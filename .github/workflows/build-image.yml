@@ -76,15 +76,13 @@ jobs:
       # kwetsbare sshd. ignore-unfixed houdt het actionable: alleen CVE's met
       # een beschikbare fix blokkeren, en die fix is een rebuild.
       #
-      # Alleen os-pakketten: de npm-modules die met de Node.js-tarball meekomen
-      # zitten net zo goed in de default-image, die hier niet gescand wordt. Die
-      # in déze job gaten laten schieten zou de sshd-PR blokkeren op iets dat er
-      # los van staat. TRIVY_PKG_TYPES i.p.v. een action-input, zodat het niet
-      # afhangt van welke inputs deze versie van de action doorgeeft.
-      - name: Trivy image scan op de sshd-variant (CRITICAL/HIGH, os-pakketten)
+      # Alle pakkettypes, niet alleen os: de sshd-variant is de default-image plus
+      # openssh, dus deze ene scan dekt ook wat de gewone image meebrengt —
+      # inclusief de npm-modules uit de Node.js-tarball. Wat daarvan bewust
+      # geaccepteerd is staat met reden in .trivyignore, dus een nieuwe
+      # kwetsbaarheid faalt wél.
+      - name: Trivy image scan op de sshd-variant (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PKG_TYPES: os
         with:
           scan-type: image
           image-ref: claude-sandbox:sshd-scan

@@ -1,4 +1,4 @@
-# Trivy misconfig suppressions. Format: één check-ID per regel.
+# Trivy-suppressions (misconfig-check-IDs en CVE's). Format: één ID per regel.
 # Misconfig/secret-scans worden ongefilterd gegated in .github/workflows/trivy.yml;
 # bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
 
@@ -27,3 +27,37 @@ DS-0026
 # container na een herstart terug zonder dat die service opnieuw draait, wat een
 # sandbox met open egress oplevert. Zie #98.
 DS-0002
+
+
+# ── npm-bundel in de Node.js-tarball ──────────────────────────────────────────
+# De volgende CVE's zitten in dependencies die npm zélf meebrengt binnen de
+# officiële Node.js-tarball (/usr/local/lib/node_modules/npm/node_modules). Ze
+# zijn niet met een eigen `npm install` te verhelpen en er is geen upstream-versie
+# om naartoe te bumpen: npm 11.17.0 (Node v24.19.0) bundelt brace-expansion,
+# ip-address en undici ongewijzigd, en tar op 7.5.16 terwijl CVE-2026-59873 om
+# 7.5.19 vraagt. Een Node-bump lost dit dus niet op — dat is nagegaan, niet
+# aangenomen.
+#
+# Zes van de zeven zijn Denial-of-Service in een lokale dev-sandbox zonder
+# aangeboden dienst; de zevende (ip-address) is SSRF in npm's eigen
+# proxy-afhandeling en is alleen bereikbaar wanneer npm een vijandige registry
+# of proxyconfiguratie verwerkt.
+#
+# Deze lijst is per CVE-ID, niet per pakket: een nieuwe kwetsbaarheid in
+# dezelfde pakketten laat de scan opnieuw falen. Haal een regel weg zodra npm
+# de betreffende dependency bumpt.
+
+# tar 7.5.15 — gzip-bomb DoS (CRITICAL), fix in 7.5.19
+CVE-2026-59873
+# tar 7.5.15 — DoS via malformed header, fix in 7.5.18
+CVE-2026-59874
+# brace-expansion 5.0.6 — DoS, exponentiële complexiteit
+CVE-2026-13149
+# brace-expansion 5.0.6 — DoS via geheugenuitputting in expand()
+CVE-2026-14257
+# brace-expansion 5.0.6 — DoS via onbegrensde tussenarrays
+CVE-2026-69152
+# ip-address 10.2.0 — SSRF door inconsistente IP-parsing
+CVE-2026-69192
+# undici 6.26.0 — DoS via onbegrensde geheugengroei over WebSocket
+CVE-2026-12151

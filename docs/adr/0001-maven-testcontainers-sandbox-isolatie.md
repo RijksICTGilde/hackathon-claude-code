@@ -347,8 +347,9 @@ dat wel.
   draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
   gecompromitteerde sessie. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
-  os-pakketten van de gebouwde variant daarom met Trivy (`scan-type: image`),
-  zodat een kwetsbare sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
+  gebouwde variant daarom met Trivy (`scan-type: image`), zodat een kwetsbare
+  sshd wél een signaal geeft. Die variant is de default-image plus openssh, dus
+  dezelfde scan dekt ook wat de gewone image meebrengt. De fix is dan een rebuild — regelmatig herbouwen
   is hier een beveiligingseis, geen hygiëne. Draai deze opt-in
   bij voorkeur in een VM.
 - **Kernel-escapes** blijven buiten bereik van al deze maatregelen.
