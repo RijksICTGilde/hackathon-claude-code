@@ -1,4 +1,4 @@
-# Trivy misconfig suppressions. Format: één check-ID per regel.
+# Trivy-suppressions (misconfig-check-IDs en CVE's). Format: één ID per regel.
 # Misconfig/secret-scans worden ongefilterd gegated in .github/workflows/trivy.yml;
 # bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
 
@@ -27,3 +27,40 @@ DS-0026
 # container na een herstart terug zonder dat die service opnieuw draait, wat een
 # sandbox met open egress oplevert. Zie #98.
 DS-0002
+
+
+# ── npm-bundel in de Node.js-tarball ──────────────────────────────────────────
+# Deze CVE's zitten in dependencies die npm zélf meebrengt binnen de officiële
+# Node.js-tarball (/usr/local/lib/node_modules/npm/node_modules). Wij installeren
+# ze niet en kunnen ze niet verhelpen:
+#
+#   - `apt-get upgrade` in de Dockerfile raakt ze niet: Node komt van
+#     nodejs.org, niet uit apt.
+#   - Een Node-bump lost niets op. npm 11.17.0 (Node v24.19.0, de nieuwste v24
+#     LTS) bundelt brace-expansion, ip-address en undici ongewijzigd, en tar op
+#     7.5.16 terwijl CVE-2026-59873 om 7.5.19 vraagt. Nagegaan tegen de
+#     gepubliceerde npm-tarball, niet aangenomen.
+#   - `npm install -g npm` helpt evenmin: 11.17.0 is de nieuwste release.
+#
+# Alleen npm kan zijn eigen dependencies bumpen. Zes van de zeven zijn
+# Denial-of-Service in een lokale dev-sandbox die geen dienst aanbiedt; de
+# zevende (ip-address) is SSRF in npm's proxy-afhandeling, bereikbaar wanneer npm
+# een vijandige registry of proxyconfiguratie verwerkt.
+#
+# Per CVE-ID en niet per pakket: een nieuwe kwetsbaarheid in dezelfde modules
+# laat de scan opnieuw falen. Haal een regel weg zodra npm de dependency bumpt.
+
+# tar 7.5.15 — gzip-bomb DoS (CRITICAL), fix in 7.5.19
+CVE-2026-59873
+# tar 7.5.15 — DoS via malformed header, fix in 7.5.18
+CVE-2026-59874
+# brace-expansion 5.0.6 — DoS, exponentiële complexiteit
+CVE-2026-13149
+# brace-expansion 5.0.6 — DoS via geheugenuitputting in expand()
+CVE-2026-14257
+# brace-expansion 5.0.6 — DoS via onbegrensde tussenarrays
+CVE-2026-69152
+# ip-address 10.2.0 — SSRF door inconsistente IP-parsing
+CVE-2026-69192
+# undici 6.26.0 — DoS via onbegrensde geheugengroei over WebSocket
+CVE-2026-12151
