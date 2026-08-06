@@ -286,10 +286,10 @@ else
 fi
 # Permitted én effective moeten leeg zijn — dat is de winst van de niet-root-opzet.
 # De bounding set blijft bewust staan: die wordt niet verkleind bij de drop, omdat
-# rootless podman hem nodig heeft voor setuid-root newuidmap. Wél toetsen dat hij
-# niet ruimer is dan die van PID 1: sshd hoort niets extra's te krijgen, en in de
-# root-variant werd hij hier juist verkleind, dus zonder deze vergelijking bewaakt
-# niets meer wat sshd aan bounding set meekrijgt.
+# rootless podman hem nodig heeft voor setuid-root newuidmap. Daar valt niets
+# zinnigs over te asserteren: een bounding set kan niet groeien — hij wordt bij
+# fork geërfd en blijft over execve staan — dus een vergelijking met een ander
+# proces zou alleen kunnen vuren als iemand sshd juist verkleint.
 if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     fail "geen sshd-proces — capabilities niet te controleren"
 elif "$CLI" exec "$CONTAINER" sh -c '
@@ -298,13 +298,10 @@ elif "$CLI" exec "$CONTAINER" sh -c '
         v=$(awk -v k="^$f:" "\$0 ~ k {print \$2}" /proc/$pid/status)
         [ -n "$v" ] || exit 1
         [ $(( 0x$v )) -eq 0 ] || exit 1
-    done
-    bnd_sshd=$(awk "/^CapBnd:/ {print \$2}" /proc/$pid/status)
-    bnd_init=$(awk "/^CapBnd:/ {print \$2}" /proc/1/status)
-    [ -n "$bnd_sshd" ] && [ "$bnd_sshd" = "$bnd_init" ]'; then
-    pass "sshd heeft een lege permitted- en effective-set en geen ruimere bounding set dan PID 1"
+    done'; then
+    pass "sshd heeft een lege permitted- en effective-capability-set"
 else
-    fail "sshd heeft capabilities in permitted of effective, of een bounding set die afwijkt van PID 1 — draait hij toch als root, of heeft hij iets extra's gekregen?"
+    fail "sshd heeft capabilities in permitted of effective — draait hij toch als root? De niet-root-opzet levert dan niets op"
 fi
 
 section "2. Poortbinding — alleen loopback"
