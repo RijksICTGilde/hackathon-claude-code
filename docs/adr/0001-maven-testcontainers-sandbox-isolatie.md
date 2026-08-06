@@ -137,7 +137,12 @@ De bescherming die `--no-new-privs` zou geven, komt in plaats daarvan van de
 setuid-strip uit §2.2.3. De bounding set blijft staan omdat setuid-root
 `newuidmap` daar in de multi-uid opt-in `CAP_SYS_ADMIN` uit moet kunnen trekken.
 
-#### 2.3.4 Optionele sshd na de privilege-drop
+### 2.4 Gebruikersfase
+
+Vanaf hier draait alles als `claude`. `entrypoint.sh` weigert te starten als het
+als root wordt aangeroepen.
+
+#### 2.4.0 Optionele sshd na de privilege-drop
 
 `INSTALL_SSHD=true` bouwt een OpenSSH-server mee; `ENABLE_SSHD=true` (gezet door
 `compose.override.kepler.yml`) start hem. De schakelaar is de runtime-var en niet
@@ -158,11 +163,6 @@ type en eigendom van dat pad elke start gecontroleerd — anders kiest de
 ingesloten partij zelf welke host-identiteit Kepler in `known_hosts` pint. `authorized_keys` schrijft
 `entrypoint.sh` ná de drop, zodat `~/.ssh` van `claude` blijft: wie de
 env-variabele leeg laat, beheert dat bestand zelf op het volume.
-
-### 2.4 Gebruikersfase
-
-Vanaf hier draait alles als `claude`. `entrypoint.sh` weigert te starten als het
-als root wordt aangeroepen.
 
 #### 2.4.1 Storage: alleen vfs
 

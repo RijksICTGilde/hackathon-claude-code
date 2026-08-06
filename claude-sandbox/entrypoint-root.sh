@@ -55,7 +55,7 @@ esac
 # root-eigendom (640 root:claude) zodat de ingesloten partij hem kan lezen maar
 # niet vervangen — anders kiest die zelf welke identiteit Kepler pint.
 #
-# Host-keys op het volume in plaats van in de image (ADR 0001 §2.3.4). Het pad
+# Host-keys op het volume in plaats van in de image (ADR 0001 §2.4.0). Het pad
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
@@ -129,9 +129,9 @@ esac
 
 if [[ "$sshd_ready" == true ]]; then
     # `claude` moet zijn pidfile kwijt kunnen, maar niet in .ssh-host: schrijfrecht
-    # daar zou betekenen dat hij de host-key kan unlinken en vervangen. /run is
-    # een verse tmpfs per start, dus een restant van een vorige run kan de
-    # startdetectie niet ten onrechte laten slagen.
+    # daar zou betekenen dat hij de host-key kan unlinken en vervangen. Onder
+    # podman is /run een tmpfs, onder Docker niet — een restant van een vorige
+    # run wordt daarom in entrypoint.sh weggegooid vóór de start.
     install -d -m 700 -o claude -g claude /run/sshd-claude || sshd_ready=false
     SSHD_STATUS=$([[ "$sshd_ready" == true ]] && echo ready || echo failed)
     [[ "$sshd_ready" == true ]] ||

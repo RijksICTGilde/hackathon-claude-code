@@ -84,7 +84,7 @@ FAILLIST=""
 pass() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
 fail() { printf '  \033[31mFOUT\033[0m %s\n' "$1"; FAILCOUNT=$((FAILCOUNT + 1)); FAILLIST="${FAILLIST}  - ${1}"$'\n'; }
 section() { printf '\n== %s ==\n' "$1"; }
-# De containerlog en de sshd-auth-log staan bij vrijwel elke storing de reden.
+# De containerlog draagt bij vrijwel elke storing de reden.
 # Als functie, want de hardste exits zitten midden in het script en zouden die
 # bron anders juist overslaan.
 dump_logs() {
@@ -235,7 +235,7 @@ fi
 if "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     pass "sshd-proces draait"
 else
-    fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint-root.sh"
+    fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint.sh"
 fi
 # sshd hoort juist NIET als root te draaien: hij start ná de privilege-drop op
 # poort 2222, zodat een pre-auth-lek in OpenSSH `claude` oplevert en geen root.
@@ -246,9 +246,9 @@ else
 fi
 
 section '1b. Geen route naar root voor claude'
-# Er hoort geen sudo en geen sudoers-drop-in in de image te zitten: sshd start
-# in de root-fase, vóór de privilege-drop. Een sudoers-regel of een setuid-
-# binary maakt die drop betekenisloos.
+# Er hoort geen sudo en geen sudoers-drop-in in de image te zitten. `claude` mag
+# na de drop geen weg terug hebben; een sudoers-regel of een setuid-binary maakt
+# die drop betekenisloos.
 if "$CLI" exec "$CONTAINER" sh -c '! command -v sudo >/dev/null'; then
     pass "geen sudo-binary in de image"
 else
@@ -257,7 +257,7 @@ fi
 if "$CLI" exec "$CONTAINER" sh -c '! ls -A /etc/sudoers.d 2>/dev/null | grep -q .'; then
     pass "geen sudoers-drop-ins"
 else
-    fail "/etc/sudoers.d is niet leeg — sshd hoort in de root-fase te starten, niet via sudo"
+    fail "/etc/sudoers.d is niet leeg — claude hoort geen weg terug naar root te hebben"
 fi
 if "$CLI" exec "$CONTAINER" sh -c \
     'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) ! -name newuidmap ! -name newgidmap 2>/dev/null)"'; then
@@ -275,12 +275,12 @@ fi
 # Eigendom en type expliciet toetsen: `claude` bezit /home/claude en kan het pad
 # vervangen, en sshd accepteert een host-key van een andere user zonder morren.
 if "$CLI" exec "$CONTAINER" sh -c '
-    [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 750" ] &&
-    [ "$(stat -c "%u %a" /home/claude/.ssh-host/ssh_host_ed25519_key)" = "0 640" ] &&
+    [ "$(stat -c "%U %G %a" /home/claude/.ssh-host)" = "root claude 750" ] &&
+    [ "$(stat -c "%U %G %a" /home/claude/.ssh-host/ssh_host_ed25519_key)" = "root claude 640" ] &&
     [ ! -L /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ -f /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ "$(stat -c %u /home/claude/.ssh-host/ssh_host_ed25519_key)" = 0 ]'; then
-    pass "host-key op het volume, van root, in een 0700-directory"
+    pass "host-key 640 root:claude in een 750 root:claude-directory (sshd draait als claude en moet erdoorheen)"
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
@@ -381,6 +381,7 @@ else
         'allowagentforwarding no' \
         'x11forwarding no' \
         'permituserrc no' \
+        'usepam no' \
         'port 2222' \
         'authorizedkeysfile .ssh/authorized_keys' \
         'allowtcpforwarding local' \
@@ -624,7 +625,7 @@ if [[ "$FAILCOUNT" -eq 0 ]]; then
 fi
 echo "$FAILCOUNT check(s) gefaald:"
 printf '%s' "$FAILLIST"
-# De entrypoint-waarschuwingen en de sshd-auth-log zijn bij vrijwel elke gefaalde
-# run de volgende stap; scheelt een handmatige ronde.
+# De entrypoint-waarschuwingen zijn bij vrijwel elke gefaalde run de volgende
+# stap; scheelt een handmatige ronde.
 dump_logs
 exit 1

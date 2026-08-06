@@ -19,10 +19,10 @@ fi
 # authorized_keys voor de Kepler-remote. De sleutel komt runtime uit
 # KEPLER_SSH_PUBKEY, zodat er geen sleutel in de image gebakken zit.
 #
-# Direct na de sshd-start hierboven: die luistert al voordat deze sleutel er
-# staat, dus alles wat hier tussen zou komen (podman-wachtlus, marketplace-update
-# over het netwerk) is tijd waarin een client verbindt en `Permission denied`
-# krijgt terwijl het log even later meldt dat de sleutel geschreven is.
+# Vóór de sshd-start hieronder: zodra sshd luistert kan een client verbinden, en
+# zonder sleutel krijgt die `Permission denied` terwijl het log even later meldt
+# dat de sleutel geschreven is. Beide stappen staan in dit script, dus dat
+# venster is te vermijden in plaats van te documenteren.
 #
 # Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
 # KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
@@ -36,31 +36,6 @@ fi
 SSHD_STATUS="${SSHD_STATUS:-disabled}"
 case "$SSHD_STATUS" in ready|running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
 
-# sshd start hier, als `claude`: poort 2222 vereist geen root, dus er draait geen
-# root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
-# er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
-if [[ "$SSHD_STATUS" == ready ]]; then
-    rm -f /run/sshd-claude/sshd.pid
-    /usr/sbin/sshd -D -e &
-    sshd_pid=$!
-    for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
-    if [[ -s /run/sshd-claude/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
-        SSHD_STATUS=running
-        echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
-    else
-        SSHD_STATUS=failed
-        # Opruimen vóór we "mislukt" melden: bindt sshd wél maar bleef het pidfile
-        # uit, dan luistert er iets terwijl het log zegt van niet.
-        kill "$sshd_pid" 2>/dev/null || true
-        {
-            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
-            echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 2222 al bezet in deze netwerk-namespace"
-            echo "  - host-key niet leesbaar voor $(id -un) (verwacht 640 root:claude in /home/claude/.ssh-host)"
-            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
-        } >&2
-    fi
-fi
 if [[ "$sshd_active" == true ]]; then
     # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
     # vers volume is er niets te beschermen, en dan is de juiste boodschap dat
@@ -151,6 +126,35 @@ elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         *)       echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
                       "Start met '-f compose.override.kepler.yml'." >&2 ;;
     esac
+fi
+
+# sshd start hier, als `claude`: poort 2222 vereist geen root, dus er draait geen
+# root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
+# er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
+#
+# Ná het authorized_keys-blok hierboven, zodat er geen venster is waarin sshd
+# luistert zonder dat er een sleutel staat.
+if [[ "$SSHD_STATUS" == ready ]]; then
+    rm -f /run/sshd-claude/sshd.pid
+    /usr/sbin/sshd -D -e &
+    sshd_pid=$!
+    for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
+    if [[ -s /run/sshd-claude/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
+        SSHD_STATUS=running
+        echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
+    else
+        SSHD_STATUS=failed
+        # Opruimen vóór we "mislukt" melden: bindt sshd wél maar bleef het pidfile
+        # uit, dan luistert er iets terwijl het log zegt van niet.
+        kill "$sshd_pid" 2>/dev/null || true
+        {
+            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
+            echo "Veelvoorkomende oorzaken:"
+            echo "  - poort 2222 al bezet in deze netwerk-namespace"
+            echo "  - host-key niet leesbaar voor $(id -un): verwacht 640 root:claude, in een directory 750 root:claude"
+            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
+        } >&2
+    fi
 fi
 
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de

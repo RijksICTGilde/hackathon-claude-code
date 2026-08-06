@@ -268,7 +268,7 @@ RUN case "$INSTALL_PODMAN" in \
 # apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
 # over de openssh-bestanden gaat.
 #
-# Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
+# Geen host-keys in de image (ADR 0001 §2.4.0); entrypoint-root.sh maakt ze bij
 # eerste start op het volume. De `rm` is nodig omdat Debians
 # openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
 #
