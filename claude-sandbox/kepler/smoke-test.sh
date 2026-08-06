@@ -356,9 +356,7 @@ if [[ -z "$AUTH_LOG_OFFSET" ]]; then
     : # offset onbekend; hierboven al gemeld
 elif ! RAW_LOGS="$("$CLI" logs "$CONTAINER" 2>&1)"; then
     fail "containerlog niet te lezen voor de auth-controle ($(tr '\n' ' ' <<<"$RAW_LOGS"))"
-elif ! AUTH_NEW="$(tail -n +$((AUTH_LOG_OFFSET + 1)) <<<"$RAW_LOGS")"; then
-    fail "containerlog niet te filteren voor de auth-controle"
-elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
+elif grep -q 'Accepted publickey for claude' <<<"$(tail -n +$((AUTH_LOG_OFFSET + 1)) <<<"$RAW_LOGS")"; then
     pass "containerlog bevat het login-event van deze run"
 else
     fail "geen 'Accepted publickey' in de containerlog terwijl de login hierboven slaagde — draait sshd met '-e'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
