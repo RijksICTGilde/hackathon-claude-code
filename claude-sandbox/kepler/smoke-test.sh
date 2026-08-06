@@ -347,10 +347,10 @@ if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
 # er niets over om te tonen.
 elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
     fail "'sshd -T' faalde ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
-# `${SSHD_PORT-22}` in de container zelf: init-firewall.sh valt op dezelfde
-# waarde terug, en zo blijft een gefaalde exec te onderscheiden van een niet
-# gezette variabele — `printenv` geeft in beide gevallen een lege string.
-elif ! FW_PORT="$("$CLI" exec "$CONTAINER" sh -c 'printf %s "${SSHD_PORT-22}"' 2>&1)"; then
+# Dezelfde fallback als init-firewall.sh, inclusief de `:-` die ook een lege
+# waarde afvangt. In de container en niet via `printenv`, want die geeft zowel
+# bij een niet gezette variabele als bij een gefaalde exec een lege string.
+elif ! FW_PORT="$("$CLI" exec "$CONTAINER" sh -c 'printf %s "${SSHD_PORT:-22}"' 2>&1)"; then
     fail "SSHD_PORT niet uit de container-env te lezen: $(tr '\n' ' ' <<<"$FW_PORT")"
 else
     LISTEN_PORT="$(awk '/^port /{print $2; exit}' <<<"$SSHD_T")"
