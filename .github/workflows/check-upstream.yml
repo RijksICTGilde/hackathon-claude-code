@@ -144,7 +144,7 @@ jobs:
           sed -i "s|NODE_VERSION=${current}|NODE_VERSION=${latest}|" Dockerfile
           sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
           sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
-          # README tools-tabel verwijst naar 'Node.js 22 LTS' — als de major-versie
+          # README tools-tabel verwijst naar 'Node.js 24 LTS' — als de major-versie
           # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
           old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
           new_major=$(echo "$latest"  | sed -E 's/^v([0-9]+)\..*$/\1/')

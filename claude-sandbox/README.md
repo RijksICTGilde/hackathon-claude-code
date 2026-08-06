@@ -41,19 +41,19 @@ De image bevat een firewall die uitgaand verkeer beperkt. Zie [Firewall](#firewa
 <!-- Houd deze lijst in sync met de apt-get install in de Dockerfile (sudo is weggelaten: alleen intern gebruikt door firewall) -->
 De image bevat de volgende tools:
 
-| Categorie           | Tools                                                                                                   |
-|---------------------|---------------------------------------------------------------------------------------------------------|
-| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                       |
-| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                         |
-| Netwerk             | curl, openssh-client, ca-certificates                                                                   |
-| Zoeken              | ripgrep, file                                                                                           |
-| Data & scripting    | jq                                                                                                      |
-| Archivering         | zip, unzip, gnupg2, xz-utils                                                                            |
-| Systeem             | procps                                                                                                  |
-| Runtimes            | Node.js 22 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                        |
+| Categorie           | Tools                                                                                                                                 |
+|---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                                                     |
+| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                                                       |
+| Netwerk             | curl, openssh-client, ca-certificates                                                                                                 |
+| Zoeken              | ripgrep, file                                                                                                                         |
+| Data & scripting    | jq                                                                                                                                    |
+| Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
+| Systeem             | procps                                                                                                                                |
+| Runtimes            | Node.js 24 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                                                      |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
-| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                          |
+| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
 
 ## Plugins en skills
 <!-- Houd deze lijsten in sync met de plugin installs in de Dockerfile -->
