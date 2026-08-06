@@ -337,9 +337,11 @@ fi
 # Positie én bronbeperking toetsen, niet alleen aanwezigheid: een DROP ná de
 # subnet-ACCEPT doet niets, en een DROP zonder `! -s` sluit juist iedereen buiten.
 # Op allebei blijft een kale grep op '--dport … -j DROP' groen.
-# De poort komt uit `sshd -T`: dat is de toestand die sshd echt draait. De DROP
-# wordt daartegen gezocht, dus loopt de firewall ooit achter op de drop-in, dan
-# vindt deze assertie geen regel in plaats van de verkeerde goed te keuren.
+# De poorten komen uit `sshd -T`: dat is de toestand die sshd echt draait. De
+# DROP wordt daartegen gezocht, dus loopt de firewall ooit achter op de drop-in,
+# dan vindt deze assertie geen regel in plaats van de verkeerde goed te keuren.
+# Elke luisterpoort apart, want Port is cumulatief: een DROP voor de eerste zegt
+# niets over de tweede.
 if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
     fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
 # De ruwe uitvoer eerst opvangen en pas daarna filteren: bij `2>&1 | awk` gaan de
@@ -348,26 +350,33 @@ if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
 elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
     fail "'sshd -T' faalde ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
 else
-    LISTEN_PORT="$(awk '/^port /{print $2; exit}' <<<"$SSHD_T")"
+    mapfile -t LISTEN_PORTS < <(awk 'tolower($1) == "port" { print $2 }' <<<"$SSHD_T")
     GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
-    # `-p tcp` mee: een UDP-DROP op dezelfde poort zou anders slagen terwijl TCP
-    # open blijft voor het hele subnet.
-    drop_line=$(grep -nE -- "-p tcp .*--dport ${LISTEN_PORT}( |$)" <<<"$INPUT_RULES" | grep -- '-j DROP' | head -1 | cut -d: -f1)
-    subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1)
-    if [[ ! "$LISTEN_PORT" =~ ^[0-9]+$ ]]; then
-        fail "geen poortregel in 'sshd -T' ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
-    elif [[ -z "$drop_line" ]]; then
-        fail "geen DROP-regel voor poort $LISTEN_PORT in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh)"
+    # `|| true`: een lege grep geeft rc 1, en met pipefail zou de toewijzing het
+    # script hier neerleggen — precies bij de regressie die de takken hieronder
+    # moeten melden, en vóór de secties die erna komen.
+    subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1) || true
+    if [[ ${#LISTEN_PORTS[@]} -eq 0 ]]; then
+        fail "geen poortregel in 'sshd -T' ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregels de juiste poorten dekken is niet vast te stellen"
     elif [[ -z "$subnet_line" ]]; then
         fail "geen subnet-ACCEPT gevonden in de INPUT-chain — de volgorde van de DROP is niet te beoordelen"
-    elif [[ "$drop_line" -ge "$subnet_line" ]]; then
-        fail "de DROP voor poort $LISTEN_PORT staat ná de subnet-ACCEPT (regel $drop_line vs $subnet_line) en doet dus niets"
     elif [[ -z "$GW" ]]; then
         fail "kon de gateway niet bepalen — de bronbeperking van de DROP is niet te toetsen"
-    elif ! grep -qF -- "! -s $GW/32" <<<"$(sed -n "${drop_line}p" <<<"$INPUT_RULES")"; then
-        fail "de DROP voor poort $LISTEN_PORT beperkt niet exact tot de gateway ($GW) — te breed laat buurcontainers binnen, te smal sluit ook Kepler buiten"
     else
-        pass "firewall beperkt inbound naar poort $LISTEN_PORT tot de gateway ($GW), vóór de subnet-ACCEPT"
+        for listen_port in "${LISTEN_PORTS[@]}"; do
+            # `-p tcp` mee: een UDP-DROP op dezelfde poort zou anders slagen
+            # terwijl TCP open blijft voor het hele subnet.
+            drop_line=$(grep -nE -- "-p tcp .*--dport ${listen_port}( |$)" <<<"$INPUT_RULES" | grep -- '-j DROP' | head -1 | cut -d: -f1) || true
+            if [[ -z "$drop_line" ]]; then
+                fail "geen DROP-regel voor poort $listen_port in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh)"
+            elif [[ "$drop_line" -ge "$subnet_line" ]]; then
+                fail "de DROP voor poort $listen_port staat ná de subnet-ACCEPT (regel $drop_line vs $subnet_line) en doet dus niets"
+            elif ! grep -qF -- "! -s $GW/32" <<<"$(sed -n "${drop_line}p" <<<"$INPUT_RULES")"; then
+                fail "de DROP voor poort $listen_port beperkt niet exact tot de gateway ($GW) — te breed laat buurcontainers binnen, te smal sluit ook Kepler buiten"
+            else
+                pass "firewall beperkt inbound naar poort $listen_port tot de gateway ($GW), vóór de subnet-ACCEPT"
+            fi
+        done
     fi
 fi
 

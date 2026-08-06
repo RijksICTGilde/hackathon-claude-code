@@ -140,7 +140,7 @@ if [[ "$sshd_ready" == true ]]; then
     if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+        echo "INFO: sshd gestart (poort volgens /etc/ssh/sshd_config.d/kepler.conf; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
     else
         # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
         # pidfile uit, dan luistert er iets terwijl het log zegt van niet.

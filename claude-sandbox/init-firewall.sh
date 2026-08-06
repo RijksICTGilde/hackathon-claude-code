@@ -217,24 +217,37 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # luistert kost niets, en default-deny hoort niet van een runtime-vlag af te
 # hangen. Anders staat de poort open zodra iemand er later iets op start.
 #
-# De poort komt uit de drop-in die sshd zelf leest, niet uit een losse
+# De poorten komen uit de drop-in die sshd zelf leest, niet uit een losse
 # environment-variabele: twee bronnen lopen stil uit elkaar, en dan beschermt
 # deze regel een dichte poort terwijl de echte openstaat — met een geruststellende
 # regel in het log erbij. Staat er geen Port-directive, dan luistert sshd op zijn
-# eigen default 22. Gevalideerd zoals de andere externe waarden in dit script:
-# een range als '1:65535' zou anders alle inbound TCP dichtzetten.
+# eigen default 22.
+#
+# Port is cumulatief: elke regel voegt een luisterpoort toe, dus er is een DROP
+# per poort nodig. sshd accepteert `Port 22` en `Port=22`, hoofdletterongevoelig;
+# de `sub` maakt van beide vormen hetzelfde. Waarden worden gevalideerd zoals de
+# andere externe invoer in dit script — een range als '1:65535' zou anders alle
+# inbound TCP dichtzetten — en met `10#` genormaliseerd, zodat `Port 0022` net als
+# bij sshd 22 oplevert in plaats van een harde fout.
 SSHD_CONF=/etc/ssh/sshd_config.d/kepler.conf
-SSHD_PORT=22
+sshd_ports=()
 if [ -r "$SSHD_CONF" ]; then
-    conf_port="$(awk 'tolower($1) == "port" { print $2; exit }' "$SSHD_CONF")"
-    [ -n "$conf_port" ] && SSHD_PORT="$conf_port"
+    mapfile -t sshd_ports < <(awk '{ sub(/=/, " "); if (tolower($1) == "port" && $2 != "") print $2 }' "$SSHD_CONF")
 fi
-if ! [[ "$SSHD_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$SSHD_PORT" -gt 65535 ]; then
-    echo "ERROR: Port '$SSHD_PORT' uit $SSHD_CONF is geen geldig poortnummer" >&2
-    exit 1
-fi
-iptables -A INPUT -p tcp --dport "$SSHD_PORT" ! -s "$HOST_IP" -j DROP
-echo "SSH inbound (poort $SSHD_PORT) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
+[ ${#sshd_ports[@]} -gt 0 ] || sshd_ports=(22)
+for conf_port in "${sshd_ports[@]}"; do
+    if ! [[ "$conf_port" =~ ^[0-9]{1,5}$ ]]; then
+        echo "ERROR: Port '$conf_port' uit $SSHD_CONF is geen geldig poortnummer" >&2
+        exit 1
+    fi
+    sshd_port=$((10#$conf_port))
+    if [ "$sshd_port" -lt 1 ] || [ "$sshd_port" -gt 65535 ]; then
+        echo "ERROR: Port '$conf_port' uit $SSHD_CONF valt buiten 1-65535" >&2
+        exit 1
+    fi
+    iptables -A INPUT -p tcp --dport "$sshd_port" ! -s "$HOST_IP" -j DROP
+    echo "SSH inbound (poort $sshd_port) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
+done
 
 # Allow host network communication (needed for Docker DNS forwarding, IDE connections, etc.)
 # Docker NAT rewrites 127.0.0.11 to the real DNS server before the filter chain,
