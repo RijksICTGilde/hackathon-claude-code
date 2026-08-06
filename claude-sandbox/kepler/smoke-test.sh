@@ -331,12 +331,29 @@ else
 fi
 
 # De poortbinding hierboven dekt alleen het pad vanaf de host. Binnen het
-# container-netwerk luistert sshd op 0.0.0.0:22; de firewall hoort inbound naar
-# 22 te beperken tot de gateway.
-if "$CLI" exec "$CONTAINER" sh -c 'iptables -S INPUT' 2>/dev/null | grep -q -- '--dport 22 .*-j DROP'; then
-    pass "firewall beperkt inbound naar poort 22 tot de gateway"
+# container-netwerk luistert sshd op alle adressen; de firewall hoort inbound
+# naar die poort te beperken tot de gateway.
+#
+# Positie én bronbeperking toetsen, niet alleen aanwezigheid: een DROP ná de
+# subnet-ACCEPT doet niets, en een DROP zonder `! -s` sluit juist iedereen buiten.
+# Op allebei blijft een kale grep op '--dport … -j DROP' groen.
+if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
+    fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
 else
-    fail "geen DROP-regel voor poort 22 in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh, gate op ENABLE_SSHD)"
+    SSHD_PORT_IN_USE="$("$CLI" exec "$CONTAINER" printenv SSHD_PORT 2>/dev/null)" || SSHD_PORT_IN_USE=22
+    drop_line=$(grep -n -- "--dport $SSHD_PORT_IN_USE -j DROP" <<<"$INPUT_RULES" | head -1 | cut -d: -f1)
+    subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1)
+    if [[ -z "$drop_line" ]]; then
+        fail "geen DROP-regel voor poort $SSHD_PORT_IN_USE in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh)"
+    elif [[ -z "$subnet_line" ]]; then
+        fail "geen subnet-ACCEPT gevonden in de INPUT-chain — de volgorde van de DROP is niet te beoordelen"
+    elif [[ "$drop_line" -ge "$subnet_line" ]]; then
+        fail "de DROP voor poort $SSHD_PORT_IN_USE staat ná de subnet-ACCEPT (regel $drop_line vs $subnet_line) en doet dus niets"
+    elif ! grep -q -- '! -s' <<<"$(sed -n "${drop_line}p" <<<"$INPUT_RULES")"; then
+        fail "de DROP voor poort $SSHD_PORT_IN_USE heeft geen bronuitzondering — ook de gateway wordt geblokkeerd, dus Kepler kan niet verbinden"
+    else
+        pass "firewall beperkt inbound naar poort $SSHD_PORT_IN_USE tot de gateway, vóór de subnet-ACCEPT"
+    fi
 fi
 
 section "3. SSH-login met key"
@@ -347,6 +364,7 @@ else
     echo "  - 'Permission denied (publickey)' → key hoort niet bij KEPLER_SSH_PUBKEY; check .env en de entrypoint-logs." >&2
     echo "  - 'Connection refused' terwijl de poort gepubliceerd is → probeer 127.0.0.1 i.p.v. een hostnaam (IPv4-only forward)." >&2
     echo "  - RSA-sleutel kleiner dan 3072 bits → sshd weigert 'm (RequiredRSASize); gebruik ed25519." >&2
+    echo "  - verbinding blijft hangen tot de timeout → de INPUT-DROP laat alleen de gateway toe; komt de port-forward van je runtime met een ander bronadres binnen, dan valt het verkeer stil weg." >&2
     dump_logs >&2
     exit 1
 fi

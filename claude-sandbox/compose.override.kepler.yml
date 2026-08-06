@@ -19,6 +19,9 @@ services:
       # ook niet in een image die met INSTALL_SSHD=true gebouwd is: SSH hoort
       # alleen te luisteren als je er expliciet om vraagt.
       - ENABLE_SSHD=true
+      # Enige bron voor het poortnummer: init-firewall.sh beperkt inbound naar
+      # deze poort tot de gateway. Verplaats je sshd, zet hem hier mee om.
+      - SSHD_PORT=22
       # Publieke SSH-sleutel van Kepler. Zet de waarde in .env:
       # KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler".
       - KEPLER_SSH_PUBKEY

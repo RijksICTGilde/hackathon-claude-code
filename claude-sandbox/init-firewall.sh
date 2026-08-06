@@ -209,16 +209,18 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # SSH-poort alleen vanaf de gateway, en dus niet vanaf het hele bridge-subnet.
 # De ACCEPT hieronder laat inbound vanaf HOST_NETWORK toe zonder poortfilter,
-# waardoor elke andere container op datzelfde netwerk poort 22 rechtstreeks
+# waardoor elke andere container op datzelfde netwerk de SSH-poort rechtstreeks
 # bereikt — langs de 127.0.0.1-publish om. Een gepubliceerde poort komt binnen
 # vanaf de gateway, dus die blijft werken.
 #
-# Alleen bij ENABLE_SSHD=true: zonder sshd luistert er niets en zou de regel een
-# dichte poort beschermen.
-if [ "${ENABLE_SSHD:-false}" = "true" ]; then
-    iptables -A INPUT -p tcp --dport 22 ! -s "$HOST_IP" -j DROP
-    echo "SSH inbound beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
-fi
+# Onvoorwaardelijk, niet achter ENABLE_SSHD: een DROP op een poort waar niets
+# luistert kost niets, en default-deny hoort niet van een runtime-vlag af te
+# hangen. Anders staat de poort open zodra iemand er later iets op start.
+#
+# SSHD_PORT is de enige plek waar het poortnummer staat: wie sshd verplaatst,
+# zet hem hier mee om. compose.override.kepler.yml geeft de waarde door.
+iptables -A INPUT -p tcp --dport "${SSHD_PORT:-22}" ! -s "$HOST_IP" -j DROP
+echo "SSH inbound (poort ${SSHD_PORT:-22}) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
 
 # Allow host network communication (needed for Docker DNS forwarding, IDE connections, etc.)
 # Docker NAT rewrites 127.0.0.11 to the real DNS server before the filter chain,
