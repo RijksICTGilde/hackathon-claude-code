@@ -213,9 +213,11 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # bereikt — langs de 127.0.0.1-publish om. Een gepubliceerde poort komt binnen
 # vanaf de gateway, dus die blijft werken.
 #
-# Onvoorwaardelijk, niet achter ENABLE_SSHD: een DROP op een poort waar niets
-# luistert kost niets, en default-deny hoort niet van een runtime-vlag af te
-# hangen. Anders staat de poort open zodra iemand er later iets op start.
+# De regels worden onvoorwaardelijk gezet, ook zonder ENABLE_SSHD: een DROP op
+# een poort waar niets luistert kost niets, en default-deny hoort niet van een
+# runtime-vlag af te hangen. Anders staat de poort open zodra iemand er later
+# iets op start. Alleen hoe hard een ongeldige waarde aankomt, hangt er wél van
+# af — zie de validatie hieronder.
 #
 # De poorten komen uit de drop-in die sshd zelf leest, niet uit een losse
 # environment-variabele: twee bronnen lopen stil uit elkaar, en dan beschermt
@@ -232,44 +234,54 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # expliciete poort: `[::]:2200` en `0.0.0.0:2200` wel, een kaal `::1` niet — dat
 # is een adres, geen poort.
 #
-# Alleen bij ENABLE_SSHD=true: een onleesbare of ongeldige waarde laat dit script
-# hard falen, en dat zou anders elke container onstartbaar maken, ook zonder SSH.
-if [ "${ENABLE_SSHD:-false}" = true ]; then
-    sshd_ports=()
-    for sshd_conf in /etc/ssh/sshd_config.d/*.conf; do
-        [ -r "$sshd_conf" ] || continue
-        while read -r conf_port; do
-            sshd_ports+=("$conf_port")
-        done < <(awk '
-            { gsub(/"/, ""); sub(/=/, " ") }
-            tolower($1) == "port" && $2 != "" { print $2 }
-            tolower($1) == "listenaddress" {
-                a = $2
-                if (a ~ /\]:[0-9]+$/)                        { sub(/.*\]:/, "", a); print a }
-                else if (a !~ /:.*:/ && a ~ /:[0-9]+$/)      { sub(/.*:/,   "", a); print a }
-            }' "$sshd_conf")
-    done
-    # Geen enkele directive gevonden: sshd luistert dan op zijn eigen default.
-    [ ${#sshd_ports[@]} -gt 0 ] || sshd_ports=(22)
-    seen_ports=""
-    for conf_port in "${sshd_ports[@]}"; do
-        if ! [[ "$conf_port" =~ ^[0-9]{1,5}$ ]]; then
-            echo "ERROR: poort '$conf_port' uit /etc/ssh/sshd_config.d is geen geldig poortnummer" >&2
+# `sshd_config` zelf telt mee: Port is cumulatief over bestandsgrenzen heen, dus
+# een directive daar telt op bij die uit de drop-ins.
+sshd_ports=()
+for sshd_conf in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+    [ -r "$sshd_conf" ] || continue
+    while read -r conf_port; do
+        sshd_ports+=("$conf_port")
+    done < <(awk '
+        { gsub(/"/, ""); sub(/=/, " ") }
+        tolower($1) == "port" && $2 != "" { print $2 }
+        tolower($1) == "listenaddress" {
+            a = $2
+            if (a ~ /\]:[0-9]+$/)                        { sub(/.*\]:/, "", a); print a }
+            else if (a !~ /:.*:/ && a ~ /:[0-9]+$/)      { sub(/.*:/,   "", a); print a }
+        }' "$sshd_conf")
+done
+# Geen enkele directive gevonden: sshd luistert dan op zijn eigen default.
+[ ${#sshd_ports[@]} -gt 0 ] || sshd_ports=(22)
+seen_ports=""
+for conf_port in "${sshd_ports[@]}"; do
+    # Een onbruikbare waarde is fataal zodra sshd echt aangezet is: dan is niet
+    # vast te stellen welke poort beschermd moet worden, en doorgaan zou een open
+    # poort achterlaten met een geruststellende regel in het log. Staat sshd uit,
+    # dan luistert er niets en zou hard falen elke container onstartbaar maken om
+    # een config die niemand gebruikt.
+    port_invalid() {
+        if [ "${ENABLE_SSHD:-false}" = true ]; then
+            echo "ERROR: poort '$1' uit de sshd-config $2" >&2
             exit 1
         fi
-        # 10#: `Port 0022` is bij sshd gewoon 22, en octaal zou hier iets anders
-        # opleveren dan de poort waarop hij luistert.
-        sshd_port=$((10#$conf_port))
-        if [ "$sshd_port" -lt 1 ] || [ "$sshd_port" -gt 65535 ]; then
-            echo "ERROR: poort '$conf_port' uit /etc/ssh/sshd_config.d valt buiten 1-65535" >&2
-            exit 1
-        fi
-        case " $seen_ports " in *" $sshd_port "*) continue ;; esac
-        seen_ports="$seen_ports $sshd_port"
-        iptables -A INPUT -p tcp --dport "$sshd_port" ! -s "$HOST_IP" -j DROP
-        echo "SSH inbound (poort $sshd_port) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
-    done
-fi
+        echo "WAARSCHUWING: poort '$1' uit de sshd-config $2 — overgeslagen (ENABLE_SSHD staat uit)" >&2
+    }
+    if ! [[ "$conf_port" =~ ^[0-9]{1,5}$ ]]; then
+        port_invalid "$conf_port" "is geen geldig poortnummer"
+        continue
+    fi
+    # 10#: `Port 0022` is bij sshd gewoon 22, en octaal zou hier iets anders
+    # opleveren dan de poort waarop hij luistert.
+    sshd_port=$((10#$conf_port))
+    if [ "$sshd_port" -lt 1 ] || [ "$sshd_port" -gt 65535 ]; then
+        port_invalid "$conf_port" "valt buiten 1-65535"
+        continue
+    fi
+    case " $seen_ports " in *" $sshd_port "*) continue ;; esac
+    seen_ports="$seen_ports $sshd_port"
+    iptables -A INPUT -p tcp --dport "$sshd_port" ! -s "$HOST_IP" -j DROP
+    echo "SSH inbound (poort $sshd_port) beperkt tot de gateway ($HOST_IP); overige bronnen op $HOST_NETWORK worden gedropt"
+done
 
 # Allow host network communication (needed for Docker DNS forwarding, IDE connections, etc.)
 # Docker NAT rewrites 127.0.0.11 to the real DNS server before the filter chain,
