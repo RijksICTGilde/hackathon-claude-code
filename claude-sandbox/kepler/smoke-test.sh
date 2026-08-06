@@ -101,7 +101,7 @@ dump_logs() {
         grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
     fi
     echo "sshd-auth-log (laatste 20):"
-    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /home/claude/.sshd-log/sshd.log 2>&1)"; then
+    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd/sshd.log 2>&1)"; then
         echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
     else
         printf '%s\n' "$err"
@@ -290,14 +290,16 @@ else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
-# Directory én bestand: de 750 op de directory is wat `claude` belet regels te
-# verwijderen, want het bestand staat in zijn eigen home.
+# Directory, bestand én ouder. De ouder telt mee: is /var/log ooit van `claude`,
+# dan kan hij de hele logdirectory hernoemen en er een eigen sshd.log voor in de
+# plaats zetten, en leest iedereen die het pad opvraagt zijn versie.
 if "$CLI" exec "$CONTAINER" sh -c '
-    [ "$(stat -c "%U %G %a" /home/claude/.sshd-log)" = "root claude 750" ] &&
-    [ "$(stat -c "%U %G %a" /home/claude/.sshd-log/sshd.log)" = "root claude 640" ]'; then
-    pass "auth-log 640 root:claude in een 750 root:claude-directory"
+    [ "$(stat -c "%U %G" /var/log)" = "root root" ] &&
+    [ "$(stat -c "%U %G %a" /var/log/sshd)" = "root claude 750" ] &&
+    [ "$(stat -c "%U %G %a" /var/log/sshd/sshd.log)" = "root claude 640" ]'; then
+    pass "auth-log 640 root:claude in een 750 root:claude-directory onder een root-eigen ouder"
 else
-    fail "auth-log of de directory eromheen heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen of verwijderen"
+    fail "auth-log, de directory eromheen of /var/log heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen, verwijderen of omleggen"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
@@ -343,8 +345,8 @@ fi
 # 'Accepted publickey' van een vorige run de assertie voorgoed groen — precies
 # het gat dat deze offset dicht.
 if ! AUTH_LOG_OFFSET="$("$CLI" exec "$CONTAINER" sh -c '
-        [ -e /home/claude/.sshd-log/sshd.log ] || { echo 0; exit 0; }
-        wc -l < /home/claude/.sshd-log/sshd.log' 2>&1)" ||
+        [ -e /var/log/sshd/sshd.log ] || { echo 0; exit 0; }
+        wc -l < /var/log/sshd/sshd.log' 2>&1)" ||
    [[ ! "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]]; then
     fail "kon de omvang van de auth-log niet bepalen ($(tr '\n' ' ' <<<"$AUTH_LOG_OFFSET")) — de login-assertie verderop zou een event van een vorige run kunnen tellen"
     AUTH_LOG_OFFSET=""
@@ -379,12 +381,17 @@ fi
 # bijgekomen tellen, zodat een event van een vorige run niet meetelt.
 if [[ -z "$AUTH_LOG_OFFSET" ]]; then
     : # offset onbekend; hierboven al gemeld, niet nog eens falen
-elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /home/claude/.sshd-log/sshd.log" 2>&1)"; then
+elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /var/log/sshd/sshd.log" 2>&1)"; then
     fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_NEW")"
-elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
-    pass "auth-log bevat het login-event van deze run"
+elif ! AUTH_LINE="$(grep -m1 'Accepted publickey for claude' <<<"$AUTH_NEW")"; then
+    fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+# Zonder tijd beantwoordt het spoor niet wanneer iemand binnenkwam, en OpenSSH
+# zet die zelf niet neer: de leesluis in entrypoint-root.sh doet dat. Valt die
+# weg, dan blijft de regel zelf ongewijzigd en zou een kale grep groen blijven.
+elif [[ ! "$AUTH_LINE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}\  ]]; then
+    fail "login-event zonder tijdstempel: '${AUTH_LINE:0:60}…' — wie wanneer binnenkwam is zo niet te herleiden"
 else
-    fail "geen 'Accepted publickey' bijgekomen in /home/claude/.sshd-log/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+    pass "auth-log bevat het login-event van deze run, met tijdstempel"
 fi
 
 section "4. PATH in een non-interactieve sessie"
