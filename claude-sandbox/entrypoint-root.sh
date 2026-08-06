@@ -58,12 +58,13 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
-# vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
-# bestand vóór het daemoniseren, dus het overleeft de fd-reset. `claude` mag
-# meelezen via de groep, niet schrijven. Het bestand wordt alleen aangemaakt als
-# het nog niet bestaat: opnieuw aanmaken zou bij elke restart het auth-spoor
-# wissen.
+# `-D -e` naar de containerlog, niet syslog en niet een eigen bestand: er draait
+# geen syslog-daemon in deze image, en een bestand op de container-laag overleeft
+# geen recreate en roteert niet. Via de containerlog geldt de rotatie van de
+# logdriver en blijft het spoor bewaard waar de operator toch al kijkt.
+#
+# -D betekent dat sshd niet daemoniseert, dus hij gaat naar de achtergrond met
+# `&` en overleeft de setpriv-drop als eigen proces.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -115,8 +116,6 @@ case "${ENABLE_SSHD:-false}" in
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
-        elif [[ ! -f /var/log/sshd.log ]] && ! install -m 640 -o root -g claude /dev/null /var/log/sshd.log; then
-            echo "WAARSCHUWING: /var/log/sshd.log niet aanmaakbaar — sshd blijft uit (zonder auth-log is een login niet te herleiden)." >&2
         else
             sshd_ready=true
         fi ;;
@@ -131,16 +130,17 @@ if [[ "$sshd_ready" == true ]]; then
     # voor de firewall heeft. sshd heeft die niet nodig, en met die capabilities
     # zou een pre-auth-lek in OpenSSH meteen `iptables -F` opleveren — precies de
     # maatregel waar de sandbox op rust.
-    # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
-    # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
-    # pas ná het binden geschreven en is daarmee het bruikbare signaal; het pad
-    # ligt vast via PidFile in kepler.conf. /run is een verse tmpfs per start,
-    # dus de rm ruimt hooguit een restant van deze run op.
+    # Met `-D` keert sshd niet terug, dus de exit-code zegt niets over succes.
+    # /run/sshd.pid wordt pas ná het binden geschreven en is het bruikbare
+    # signaal; het pad ligt vast via PidFile in kepler.conf. /run is een verse
+    # tmpfs per start, dus de rm ruimt hooguit een restant van deze run op.
     rm -f /run/sshd.pid
-    if setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
-       { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
+    setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -D -e &
+    sshd_pid=$!
+    for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done
+    if [[ -s /run/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
         SSHD_STATUS=running
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-events staan in de containerlog)"
     else
         # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
         # pidfile uit, dan luistert er iets terwijl het log zegt van niet.
@@ -148,7 +148,7 @@ if [[ "$sshd_ready" == true ]]; then
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 22 al bezet in deze netwerk-namespace (zie /var/log/sshd.log)"
+            echo "  - poort 22 al bezet in deze netwerk-namespace (zie de sshd-regels in de containerlog)"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
             echo "  - onbruikbare host-key op het volume (verwijder /home/claude/.ssh-host)"

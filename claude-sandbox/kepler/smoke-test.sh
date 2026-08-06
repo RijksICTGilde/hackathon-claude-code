@@ -88,23 +88,19 @@ section() { printf '\n== %s ==\n' "$1"; }
 # Als functie, want de hardste exits zitten midden in het script en zouden die
 # bron anders juist overslaan.
 dump_logs() {
-    local raw err
+    local raw
     echo
     echo "Containerlog (relevante regels):"
     # Geen enkele fout wegfilteren: dit draait als het al mis is, en de reden
     # ("No such container", daemon onbereikbaar) zou anders door de grep of door
     # een vervangende tekst verdwijnen — inclusief een eigen diagnose die dan
     # onwaar kan zijn.
-    if ! raw="$("$CLI" logs --tail 100 "$CONTAINER" 2>&1)"; then
+    # sshd logt met -e naar de containerlog, dus auth-events staan hier ook in.
+    if ! raw="$("$CLI" logs --tail 200 "$CONTAINER" 2>&1)"; then
         echo "  ('$CLI logs' faalde: $(tr '\n' ' ' <<<"$raw"))"
     else
-        grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
-    fi
-    echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
-    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>&1)"; then
-        echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
-    else
-        printf '%s\n' "$err"
+        grep -iE 'sshd|kepler|WAARSCHUWING|FATAL|Accepted|Authentication refused' <<<"$raw" ||
+            echo "  (geen sshd/kepler-regels in de laatste 200)"
     fi
 }
 
@@ -289,10 +285,12 @@ if "$CLI" exec "$CONTAINER" sh -c '
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0 640" ]'; then
-    pass "auth-log 640 en van root (claude leest mee, schrijft niet)"
+# Auth-events horen in de containerlog te staan; met LogLevel VERBOSE staat de
+# key-fingerprint erbij. Positief toetsen op een regel die sshd zelf schrijft.
+if "$CLI" logs --tail 200 "$CONTAINER" 2>&1 | grep -qiE 'sshd.*(listening on|Server listening)'; then
+    pass "sshd logt naar de containerlog"
 else
-    fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
+    fail "geen sshd-regels in de containerlog — draait sshd met '-e'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
