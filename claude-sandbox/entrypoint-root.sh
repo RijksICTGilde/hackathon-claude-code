@@ -149,7 +149,9 @@ prepare_auth_log() {
     # `read -r` zonder IFS-splitsing houdt de regel intact; printf '%(…)T' is een
     # bash-builtin, dus er komt geen extra proces per regel bij.
     while IFS= read -r line; do
-        printf '%(%Y-%m-%dT%H:%M:%S%z)T %s\n' -1 "$line"
+        # OpenSSH sluit elke regel af met CRLF; zonder deze strip staat er een CR
+        # aan het eind van elke regel in het spoor.
+        printf '%(%Y-%m-%dT%H:%M:%S%z)T %s\n' -1 "${line%$'\r'}"
     done <"$SSHD_LOG_FIFO" >>"$SSHD_LOG" &
 }
 
