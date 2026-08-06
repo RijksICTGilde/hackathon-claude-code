@@ -287,9 +287,10 @@ fi
 # Permitted én effective moeten leeg zijn — dat is de winst van de niet-root-opzet.
 # De bounding set blijft bewust staan: die wordt niet verkleind bij de drop, omdat
 # rootless podman hem nodig heeft voor setuid-root newuidmap. Daar valt niets
-# zinnigs over te asserteren: een bounding set kan niet groeien — hij wordt bij
-# fork geërfd en blijft over execve staan — dus een vergelijking met een ander
-# proces zou alleen kunnen vuren als iemand sshd juist verkleint.
+# zinnigs over te asserteren: sshd erft de set van de entrypoint en verkleinen
+# vereist CAP_SETPCAP, dus een vergelijking met een ander proces zou alleen
+# kunnen vuren als iemand sshd juist verkleint. (Groeien kan een bounding set
+# wel, maar alleen in een nieuwe user-namespace, en die maakt sshd hier niet.)
 if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     fail "geen sshd-proces — capabilities niet te controleren"
 elif "$CLI" exec "$CONTAINER" sh -c '
