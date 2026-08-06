@@ -1,0 +1,78 @@
+# AppArmor-profiel voor de sandbox-container met rootless Podman.
+#
+# Afgeleid van docker-default, met drie afwijkingen:
+#   1. `userns,` toegevoegd. Nodig op gehardende Ubuntu/Tuxedo
+#      (kernel.apparmor_restrict_unprivileged_userns=1) zodat alleen deze
+#      container userns mag gebruiken, zonder de host-hardening systeembreed uit
+#      te zetten.
+#   2. docker-defaults `deny mount,` weggelaten en mount/umount/pivot_root
+#      expliciet toegestaan. Geneste rootless podman kan niet zonder.
+#   3. De rest van docker-defaults deny-regels blijft staan — met name de
+#      /proc/sys-denies.
+#
+# Waarom die /proc/sys-denies hier het werk doen. De podman-override zet
+# `systempaths=unconfined`, waardoor /proc/sys read-write gemount is. Er is geen
+# userns-remap, dus container-root is host-root-uid, en
+# /proc/sys/kernel/core_pattern is enkel DAC-beschermd — geen capability-check.
+# Deze regels zijn de laatste laag die dat schrijfpad sluit. Volledige
+# onderbouwing: ADR 0001 §4.3 "Welke laag welke escape sluit".
+#
+# Installeren op de host: ./podman/setup-host.sh
+# Toepassen: gebeurt via de compose-override, die
+# `apparmor=claude-sandbox-podman` meegeeft. Je start de container dus gewoon met
+#   docker compose -f compose.yml -f compose.override.podman-linux.yml up -d
+#
+# Val niet terug op flags=(unconfined): dan is de escape hierboven weer open. En
+# laat het profiel niet in complain staan — entrypoint-root.sh faalt daar bij de
+# start op. Breekt podman op een weigering van dit profiel, dan staat het
+# diagnoserecept in ADR 0001 §2.5.4 "Als het profiel te strak blijkt".
+#
+# abi 4.0 hoort bij AppArmor op Ubuntu 24.04+. Faalt het laden op een oudere
+# parser, dan strijkt setup-host.sh deze regel er automatisch uit.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile claude-sandbox-podman flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Geneste rootless podman heeft deze nodig; docker-default weigert mount.
+  mount,
+  pivot_root,
+  userns,
+
+  signal (receive) peer=unconfined,
+  signal (send,receive) peer=claude-sandbox-podman,
+
+  # /proc-afscherming, overgenomen uit docker-default. Zie de noot hierboven.
+  # Afwijking van docker-default: `[^kn]` i.p.v. `[^k]`, zodat naast
+  # /proc/sys/kernel ook /proc/sys/net schrijfbaar blijft. netavark (podman's
+  # netwerk-backend) zet bij het starten van een geneste container net-sysctls
+  # (bv. ipv6 autoconf); die draait ín deze container onder dit profiel. Docker
+  # doet netwerk-setup buiten AppArmor, geneste podman niet — vandaar de
+  # uitzondering. net-sysctls zijn per-netns namespaced, dus dit raakt alleen de
+  # eigen netns, niet de host. De core_pattern-escape zit in /proc/sys/kernel en
+  # blijft gedekt door de regel eronder.
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^1-9],[^1-9s][^1-9y][^1-9s],[^1-9][^1-9][^1-9][^1-9]*}/** w,
+  deny @{PROC}/sys/[^kn]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  # /sys-afscherming, overgenomen uit docker-default. De patronen laten
+  # /sys/fs/cgroup met rust, dat heeft de container nodig.
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  ptrace (trace,read,tracedby,readby) peer=claude-sandbox-podman,
+}
