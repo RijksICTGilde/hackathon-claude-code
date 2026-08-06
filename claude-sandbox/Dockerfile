@@ -346,7 +346,7 @@ RUN case "$INSTALL_SSHD" in \
                      'allowusers claude' 'pidfile /run/sshd.pid' \
                      'authorizedkeysfile .ssh/authorized_keys' \
                      'requiredrsasize 3072'; do \
-              grep -qxF "$d" <<<"$effective" || \
+              grep -qixF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \
             rm -rf /home/claude/.ssh-host ;; \

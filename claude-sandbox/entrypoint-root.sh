@@ -144,6 +144,8 @@ if [[ "$sshd_ready" == true ]]; then
     # erft die over de fork heen. Een pre-auth-lek in OpenSSH leest dan de
     # API-sleutel uit zijn eigen /proc/self/environ, zonder authenticatie. sshd
     # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
+    # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
+    # en hier niet, belandt stil in het pre-auth-proces. -->
     if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
