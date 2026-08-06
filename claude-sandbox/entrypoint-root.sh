@@ -107,10 +107,22 @@ export SSHD_STATUS=disabled
 # 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
 # De gelogde partij mag het spoor niet kunnen aanpassen, wissen of verdringen.
 SSHD_LOG=/home/claude/.sshd-log/sshd.log
+# Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
+# aangeroepen, en daar staat errexit uit.
 prepare_auth_log() {
     local dir=${SSHD_LOG%/*}
-    [[ ! -e "$dir" || ( -d "$dir" && ! -L "$dir" ) ]] || return 1
+    if [[ -L "$dir" || ( -e "$dir" && ! -d "$dir" ) ]]; then
+        echo "WAARSCHUWING: $dir is geen directory (symlink of bestand) — vervangen." >&2
+        rm -f -- "$dir" || return 1
+    fi
     install -d -m 750 -o root -g claude "$dir" || return 1
+    # `-f` dereferencet, dus zonder deze guard laat een symlink op de plek van de
+    # log het auth-spoor ergens anders belanden — en zet de chown hieronder een
+    # bestand naar keuze op root:claude. `rm -f` haalt de link weg, niet het doel.
+    if [[ -L "$SSHD_LOG" || ( -e "$SSHD_LOG" && ! -f "$SSHD_LOG" ) ]]; then
+        echo "WAARSCHUWING: $SSHD_LOG is geen gewoon bestand — vervangen." >&2
+        rm -f -- "$SSHD_LOG" || return 1
+    fi
     [[ -f "$SSHD_LOG" ]] || install -m 640 -o root -g claude /dev/null "$SSHD_LOG" || return 1
     # Rechten elke start terugzetten: het bestand staat op een volume dat een
     # eerdere image met andere waarden kan hebben achtergelaten.
@@ -133,8 +145,8 @@ case "${ENABLE_SSHD:-false}" in
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
         elif ! prepare_auth_log; then
-            echo "WAARSCHUWING: auth-log niet aan te maken op het volume — sshd blijft uit" \
-                 "(zonder auth-log is een login niet te herleiden)." >&2
+            echo "WAARSCHUWING: $SSHD_LOG niet aan te maken (vol of read-only volume, of rechten" \
+                 "niet te zetten) — sshd blijft uit; zonder auth-log is een login niet te herleiden." >&2
         else
             sshd_ready=true
         fi ;;

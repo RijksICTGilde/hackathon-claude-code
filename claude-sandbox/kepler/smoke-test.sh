@@ -289,16 +289,6 @@ if "$CLI" exec "$CONTAINER" sh -c '
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-# Het auth-spoor is de reden dat deze log bestaat, dus toets het event zelf en
-# niet de startbanner: na de geslaagde login uit sectie 3 hoort er een
-# 'Accepted publickey' in te staan, met LogLevel VERBOSE inclusief fingerprint.
-if ! AUTH_LOG="$("$CLI" exec "$CONTAINER" cat /home/claude/.sshd-log/sshd.log 2>&1)"; then
-    fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_LOG")"
-elif grep -q 'Accepted publickey for claude' <<<"$AUTH_LOG"; then
-    pass "auth-log bevat het geslaagde login-event"
-else
-    fail "geen 'Accepted publickey' in /home/claude/.sshd-log/sshd.log terwijl de login in sectie 3 slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
-fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
 if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /home/claude/.sshd-log/sshd.log)" = "0 640" ]'; then
     pass "auth-log is van root en 640 (claude leest mee, schrijft niet)"
@@ -341,6 +331,12 @@ else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
+# Regelnummer vóór de login vastleggen: het bestand staat op het volume en
+# overleeft een recreate, dus een 'Accepted publickey' van een vorige run zou de
+# assertie hieronder voorgoed groen houden.
+AUTH_LOG_OFFSET="$("$CLI" exec "$CONTAINER" sh -c 'wc -l < /home/claude/.sshd-log/sshd.log 2>/dev/null || echo 0')"
+[[ "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]] || AUTH_LOG_OFFSET=0
+
 section "3. SSH-login met key"
 if ssh_run 'echo ok' >/dev/null 2>&1; then
     pass "login als 'claude' met pubkey"
@@ -363,6 +359,17 @@ if "$CLI" exec -u claude "$CONTAINER" sh -c \
     pass "authorized_keys van claude en niet schrijfbaar voor groep/anderen"
 else
     fail "authorized_keys ontbreekt, is niet van claude (dan is hij in de root-fase geschreven), of /home/claude, ~/.ssh of het bestand is schrijfbaar voor groep/anderen (dan weigert sshd de login): chmod 755 /home/claude; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
+fi
+
+# Het auth-spoor is de reden dat deze log bestaat, dus toets het event zelf en
+# niet de startbanner. Alleen de regels die ná de offset hierboven zijn
+# bijgekomen tellen, zodat een event van een vorige run niet meetelt.
+if ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /home/claude/.sshd-log/sshd.log" 2>&1)"; then
+    fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_NEW")"
+elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
+    pass "auth-log bevat het login-event van deze run"
+else
+    fail "geen 'Accepted publickey' bijgekomen in /home/claude/.sshd-log/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 fi
 
 section "4. PATH in een non-interactieve sessie"
