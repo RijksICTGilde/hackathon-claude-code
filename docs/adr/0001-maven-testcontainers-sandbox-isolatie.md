@@ -343,7 +343,7 @@ dat wel.
   `/proc/sys`-usermode-helper-escapeklasse, niet elke capability van
   container-root. De proc-mount-bypass in het profiel zelf blokkeren vergt
   vermoedelijk een child-profiel voor de geneste runtime.
-- **De optionele sshd** (§2.3.4) voegt inbound oppervlak toe. De poort wordt
+- **De optionele sshd** (§2.4.0) voegt inbound oppervlak toe. De poort wordt
   host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
   luistert sshd op `0.0.0.0:2222` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon

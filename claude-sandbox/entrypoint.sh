@@ -34,7 +34,7 @@ fi
 # en sshd start verderop in dit script. `failed` telt ook mee — de gebruiker
 # wilde SSH, dus de sleutel hoort klaar te staan voor een volgende start.
 SSHD_STATUS="${SSHD_STATUS:-disabled}"
-case "$SSHD_STATUS" in ready|running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
+case "$SSHD_STATUS" in ready|failed) sshd_active=true ;; *) sshd_active=false ;; esac
 
 if [[ "$sshd_active" == true ]]; then
     # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
@@ -89,7 +89,7 @@ if [[ "$sshd_active" == true ]]; then
              mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
             # `ready` is de status op dit punt: sshd start pas verderop. Alleen
             # bij een status die dat pad niet meer haalt is de waarschuwing terecht.
-            if [[ "$SSHD_STATUS" == ready || "$SSHD_STATUS" == running ]]; then
+            if [[ "$SSHD_STATUS" == ready ]]; then
                 echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
             else
                 echo "WAARSCHUWING: Kepler-pubkey weggeschreven, maar sshd luistert niet" \

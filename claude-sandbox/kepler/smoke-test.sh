@@ -266,7 +266,7 @@ else
     fail "setuid/setgid-binary aangetroffen — de strip in de Dockerfile draait niet ná alle apt-installs"
 fi
 
-# Host-key hoort op het volume te ontstaan, niet in de image (ADR 0001 §2.3.4).
+# Host-key hoort op het volume te ontstaan, niet in de image (ADR 0001 §2.4.0).
 if "$CLI" exec "$CONTAINER" sh -c '! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'; then
     pass "geen host-keys in /etc/ssh (die horen op het volume te staan)"
 else
@@ -317,10 +317,13 @@ fi
 
 # Regelnummer van de containerlog vóór de login: sshd logt met `-e` daarheen, en
 # een event van een eerdere start mag de assertie verderop niet groen houden.
-if ! AUTH_LOG_OFFSET="$("$CLI" logs "$CONTAINER" 2>&1 | wc -l)" ||
-   [[ ! "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]]; then
-    fail "kon de omvang van de containerlog niet bepalen — de login-assertie verderop zou een event van een vorige run kunnen tellen"
+# De `logs`-aanroep buiten de pipe: de exitcode van een pipeline is die van
+# `wc`, en dat is altijd 0 — een guard eromheen zou nooit vuren.
+if ! RAW_LOGS="$("$CLI" logs "$CONTAINER" 2>&1)"; then
+    fail "containerlog niet te lezen ($(tr '\n' ' ' <<<"$RAW_LOGS")) — de login-assertie verderop zou een event van een vorige run kunnen tellen"
     AUTH_LOG_OFFSET=""
+else
+    AUTH_LOG_OFFSET=$(wc -l <<<"$RAW_LOGS")
 fi
 
 section "3. SSH-login met key"
@@ -351,8 +354,10 @@ fi
 # ook. Alleen de regels sinds de offset hierboven tellen mee.
 if [[ -z "$AUTH_LOG_OFFSET" ]]; then
     : # offset onbekend; hierboven al gemeld
-elif ! AUTH_NEW="$("$CLI" logs "$CONTAINER" 2>&1 | tail -n +$((AUTH_LOG_OFFSET + 1)))"; then
-    fail "containerlog niet te lezen voor de auth-controle"
+elif ! RAW_LOGS="$("$CLI" logs "$CONTAINER" 2>&1)"; then
+    fail "containerlog niet te lezen voor de auth-controle ($(tr '\n' ' ' <<<"$RAW_LOGS"))"
+elif ! AUTH_NEW="$(tail -n +$((AUTH_LOG_OFFSET + 1)) <<<"$RAW_LOGS")"; then
+    fail "containerlog niet te filteren voor de auth-controle"
 elif grep -q 'Accepted publickey for claude' <<<"$AUTH_NEW"; then
     pass "containerlog bevat het login-event van deze run"
 else
