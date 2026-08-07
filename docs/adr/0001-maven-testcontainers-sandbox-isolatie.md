@@ -356,8 +356,8 @@ dat wel.
   naar de containerlog waar elk proces van `claude` in kan schrijven — een
   verzonnen auth-regel is er niet van een echte te onderscheiden. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
-  gebouwde variant daarom met Trivy (`scan-type: image`), zodat een kwetsbare
-  sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
+  os-pakketten van de gebouwde variant daarom met Trivy (`scan-type: image`),
+  zodat een kwetsbare sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
   is hier een beveiligingseis, geen hygiëne. Draai deze opt-in
   bij voorkeur in een VM.
 - **Kernel-escapes** blijven buiten bereik van al deze maatregelen.

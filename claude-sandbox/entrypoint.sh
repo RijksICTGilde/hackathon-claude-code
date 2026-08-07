@@ -147,6 +147,8 @@ if [[ "$SSHD_STATUS" == ready ]]; then
     # `env -u`: zonder scrub staat de API-sleutel in de omgeving van sshd en van
     # zijn pre-auth-code, die hier ongechroot als `claude` draait. Voor een sessie
     # verandert het niets — sshd bouwt daar toch een verse omgeving op.
+    # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
+    # en hier niet, belandt stil in het sshd-proces. -->
     env -u ANTHROPIC_API_KEY /usr/sbin/sshd -D -e &
     sshd_pid=$!
     for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done

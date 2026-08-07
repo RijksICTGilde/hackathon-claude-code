@@ -28,7 +28,7 @@ We doorlopen hieronder het globale stappenplan uit hoofdstuk 4 van de [Overheids
 
 ### 2) Mensen en vaardigheden
 
-Deelnemers brengen hun eigen ontwikkelervaring in. [oefeningen.md](oefeningen.md) bevat onderzoeksvragen en experimenten zodat ook deelnemers die nieuw zijn met AI-assistenten snel productief kunnen worden. Mentoren zorgen tijdens hackathons voor uitleg over zowel de container (firewall, volumes) als over wat een AI-assistent wel en niet betrouwbaar kan.
+Deelnemers brengen hun eigen ontwikkelervaring in. [oefeningen](../oefeningen/) bevat onderzoeksvragen en experimenten zodat ook deelnemers die nieuw zijn met AI-assistenten snel productief kunnen worden. Mentoren zorgen tijdens hackathons voor uitleg over zowel de container (firewall, volumes) als over wat een AI-assistent wel en niet betrouwbaar kan.
 
 ### 3) Governance
 
@@ -76,7 +76,7 @@ Het feit dat een AI-assistent met de overheid-marketplace ingeschakeld toegang h
 
 #### f. Kwaliteit van AI-output
 
-Code en uitleg die Claude produceert moeten worden gereviewd zoals je elke pull request reviewt: tests draaien, documentatie checken, edge cases doordenken. De [oefeningen rond prompting](oefeningen/prompting.md) geven onderzoeksvragen voor het effectief inzetten van Claude in een test-driven loop, juist om kwaliteitsrisico's te beperken.
+Code en uitleg die Claude produceert moeten worden gereviewd zoals je elke pull request reviewt: tests draaien, documentatie checken, edge cases doordenken. De [oefeningen rond prompting](../oefeningen/prompting.md) geven onderzoeksvragen voor het effectief inzetten van Claude in een test-driven loop, juist om kwaliteitsrisico's te beperken.
 
 #### g. Vendor lock-in
 
@@ -97,7 +97,7 @@ Alles in deze repo — Dockerfiles, scripts, skills die via plugins worden gelad
 
 #### j. AI-geletterdheid
 
-[oefeningen.md](oefeningen.md) is bewust opgezet om deelnemers snel een goed mentaal model te geven van wat Claude wel en niet doet. Tijdens hackathons is mondelinge uitleg en peer-learning de tweede kennisdragende laag.
+[oefeningen](../oefeningen/) is bewust opgezet om deelnemers snel een goed mentaal model te geven van wat Claude wel en niet doet. Tijdens hackathons is mondelinge uitleg en peer-learning de tweede kennisdragende laag.
 
 ### 5) Inkoop en bouw
 
@@ -107,4 +107,4 @@ Wanneer de overheid-marketplace via een switch wordt ingeschakeld, wordt aanvull
 
 ---
 
-Vragen, opmerkingen of verbetervoorstellen kunnen via een [issue](../issues) of pull request worden ingediend.
+Vragen, opmerkingen of verbetervoorstellen kunnen via een [issue](https://github.com/RijksICTGilde/hackathon-claude-code/issues) of pull request worden ingediend.
