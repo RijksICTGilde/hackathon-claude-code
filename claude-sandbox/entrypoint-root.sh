@@ -67,19 +67,8 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# Auth-log op een eigen volume onder /var/log, niet op de container-laag, niet
-# in `/home/claude` en niet naar de containerlog:
-#   - er draait geen syslog-daemon, dus zonder -E verdwijnt elke login spoorloos;
-#   - de containerlog is de stroom waar `claude` na de drop zelf in schrijft, dus
-#     daar is een auth-regel niet van een verzonnen regel te onderscheiden;
-#   - een pad in `/home/claude` is weliswaar root-eigen te maken, maar de ouder
-#     is van `claude`: hij kan de directory hernoemen en er een eigen sshd.log
-#     voor in de plaats zetten. Het echte spoor loopt dan door op de open fd
-#     terwijl iedereen die het gedocumenteerde pad leest de vervalsing ziet;
-#   - /var/log is van root, dus die hernoeming kan daar niet, en het volume
-#     zorgt dat het spoor een recreate overleeft.
-#
-# sshd opent het pad vóór het daemoniseren, dus het overleeft de fd-reset.
+# Waar het auth-log staat en waarom: zie bij SSHD_LOG hieronder. sshd opent dat
+# pad vóór het daemoniseren, dus het overleeft de fd-reset.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -121,15 +110,20 @@ prepare_host_key() {
 export SSHD_STATUS=disabled
 # 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
 # De gelogde partij kan bestaande regels niet aanpassen of verwijderen, en omdat
-# de ouder (/var/log) van root is ook het pad zelf niet omleggen.
+# /var/log niet voor hem schrijfbaar is ook het pad zelf niet omleggen —
+# hernoemen vereist schrijfrecht op de ouder, niet op de directory zelf.
 SSHD_LOG=/var/log/sshd/sshd.log
+# Een eigen volume onder /var/log, niet de container-laag en niet de
+# containerlog: die laatste is de stroom waar `claude` na de drop zelf in
+# schrijft, dus daar is een auth-regel niet van een verzonnen regel te
+# onderscheiden. Een pad in `/home/claude` zou root-eigen te maken zijn, maar de
+# ouder is van `claude` en hernoemen vereist alleen schrijfrecht daarop.
+#
 # `-E` rechtstreeks naar dit bestand, geen logdaemon ertussen. De regels dragen
 # daardoor geen datum of tijd: OpenSSH laat die aan syslog over en schrijft
-# achter -E alleen de kale boodschap. Een tijdstempel vereist een logsysteem in
-# de container, en dat brengt een eigen rechtenmodel mee — een syslog-socket is
-# per ontwerp voor elk lokaal proces schrijfbaar, en daarmee zou de ingesloten
-# partij regels kunnen verzinnen. Dat is een aparte afweging; zie het issue over
-# tijdstempels in het auth-spoor.
+# achter -E alleen de kale boodschap. Een tijdstempel vereist een logsysteem, en
+# dat brengt een eigen rechtenmodel mee — een syslog-socket is per ontwerp voor
+# elk lokaal proces schrijfbaar. TODO(#110).
 # Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
 # aangeroepen, en daar staat errexit uit.
 prepare_auth_log() {
@@ -143,8 +137,9 @@ prepare_auth_log() {
     # log het auth-spoor ergens anders belanden — en zet de chown hieronder een
     # bestand naar keuze op root:claude. `rm -f` haalt de link weg, niet het doel.
     # Dekt geen hardlink: die is van een gewoon bestand niet te onderscheiden.
-    # Het spoor blijft dan wel root-only schrijfbaar, maar deelt zijn inode met
-    # een ander bestand op het volume.
+    # Alleen root kan er een leggen — de directory geeft `claude` geen
+    # schrijfrecht — dus dit gaat over een volume dat een eerdere image ruimer
+    # heeft achtergelaten, niet over de ingesloten partij.
     if [[ -L "$SSHD_LOG" || ( -e "$SSHD_LOG" && ! -f "$SSHD_LOG" ) ]]; then
         echo "WAARSCHUWING: $SSHD_LOG is geen gewoon bestand — vervangen." >&2
         rm -f -- "$SSHD_LOG" || return 1

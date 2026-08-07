@@ -290,11 +290,13 @@ else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
-# Directory, bestand én ouder. De ouder telt mee: is /var/log ooit van `claude`,
-# dan kan hij de hele logdirectory hernoemen en er een eigen sshd.log voor in de
-# plaats zetten, en leest iedereen die het pad opvraagt zijn versie.
+# Directory, bestand én ouder. Bij de ouder telt de mode en niet de eigenaar:
+# hernoemen vereist schrijfrecht op de ouder, dus een groep- of other-schrijfbare
+# /var/log laat `claude` de hele logdirectory verplaatsen en er een eigen
+# sshd.log voor in de plaats zetten — waarna iedereen die het pad opvraagt zijn
+# versie leest.
 if "$CLI" exec "$CONTAINER" sh -c '
-    [ "$(stat -c "%U %G" /var/log)" = "root root" ] &&
+    [ "$(stat -c "%U %G %a" /var/log)" = "root root 755" ] &&
     [ "$(stat -c "%U %G %a" /var/log/sshd)" = "root claude 750" ] &&
     [ "$(stat -c "%U %G %a" /var/log/sshd/sshd.log)" = "root claude 640" ]'; then
     pass "auth-log 640 root:claude in een 750 root:claude-directory onder een root-eigen ouder"
@@ -386,10 +388,11 @@ elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET +
 elif ! AUTH_LINE="$(grep -m1 'Accepted publickey for claude' <<<"$AUTH_NEW")"; then
     fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 # De fingerprint is de enige identificatie in het spoor: het bron-IP is door NAT
-# altijd de gateway, en er is één sleutel. Ontbreekt hij, dan is een login niet
-# aan een sleutel te koppelen en blijft er weinig te herleiden over.
+# altijd de gateway, en er is één sleutel. OpenSSH plakt hem aan de
+# Accepted-regel ongeacht LogLevel, dus dit toetst dat er een sleutel achter de
+# login zat — niet of de drop-in nog klopt. Dat laatste doet sectie 5.
 elif [[ ! "$AUTH_LINE" =~ SHA256: ]]; then
-    fail "login-event zonder key-fingerprint: '${AUTH_LINE:0:60}…' — staat LogLevel VERBOSE nog in de drop-in?"
+    fail "login-event zonder key-fingerprint: '${AUTH_LINE:0:60}…' — een login zonder sleutel in het spoor is niet aan een sleutel te koppelen"
 else
     pass "auth-log bevat het login-event van deze run, met key-fingerprint"
 fi
@@ -441,7 +444,8 @@ else
         'requiredrsasize 3072' \
         'permitopen localhost:* 127.0.0.1:* [::1]:*' \
         'permittunnel no' \
-        'gatewayports no'
+        'gatewayports no' \
+        'loglevel VERBOSE'
     do
         if grep -qix "$directive" <<<"$EFFECTIVE"; then
             pass "$directive"
