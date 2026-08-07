@@ -84,11 +84,11 @@ FAILLIST=""
 pass() { printf '  \033[32mOK\033[0m   %s\n' "$1"; }
 fail() { printf '  \033[31mFOUT\033[0m %s\n' "$1"; FAILCOUNT=$((FAILCOUNT + 1)); FAILLIST="${FAILLIST}  - ${1}"$'\n'; }
 section() { printf '\n== %s ==\n' "$1"; }
-# De containerlog draagt bij vrijwel elke storing de reden.
+# De containerlog en de sshd-auth-log staan bij vrijwel elke storing de reden.
 # Als functie, want de hardste exits zitten midden in het script en zouden die
 # bron anders juist overslaan.
 dump_logs() {
-    local raw
+    local raw err
     echo
     echo "Containerlog (relevante regels):"
     # Geen enkele fout wegfilteren: dit draait als het al mis is, en de reden
@@ -99,6 +99,12 @@ dump_logs() {
         echo "  ('$CLI logs' faalde: $(tr '\n' ' ' <<<"$raw"))"
     else
         grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
+    fi
+    echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
+    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>&1)"; then
+        echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
+    else
+        printf '%s\n' "$err"
     fi
 }
 
@@ -196,11 +202,11 @@ if [[ "$EXPECT_NO_SSHD" == true ]]; then
     # überhaupt bindings kán rapporteren — anders telt een gewijzigd
     # outputformaat of een andere CLI als "geen poort".
     if ! "$CLI" port "$CONTAINER" >/dev/null 2>&1; then
-        fail "'$CLI port $CONTAINER' faalt — of poort 2222 gepubliceerd is, is hiermee niet vast te stellen"
-    elif [[ -z "$("$CLI" port "$CONTAINER" 2222 2>/dev/null || true)" ]]; then
-        pass "poort 2222 niet gepubliceerd"
+        fail "'$CLI port $CONTAINER' faalt — of poort 22 gepubliceerd is, is hiermee niet vast te stellen"
+    elif [[ -z "$("$CLI" port "$CONTAINER" 22 2>/dev/null || true)" ]]; then
+        pass "poort 22 niet gepubliceerd"
     else
-        fail "poort 2222 is gepubliceerd terwijl SSH uit hoort te staan"
+        fail "poort 22 is gepubliceerd terwijl SSH uit hoort te staan"
     fi
     # Een afwezigheid in de logs bewijst niets als er geen logs zijn: een
     # logdriver die lezen niet ondersteunt (journald, none) of een geroteerde
@@ -235,20 +241,20 @@ fi
 if "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     pass "sshd-proces draait"
 else
-    fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint.sh"
+    fail "sshd-proces draait niet — check de containerlogs op de WAARSCHUWING uit entrypoint-root.sh"
 fi
-# sshd hoort juist NIET als root te draaien: hij start ná de privilege-drop op
-# poort 2222, zodat een pre-auth-lek in OpenSSH `claude` oplevert en geen root.
-if "$CLI" exec "$CONTAINER" sh -c 'ps -o user= -p "$(pgrep -x sshd | head -1)" 2>/dev/null | grep -qw claude'; then
-    pass "sshd draait als claude (geen root-daemon in de container)"
+# sshd hoort als root te draaien: hij start in de root-fase, vóór de
+# privilege-drop. Een sshd als `claude` kan zijn privilege separation niet doen.
+if "$CLI" exec "$CONTAINER" sh -c 'ps -o user= -p "$(pgrep -x sshd | head -1)" 2>/dev/null | grep -qw root'; then
+    pass "sshd draait als root (gestart in de root-fase)"
 else
-    fail "sshd draait niet als claude — hij hoort ná de privilege-drop te starten (entrypoint.sh), op poort 2222"
+    fail "sshd draait niet als root — hij hoort in entrypoint-root.sh te starten, vóór de privilege-drop"
 fi
 
 section '1b. Geen route naar root voor claude'
-# Er hoort geen sudo en geen sudoers-drop-in in de image te zitten. `claude` mag
-# na de drop geen weg terug hebben; een sudoers-regel of een setuid-binary maakt
-# die drop betekenisloos.
+# Er hoort geen sudo en geen sudoers-drop-in in de image te zitten: sshd start
+# in de root-fase, vóór de privilege-drop. Een sudoers-regel of een setuid-
+# binary maakt die drop betekenisloos.
 if "$CLI" exec "$CONTAINER" sh -c '! command -v sudo >/dev/null'; then
     pass "geen sudo-binary in de image"
 else
@@ -257,7 +263,7 @@ fi
 if "$CLI" exec "$CONTAINER" sh -c '! ls -A /etc/sudoers.d 2>/dev/null | grep -q .'; then
     pass "geen sudoers-drop-ins"
 else
-    fail "/etc/sudoers.d is niet leeg — claude hoort geen weg terug naar root te hebben"
+    fail "/etc/sudoers.d is niet leeg — sshd hoort in de root-fase te starten, niet via sudo"
 fi
 if "$CLI" exec "$CONTAINER" sh -c \
     'test -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) ! -name newuidmap ! -name newgidmap 2>/dev/null)"'; then
@@ -266,7 +272,7 @@ else
     fail "setuid/setgid-binary aangetroffen — de strip in de Dockerfile draait niet ná alle apt-installs"
 fi
 
-# Host-key hoort op het volume te ontstaan, niet in de image (ADR 0001 §2.4.0).
+# Host-key hoort op het volume te ontstaan, niet in de image (ADR 0001 §2.3.4).
 if "$CLI" exec "$CONTAINER" sh -c '! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'; then
     pass "geen host-keys in /etc/ssh (die horen op het volume te staan)"
 else
@@ -275,34 +281,39 @@ fi
 # Eigendom en type expliciet toetsen: `claude` bezit /home/claude en kan het pad
 # vervangen, en sshd accepteert een host-key van een andere user zonder morren.
 if "$CLI" exec "$CONTAINER" sh -c '
-    [ "$(stat -c "%U %G %a" /home/claude/.ssh-host)" = "root claude 750" ] &&
-    [ "$(stat -c "%U %G %a" /home/claude/.ssh-host/ssh_host_ed25519_key)" = "root claude 640" ] &&
+    [ "$(stat -c "%u %a" /home/claude/.ssh-host)" = "0 700" ] &&
     [ ! -L /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ -f /home/claude/.ssh-host/ssh_host_ed25519_key ] &&
     [ "$(stat -c %u /home/claude/.ssh-host/ssh_host_ed25519_key)" = 0 ]'; then
-    pass "host-key 640 root:claude in een 750 root:claude-directory (sshd draait als claude en moet erdoorheen)"
+    pass "host-key op het volume, van root, in een 0700-directory"
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-# Permitted én effective moeten leeg zijn — dat is de winst van de niet-root-opzet.
-# De bounding set blijft bewust staan: die wordt niet verkleind bij de drop, omdat
-# rootless podman hem nodig heeft voor setuid-root newuidmap. Daar valt niets
-# zinnigs over te asserteren: sshd erft de set van de entrypoint en verkleinen
-# vereist CAP_SETPCAP, dus een vergelijking met een ander proces zou alleen
-# kunnen vuren als iemand sshd juist verkleint. (Groeien kan een bounding set
-# wel, maar alleen in een nieuwe user-namespace, en die maakt sshd hier niet.)
+if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0 640" ]'; then
+    pass "auth-log 640 en van root (claude leest mee, schrijft niet)"
+else
+    fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
+fi
+# sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
+# OpenSSH meteen de iptables-regels uit.
+# De exitstatus van een pipeline is die van het laatste onderdeel, dus `pgrep |
+# head` geeft 0 ook zonder treffer; zonder de -n-controle zou een ontbrekende
+# sshd hier als "heeft NET_ADMIN" binnenkomen.
 if ! "$CLI" exec "$CONTAINER" sh -c 'pgrep -x sshd >/dev/null'; then
     fail "geen sshd-proces — capabilities niet te controleren"
 elif "$CLI" exec "$CONTAINER" sh -c '
     pid=$(pgrep -x sshd | head -1); [ -n "$pid" ] || exit 1
-    for f in CapPrm CapEff; do
+    # CAP_NET_ADMIN=12, CAP_NET_RAW=13. Naast de bounding set ook permitted en
+    # effective: de bounding set alleen bewijst dat hij ze niet kán winnen, niet
+    # dat hij ze niet heeft.
+    for f in CapBnd CapPrm CapEff; do
         v=$(awk -v k="^$f:" "\$0 ~ k {print \$2}" /proc/$pid/status)
         [ -n "$v" ] || exit 1
-        [ $(( 0x$v )) -eq 0 ] || exit 1
+        [ $(( 0x$v & ((1 << 12) | (1 << 13)) )) -eq 0 ] || exit 1
     done'; then
-    pass "sshd heeft een lege permitted- en effective-capability-set"
+    pass "sshd draait zonder NET_ADMIN/NET_RAW (bounding, permitted en effective)"
 else
-    fail "sshd heeft capabilities in permitted of effective — draait hij toch als root? De niet-root-opzet levert dan niets op"
+    fail "sshd heeft NET_ADMIN of NET_RAW — de setpriv --bounding-set in entrypoint-root.sh pakt niet"
 fi
 
 section "2. Poortbinding — alleen loopback"
@@ -310,24 +321,13 @@ section "2. Poortbinding — alleen loopback"
 # 0.0.0.0/:: staan. Publiceren op een wildcard-adres zet een agent-shell open
 # voor het hele netwerk. Positief asserten, niet de wildcards uitsluiten: een
 # LAN-adres als 192.168.64.2 is geen wildcard en zou anders slagen.
-BINDING="$("$CLI" port "$CONTAINER" 2222 || true)"
+BINDING="$("$CLI" port "$CONTAINER" 22 || true)"
 if [[ -z "$BINDING" ]]; then
-    fail "poort 2222 niet gepubliceerd — draai je met compose.override.kepler.yml?"
+    fail "poort 22 niet gepubliceerd — draai je met compose.override.kepler.yml?"
 elif grep -qE '^(127\.[0-9.]+|\[::1\]):' <<<"$BINDING"; then
     pass "poort alleen op loopback ($BINDING)"
 else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
-fi
-
-# Regelnummer van de containerlog vóór de login: sshd logt met `-e` daarheen, en
-# een event van een eerdere start mag de assertie verderop niet groen houden.
-# De `logs`-aanroep buiten de pipe: de exitcode van een pipeline is die van
-# `wc`, en dat is altijd 0 — een guard eromheen zou nooit vuren.
-if ! RAW_LOGS="$("$CLI" logs "$CONTAINER" 2>&1)"; then
-    fail "containerlog niet te lezen ($(tr '\n' ' ' <<<"$RAW_LOGS")) — de login-assertie verderop zou een event van een vorige run kunnen tellen"
-    AUTH_LOG_OFFSET=""
-else
-    AUTH_LOG_OFFSET=$(wc -l <<<"$RAW_LOGS")
 fi
 
 section "3. SSH-login met key"
@@ -352,18 +352,6 @@ if "$CLI" exec -u claude "$CONTAINER" sh -c \
     pass "authorized_keys van claude en niet schrijfbaar voor groep/anderen"
 else
     fail "authorized_keys ontbreekt, is niet van claude (dan is hij in de root-fase geschreven), of /home/claude, ~/.ssh of het bestand is schrijfbaar voor groep/anderen (dan weigert sshd de login): chmod 755 /home/claude; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
-fi
-
-# `-e` bestaat om te voorkomen dat een login spoorloos verdwijnt, dus toets dat
-# ook. Alleen de regels sinds de offset hierboven tellen mee.
-if [[ -z "$AUTH_LOG_OFFSET" ]]; then
-    : # offset onbekend; hierboven al gemeld
-elif ! RAW_LOGS="$("$CLI" logs "$CONTAINER" 2>&1)"; then
-    fail "containerlog niet te lezen voor de auth-controle ($(tr '\n' ' ' <<<"$RAW_LOGS"))"
-elif grep -q 'Accepted publickey for claude' <<<"$(tail -n +$((AUTH_LOG_OFFSET + 1)) <<<"$RAW_LOGS")"; then
-    pass "containerlog bevat het login-event van deze run"
-else
-    fail "geen 'Accepted publickey' in de containerlog terwijl de login hierboven slaagde — draait sshd met '-e'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 fi
 
 section "4. PATH in een non-interactieve sessie"
@@ -408,8 +396,6 @@ else
         'allowagentforwarding no' \
         'x11forwarding no' \
         'permituserrc no' \
-        'usepam no' \
-        'port 2222' \
         'authorizedkeysfile .ssh/authorized_keys' \
         'allowtcpforwarding local' \
         'requiredrsasize 3072' \
@@ -550,7 +536,7 @@ else
     TUNNEL_ERR="$(mktemp)" || { echo "FOUT: mktemp mislukt — geen schrijfbare tempdir." >&2; exit 2; }
     ssh -i "$KEY" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 \
-        -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:2222" "claude@$HOST" \
+        -o ExitOnForwardFailure=yes -N -L "$TUNNEL_PORT:127.0.0.1:22" "claude@$HOST" \
         >/dev/null 2>"$TUNNEL_ERR" &
     TUNNEL_PID=$!
     # De banner van de sshd aan de andere kant bewijst dat de forward data
@@ -652,7 +638,7 @@ if [[ "$FAILCOUNT" -eq 0 ]]; then
 fi
 echo "$FAILCOUNT check(s) gefaald:"
 printf '%s' "$FAILLIST"
-# De entrypoint-waarschuwingen zijn bij vrijwel elke gefaalde run de volgende
-# stap; scheelt een handmatige ronde.
+# De entrypoint-waarschuwingen en de sshd-auth-log zijn bij vrijwel elke gefaalde
+# run de volgende stap; scheelt een handmatige ronde.
 dump_logs
 exit 1

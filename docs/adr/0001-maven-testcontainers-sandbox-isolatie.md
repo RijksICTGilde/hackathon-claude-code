@@ -137,35 +137,31 @@ De bescherming die `--no-new-privs` zou geven, komt in plaats daarvan van de
 setuid-strip uit §2.2.3. De bounding set blijft staan omdat setuid-root
 `newuidmap` daar in de multi-uid opt-in `CAP_SYS_ADMIN` uit moet kunnen trekken.
 
-### 2.4 Gebruikersfase
-
-Vanaf hier draait alles als `claude`. `entrypoint.sh` weigert te starten als het
-als root wordt aangeroepen.
-
-#### 2.4.0 Optionele sshd na de privilege-drop
+#### 2.3.4 Optionele sshd in de rootfase
 
 `INSTALL_SSHD=true` bouwt een OpenSSH-server mee; `ENABLE_SSHD=true` (gezet door
 `compose.override.kepler.yml`) start hem. De schakelaar is de runtime-var en niet
 de aanwezigheid van de binary, zodat een image die één keer met de toggle
 gebouwd is niet bij elke start een poort openzet.
 
-sshd draait als `claude` op poort 2222 en start ná de privilege-drop: een poort
-boven 1024 vereist geen root, dus er is geen root-daemon in de container en een
-pre-auth-lek in OpenSSH levert `claude` op in plaats van root. De prijs is drieledig: OpenSSH's eigen privilege
-separation vervalt — die vereist root om het pre-auth-proces af te splitsen — de
-host-key is leesbaar voor `claude`, waarmee de serveridentiteit en alle
-sshd-hardening onder controle staan van de partij die ze moeten beperken, en het
-auth-spoor wordt vervalsbaar: sshd schrijft als `claude` naar dezelfde stroom
-waar `claude` zelf in schrijft.
+De start staat hier om dezelfde reden als de firewall: sshd bindt poort 22 en
+heeft root nodig voor zijn privilege separation, en na de drop is dat er niet
+meer. Hij draait wel met een verkleinde bounding set (`-net_admin,-net_raw`) —
+die capabilities heeft de container voor de firewall, en een pre-auth-lek in
+OpenSSH zou er anders `iptables -F` mee kunnen doen.
 
 Host-keys worden bij eerste start op het `claude-home` volume gemaakt, niet in de
 image: een privésleutel in een layer geeft iedereen met die image de identiteit
 van elke container die eruit draait. Omdat `/home/claude` van `claude` is, wordt
-type en eigendom van dat pad elke start gecontroleerd. Dat houdt de rotatie van
-de identiteit bij root; het maakt de sleutel niet geheim, want in deze opzet
-leest sshd hem als `claude` en kan `claude` hem dus ook lezen. `authorized_keys` schrijft
+type en eigendom van dat pad elke start gecontroleerd — anders kiest de
+ingesloten partij zelf welke host-identiteit Kepler in `known_hosts` pint. `authorized_keys` schrijft
 `entrypoint.sh` ná de drop, zodat `~/.ssh` van `claude` blijft: wie de
 env-variabele leeg laat, beheert dat bestand zelf op het volume.
+
+### 2.4 Gebruikersfase
+
+Vanaf hier draait alles als `claude`. `entrypoint.sh` weigert te starten als het
+als root wordt aangeroepen.
 
 #### 2.4.1 Storage: alleen vfs
 
@@ -301,6 +297,40 @@ Verruim het profiel gericht op basis van de `DENIED`-regels. Val niet terug op
   host-filesystem gemount, en is daarmee host-root. Een socket doorgeven is
   functioneel gelijk aan root op de host weggeven.
 - **`--no-new-privs` bij de privilege-drop.** Gemeten en verworpen; zie §2.3.3.
+- **sshd zonder root, op een onbevoorrechte poort.** Uitgewerkt en verworpen.
+  Het idee: laat sshd ná de privilege-drop starten als `claude` op poort 2222,
+  dan draait er geen root-daemon en levert een pre-auth-kwetsbaarheid geen
+  container-root op. Bij uitwerking bleek de ruil de verkeerde kant op te vallen.
+
+  OpenSSH splitst zijn pre-auth-proces alleen af als het als root start: het
+  `chroot`t dan naar `/run/sshd` en zet de uid op de rechtenloze user `sshd`.
+  Draait de daemon als `claude`, dan gebeurt geen van beide en komt pre-auth-code
+  direct uit als `claude` — met de host-bindmount, de `claude login`-credentials
+  en de container-env binnen bereik, in plaats van in een lege chroot. De winst
+  is dus dat bugs in de bevoorrechte listener `claude` opleveren in plaats van
+  root; de prijs is dat bugs in de pre-auth-code `claude` opleveren in plaats van
+  niets. In een sandbox waarvan het doel juist is `claude` in te sluiten, weegt
+  die prijs zwaarder dan de winst.
+
+  Daar komt bij dat de zorg achter het oorspronkelijke punt al afgedekt is:
+  sshd start via `setpriv --bounding-set=-net_admin,-net_raw`, dus een lek in de
+  daemon levert geen container-root met de capabilities waarmee de firewall te
+  flushen is (§2.3.4).
+
+  De variant sleept bovendien gevolgen mee die geen van beide kanten van de ruil
+  zijn. sshd moet de host-key kunnen lezen, dus `claude` kan dat ook: hij doodt
+  de daemon (zelfde uid), bindt zelf poort 2222 — onbevoorrecht, dus geen enkel
+  recht nodig — en levert dezelfde host-identiteit af zonder dat de client een
+  `known_hosts`-mismatch ziet. Daarmee staat `kepler.conf` als geheel onder
+  controle van de partij die het moet beperken, inclusief `AllowAgentForwarding`:
+  wie aan de andere kant `ForwardAgent` gebruikt, geeft toegang tot zijn
+  SSH-agent op de host. Het auth-spoor gaat naar een stroom waar elk
+  `claude`-proces in kan schrijven, en de eis "geen auth-log dan geen sshd"
+  vervalt omdat er geen logbestand meer aan te maken is.
+
+  Een niet-root sshd kan alleen sessies leveren als zichzelf. Dat is geen detail
+  van deze uitwerking maar een eigenschap van de opzet, dus er is geen versie van
+  dit idee die de bezwaren wegneemt.
 - **fuse-overlayfs als snellere storage.** Verworpen om het
   kernel-aanvaloppervlak; zie §2.4.1.
 
@@ -344,17 +374,15 @@ dat wel.
   `/proc/sys`-usermode-helper-escapeklasse, niet elke capability van
   container-root. De proc-mount-bypass in het profiel zelf blokkeren vergt
   vermoedelijk een child-profiel voor de geneste runtime.
-- **De optionele sshd** (§2.4.0) voegt inbound oppervlak toe. De poort wordt
+- **De optionele sshd** (§2.3.4) voegt inbound oppervlak toe. De poort wordt
   host-side alleen op `127.0.0.1` gepubliceerd, maar binnen het container-netwerk
-  luistert sshd op `0.0.0.0:2222` en accepteert de firewall het hele bridge-subnet:
+  luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
-  draait als `claude`, dus een pre-auth-kwetsbaarheid levert geen root op, maar
-  OpenSSH's eigen privilege separation is er niet: pre-auth-code draait ongechroot
-  als `claude`, met de host-bindmount en de `claude login`-credentials binnen
-  bereik. Twee restrisico's komen daarbij: `claude` kan de host-key lezen en
-  daarmee zelf een sshd met dezelfde identiteit opzetten, en het auth-spoor gaat
-  naar de containerlog waar elk proces van `claude` in kan schrijven — een
-  verzonnen auth-regel is er niet van een echte te onderscheiden. `openssh-server` komt ongepind uit apt en valt
+  draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
+  gecompromitteerde sessie. Dat is een bewuste keuze: root is wat OpenSSH's
+  privilege separation mogelijk maakt, en de bounding set van de daemon is
+  verkleind zodat een lek de firewall niet kan flushen. De niet-root-variant is
+  uitgewerkt en verworpen; zie §3. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
   os-pakketten van de gebouwde variant daarom met Trivy (`scan-type: image`),
   zodat een kwetsbare sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen

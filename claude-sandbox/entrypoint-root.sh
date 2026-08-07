@@ -58,20 +58,21 @@ esac
 # luisterende sshd opzetten. compose.override.kepler.yml zet de var, dus SSH
 # staat alleen aan in een run die er expliciet om vraagt.
 #
-# Alleen de host-key wordt hier voorbereid; sshd zelf start ná de drop, als
-# `claude`, op poort 2222. Er draait dus geen root-daemon in de container: een
-# pre-auth-lek in OpenSSH levert `claude` op, niet root. De host-key blijft wel
-# root-eigendom (640 root:claude) zodat de ingesloten partij hem kan lezen maar
-# niet vervangen — anders kiest die zelf welke identiteit Kepler pint.
+# Hier en niet na de drop: sshd bindt poort 22 en heeft root nodig voor zijn
+# privilege separation. Zelfde reden als bij de firewall — wat root vereist,
+# gebeurt vóór de drop, zodat `claude` daarna geen weg terug heeft. Ná
+# init-firewall.sh, zodat de poort niet openstaat vóór de INPUT-regels er zijn.
 #
-# Host-keys op het volume in plaats van in de image (ADR 0001 §2.4.0). Het pad
+# Host-keys op het volume in plaats van in de image (ADR 0001 §2.3.4). Het pad
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# Directory 750 root:claude: sshd draait als `claude` en moet erdoorheen kunnen
-# om de sleutel te lezen. Géén 770 — schrijfrecht op de directory betekent dat de
-# sleutel te unlinken en te vervangen is, en dat is precies wat de
-# eigendomscontrole hierboven moet voorkomen. De pidfile staat daarom in /run.
+# -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
+# vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
+# bestand vóór het daemoniseren, dus het overleeft de fd-reset. `claude` mag
+# meelezen via de groep, niet schrijven. Het bestand wordt alleen aangemaakt als
+# het nog niet bestaat: opnieuw aanmaken zou bij elke restart het auth-spoor
+# wissen.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -104,10 +105,6 @@ prepare_host_key() {
     # mislukte rm hierboven zou anders alsnog als succes doorgaan en sshd met de
     # vreemde sleutel laten starten.
     [[ -f "$key" ]] || ssh-keygen -q -t ed25519 -N '' -f "$key" </dev/null || return 1
-    # Root-eigendom met groepsleesrecht: sshd draait als `claude` en moet de
-    # sleutel kunnen lezen. Schrijven kan hij niet — maar lezen is genoeg om de
-    # identiteit over te nemen; zie de beperkingen in de README.
-    chgrp claude "$key" && chmod 640 "$key" || return 1
     [[ "$(stat -c %u "$key" 2>/dev/null)" == 0 ]]
 }
 
@@ -126,10 +123,12 @@ case "${ENABLE_SSHD:-false}" in
         elif [[ -L /home/claude/.ssh-host || ( -e /home/claude/.ssh-host && ! -d /home/claude/.ssh-host ) ]]; then
             echo "WAARSCHUWING: /home/claude/.ssh-host is geen directory (symlink of bestand) — host-key niet aanmaakbaar," \
                  "sshd blijft uit. Verwijder het pad op het claude-home volume." >&2
-        elif ! install -d -m 750 -o root -g claude /home/claude/.ssh-host; then
+        elif ! install -d -m 700 -o root -g root /home/claude/.ssh-host; then
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
+        elif [[ ! -f /var/log/sshd.log ]] && ! install -m 640 -o root -g claude /dev/null /var/log/sshd.log; then
+            echo "WAARSCHUWING: /var/log/sshd.log niet aanmaakbaar — sshd blijft uit (zonder auth-log is een login niet te herleiden)." >&2
         else
             sshd_ready=true
         fi ;;
@@ -140,14 +139,40 @@ case "${ENABLE_SSHD:-false}" in
 esac
 
 if [[ "$sshd_ready" == true ]]; then
-    # `claude` moet zijn pidfile kwijt kunnen, maar niet in .ssh-host: schrijfrecht
-    # daar zou betekenen dat hij de host-key kan unlinken en vervangen. Onder
-    # podman is /run een tmpfs, onder Docker niet — een restant van een vorige
-    # run wordt daarom in entrypoint.sh weggegooid vóór de start.
-    install -d -m 700 -o claude -g claude /run/sshd-claude || sshd_ready=false
-    SSHD_STATUS=$([[ "$sshd_ready" == true ]] && echo ready || echo failed)
-    [[ "$sshd_ready" == true ]] ||
-        echo "WAARSCHUWING: /run/sshd-claude niet aanmaakbaar — sshd blijft uit." >&2
+    # Zonder bounding-set draait sshd met de NET_ADMIN/NET_RAW die de container
+    # voor de firewall heeft. sshd heeft die niet nodig, en met die capabilities
+    # zou een pre-auth-lek in OpenSSH meteen `iptables -F` opleveren — precies de
+    # maatregel waar de sandbox op rust.
+    # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
+    # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
+    # pas ná het binden geschreven en is daarmee het bruikbare signaal; het pad
+    # ligt vast via PidFile in kepler.conf. /run is een verse tmpfs per start,
+    # dus de rm ruimt hooguit een restant van deze run op.
+    rm -f /run/sshd.pid
+    # `env -u`: sshd erft anders de volledige container-env, en zijn pre-auth-child
+    # erft die over de fork heen. Een pre-auth-lek in OpenSSH leest dan de
+    # API-sleutel uit zijn eigen /proc/self/environ, zonder authenticatie. sshd
+    # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
+    # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
+    # en hier niet, belandt stil in het pre-auth-proces. -->
+    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
+       { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
+        SSHD_STATUS=running
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+    else
+        # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
+        # pidfile uit, dan luistert er iets terwijl het log zegt van niet.
+        pkill -x sshd 2>/dev/null || true
+        {
+            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
+            echo "Veelvoorkomende oorzaken:"
+            echo "  - poort 22 al bezet in deze netwerk-namespace (zie /var/log/sshd.log)"
+            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
+            echo "  - /run/sshd niet aanwezig"
+            echo "  - onbruikbare host-key op het volume (verwijder /home/claude/.ssh-host)"
+            echo "  - setpriv kan de bounding set niet aanpassen (container mist CAP_SETPCAP)"
+        } >&2
+    fi
 fi
 
 # HOME expliciet zetten: de container draait nu als root, dus Docker zet HOME op

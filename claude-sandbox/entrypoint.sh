@@ -19,24 +19,22 @@ fi
 # authorized_keys voor de Kepler-remote. De sleutel komt runtime uit
 # KEPLER_SSH_PUBKEY, zodat er geen sleutel in de image gebakken zit.
 #
-# Vóór de sshd-start hieronder: zodra sshd luistert kan een client verbinden, en
-# zonder sleutel krijgt die `Permission denied` terwijl het log even later meldt
-# dat de sleutel geschreven is. Beide stappen staan in dit script, dus dat
-# venster is te vermijden in plaats van te documenteren.
+# Bovenaan dit script, want sshd luistert al vanaf de root-fase: alles wat hier
+# vóór zou staan (podman-wachtlus, marketplace-update over het netwerk) is tijd
+# waarin een client verbindt en `Permission denied` krijgt terwijl het log even
+# later meldt dat de sleutel geschreven is.
 #
 # Hier en niet in de root-fase, zodat `~/.ssh` van `claude` blijft: laat je
 # KEPLER_SSH_PUBKEY leeg, dan moet je het bestand zelf kunnen beheren op het
 # volume, en dat kan niet in een directory die root heeft aangemaakt.
-# SSHD_STATUS komt uit de root-fase: die zet klaar wat root vereist (host-key,
-# pidfile-directory) en meldt hier of dat gelukt is. ENABLE_SSHD hier opnieuw
-# interpreteren zou die uitkomst negeren en sshd starten op een halve opzet.
+# SSHD_STATUS komt uit de root-fase. ENABLE_SSHD hier opnieuw interpreteren zou
+# betekenen dat deze fase niet weet of sshd daadwerkelijk luistert.
 #
-# `ready` is de gangbare status hier: de root-fase heeft de host-key klaargezet
-# en sshd start verderop in dit script. `failed` telt ook mee — de gebruiker
-# wilde SSH, dus de sleutel hoort klaar te staan voor een volgende start.
+# `failed` telt mee als actief: de gebruiker wilde SSH, dus de sleutel hoort
+# klaar te staan voor een volgende start. De melding erbij zegt wel dat er nu
+# niets luistert.
 SSHD_STATUS="${SSHD_STATUS:-disabled}"
-case "$SSHD_STATUS" in ready|failed) sshd_active=true ;; *) sshd_active=false ;; esac
-
+case "$SSHD_STATUS" in running|failed) sshd_active=true ;; *) sshd_active=false ;; esac
 if [[ "$sshd_active" == true ]]; then
     # "ONGEWIJZIGD gelaten" leest als "je werkende opzet is beschermd". Op een
     # vers volume is er niets te beschermen, en dan is de juiste boodschap dat
@@ -88,9 +86,7 @@ if [[ "$sshd_active" == true ]]; then
         elif tmp="$HOME/.ssh/.authorized_keys.$$" &&
              printf '%s\n' "$pubkey" > "$tmp" && chmod 600 "$tmp" &&
              mv -f "$tmp" "$HOME/.ssh/authorized_keys"; then
-            # `ready` is de status op dit punt: sshd start pas verderop. Alleen
-            # bij een status die dat pad niet meer haalt is de waarschuwing terecht.
-            if [[ "$SSHD_STATUS" == ready ]]; then
+            if [[ "$SSHD_STATUS" == running ]]; then
                 echo "INFO: Kepler-pubkey naar $HOME/.ssh/authorized_keys geschreven"
             else
                 echo "WAARSCHUWING: Kepler-pubkey weggeschreven, maar sshd luistert niet" \
@@ -129,43 +125,6 @@ elif [[ -n "${KEPLER_SSH_PUBKEY:-}" ]]; then
         *)       echo "WAARSCHUWING: KEPLER_SSH_PUBKEY is gezet maar SSH staat uit — de sleutel wordt genegeerd." \
                       "Start met '-f compose.override.kepler.yml'." >&2 ;;
     esac
-fi
-
-# sshd start hier, als `claude`: poort 2222 vereist geen root, dus er draait geen
-# root-daemon in de container. `-e` stuurt de auth-events naar de containerlog;
-# er is geen syslog-daemon, en zonder dit verdwijnt elke login spoorloos.
-#
-# Ná het authorized_keys-blok hierboven, zodat sshd niet gaat luisteren terwijl
-# een geldige sleutel nog weggeschreven moet worden. Is die sleutel geweigerd of
-# ontbreekt hij, dan start sshd alsnog — geen gat (zonder authorized_keys komt
-# niemand binnen) maar wel een blijvende toestand, geen venster.
-if [[ "$SSHD_STATUS" == ready ]]; then
-    # `-r` erbij: /run is onder Docker geen tmpfs, en `claude` mag in deze
-    # directory schrijven. Een `mkdir` op het pidfile-pad zou `rm -f` laten falen
-    # en met errexit de container in een herstartlus brengen.
-    rm -rf -- /run/sshd-claude/sshd.pid
-    # `env -u`: zonder scrub staat de API-sleutel in de omgeving van sshd en van
-    # zijn pre-auth-code, die hier ongechroot als `claude` draait. Voor een sessie
-    # verandert het niets — sshd bouwt daar toch een verse omgeving op.
-    # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
-    # en hier niet, belandt stil in het sshd-proces. -->
-    env -u ANTHROPIC_API_KEY /usr/sbin/sshd -D -e &
-    sshd_pid=$!
-    for _ in $(seq 1 15); do [[ -s /run/sshd-claude/sshd.pid ]] && break; sleep 0.2; done
-    if [[ -s /run/sshd-claude/sshd.pid ]] && kill -0 "$sshd_pid" 2>/dev/null; then
-        echo "INFO: sshd gestart als $(id -un) (luistert op 2222; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml)"
-    else
-        # Opruimen vóór we "mislukt" melden: bindt sshd wél maar bleef het pidfile
-        # uit, dan luistert er iets terwijl het log zegt van niet.
-        kill "$sshd_pid" 2>/dev/null || true
-        {
-            echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
-            echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 2222 al bezet in deze netwerk-namespace"
-            echo "  - host-key niet leesbaar voor $(id -un): verwacht 640 root:claude, in een directory 750 root:claude"
-            echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
-        } >&2
-    fi
 fi
 
 # Rootless podman storage-config op het claude-home volume zetten. Baked-in in de

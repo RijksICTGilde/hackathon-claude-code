@@ -257,21 +257,13 @@ RUN case "$INSTALL_PODMAN" in \
 # Optioneel: OpenSSH-server zodat GitKraken Kepler via SSH een agent-sessie ín
 # deze sandbox kan draaien. Default uit. Bediening, beperkingen en de Kepler-bug
 # waarvoor hieronder een workaround staat: README-sectie "Kepler (SSH-remote)".
-#
-# Poort 2222 en niet 22: sshd draait als `claude`, en een poort onder 1024 vereist
-# root. Daarmee is er geen root-daemon meer in de container — een pre-auth-lek in
-# OpenSSH levert dan `claude` op in plaats van root.
-#
-# `UsePAM no` is daarvoor een voorwaarde, geen smaak: sshd_config(5) stelt dat je
-# sshd met UsePAM aan niet als niet-root kunt draaien, en Debian zet hem in de
-# meegeleverde config op yes. De sessiemodules verwachten root.
 # Let op: houd de README-tools-tabel + Kepler-sectie in sync.
 #
 # Staat achter de podman-installatie zodat een flip van INSTALL_SSHD niet de
 # apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
 # over de openssh-bestanden gaat.
 #
-# Geen host-keys in de image (ADR 0001 §2.4.0); entrypoint-root.sh maakt ze bij
+# Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
 # eerste start op het volume. De `rm` is nodig omdat Debians
 # openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
 #
@@ -312,7 +304,6 @@ RUN case "$INSTALL_SSHD" in \
               'PasswordAuthentication no' \
               'KbdInteractiveAuthentication no' \
               'PermitEmptyPasswords no' \
-              'UsePAM no' \
               'HostbasedAuthentication no' \
               'IgnoreRhosts yes' \
               'PubkeyAuthentication yes' \
@@ -337,8 +328,7 @@ RUN case "$INSTALL_SSHD" in \
               'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com' \
               'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
               'RequiredRSASize 3072' \
-              'Port 2222' \
-              'PidFile /run/sshd-claude/sshd.pid' \
+              'PidFile /run/sshd.pid' \
               'PerSourcePenalties no' \
               'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
               > /etc/ssh/sshd_config.d/kepler.conf && \
@@ -358,16 +348,12 @@ RUN case "$INSTALL_SSHD" in \
             for d in 'passwordauthentication no' 'permitrootlogin no' \
                      'allowagentforwarding no' 'allowtcpforwarding local' \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
-                     'allowusers claude' 'pidfile /run/sshd-claude/sshd.pid' \
-                     'usepam no' \
-                     'port 2222' \
+                     'allowusers claude' 'pidfile /run/sshd.pid' \
                      'authorizedkeysfile .ssh/authorized_keys' \
                      'requiredrsasize 3072'; do \
               grep -qixF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \
-            { [ "$(grep -c '^port ' <<<"$effective")" = 1 ] || \
-                { echo "FOUT: meer dan één Port-regel in de effectieve config — Port is cumulatief, dus sshd luistert dan ook op de niet-bedoelde poort" >&2; exit 1; }; } && \
             rm -rf /home/claude/.ssh-host ;; \
       false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
       *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
