@@ -1,5 +1,8 @@
 .env
 .worktrees/
+# Geankerd op de repo-root: een ongeankerde `.claude/` zou ook
+# claude-sandbox/.claude/ vangen, en daar staat getrackte image-configuratie.
+/.claude/worktrees/
 **/.claude/settings.local.json
 
 # Editor / IDE
