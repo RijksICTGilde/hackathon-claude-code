@@ -41,19 +41,19 @@ De image bevat een firewall die uitgaand verkeer beperkt. Zie [Firewall](#firewa
 <!-- Houd deze lijst in sync met de apt-get install in de Dockerfile (sudo is weggelaten: alleen intern gebruikt door firewall) -->
 De image bevat de volgende tools:
 
-| Categorie           | Tools                                                                                                   |
-|---------------------|---------------------------------------------------------------------------------------------------------|
-| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                       |
-| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                         |
-| Netwerk             | curl, openssh-client, ca-certificates (+ openssh-server bij `INSTALL_SSHD=true`, zie [Kepler (SSH-remote)](#kepler-ssh-remote)) |
-| Zoeken              | ripgrep, file                                                                                           |
-| Data & scripting    | jq                                                                                                      |
-| Archivering         | zip, unzip, gnupg2, xz-utils                                                                            |
-| Systeem             | procps                                                                                                  |
-| Runtimes            | Node.js 22 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                        |
+| Categorie           | Tools                                                                                                                                 |
+|---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                                                     |
+| Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                                                       |
+| Netwerk             | curl, openssh-client, ca-certificates (+ openssh-server bij `INSTALL_SSHD=true`, zie [Kepler (SSH-remote)](#kepler-ssh-remote))        |
+| Zoeken              | ripgrep, file                                                                                                                         |
+| Data & scripting    | jq                                                                                                                                    |
+| Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
+| Systeem             | procps                                                                                                                                |
+| Runtimes            | Node.js 24 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                                                      |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
-| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                          |
+| Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
 
 ## Plugins en skills
 <!-- Houd deze lijsten in sync met de plugin installs in de Dockerfile -->
@@ -152,7 +152,7 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **SSH staat alleen aan als je erom vraagt**: de entrypoint start sshd op `ENABLE_SSHD=true`, wat `compose.override.kepler.yml` zet — niet op de aanwezigheid van de binary. Een image die één keer met `INSTALL_SSHD=true` gebouwd is, zet dus niet bij elke `up` een poort open.
 - **Geen sleutels in de image**: host-keys worden bij eerste start op het `claude-home` volume aangemaakt, niet tijdens de build — een privésleutel in een image-layer zou iedereen met die image de identiteit van je sandbox geven. Je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY` en wordt gevalideerd voor hij weggeschreven wordt.
 - **Auth-logging**: sshd logt naar `/var/log/sshd.log` in de container (er draait geen syslog-daemon; zonder dit verdwijnt elke login spoorloos). `LogLevel VERBOSE` zet de key-fingerprint erbij.
-- **Auth zonder secret in env**: `ANTHROPIC_API_KEY` via de container-env bereikt een sshd-sessie níet (sshd reset de env). Gebruik `claude login`.
+- **`ANTHROPIC_API_KEY` staat buiten sshd zelf**: de daemon wordt gestart met `env -u ANTHROPIC_API_KEY`, zodat een pre-auth-lek in OpenSSH de sleutel niet uit zijn eigen omgeving kan lezen. Dat beschermt de daemon, niet de sessie — zie 'wat het níet dekt'. Gebruik bij voorkeur `claude login`.
 - **Geen sudo- of setuid-route naar root**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image, en setuid-bits worden gestript.
 - **sshd erft de firewall-capabilities niet**: hij start via `setpriv --bounding-set=-net_admin,-net_raw`, zodat een lek in OpenSSH niet meteen `iptables -F` kan doen.
 - **`PermitOpen localhost:* 127.0.0.1:* [::1]:*`**: Keplers `-L`-tunnel mag alleen naar de container zelf, niet naar de docker-gateway of buurcontainers. Alle drie de loopback-vormen staan erin omdat sshd de bestemming letterlijk vergelijkt, zonder naamresolutie.
@@ -161,11 +161,13 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 ### Beveiliging (wat het níet dekt)
 - **De loopback-binding geldt alleen vanaf de host.** Binnen de container luistert sshd op alle adressen. `init-firewall.sh` dropt inbound naar de SSH-poort van elke bron behalve de gateway, wat de drempel voor een buurcontainer flink verhoogt — maar bron-IP-filtering op een gedeelde bridge is geen authenticatie. Een buurcontainer met `NET_RAW` vergiftigt de ARP-cache voor het gateway-adres, vangt de antwoorden zelf op en houdt een volledige sessie met de gateway als bronadres — die regel omzeilt hij dus niet-blind en compleet, en vanaf diezelfde positie onderschept hij ook het verkeer van Kepler zelf. Alleen spoofen zonder de antwoorden te zien levert niets op: dan komt de TCP-handshake al niet rond. Wat de maatregel wél oplevert, is dat een buurcontainer zónder `NET_RAW` er niet meer bij kan. De bronuitzondering laat bovendien élk pakket toe met het bridge-adres als bron, niet alleen de port-forward: ook een hostproces dat het container-IP rechtstreeks benadert, langs de `127.0.0.1`-publish om. Hang geen onvertrouwde containers aan dit netwerk. Draait je runtime de port-forward door met een ánder bronadres dan de gateway, dan blokkeert deze regel juist Kepler zelf, met een hangende verbinding als enige symptoom; de smoke-test noemt dat als mogelijke oorzaak bij een login die tot de timeout blijft hangen. De rest van het bridge-subnet blijft voor het overige verkeer toegestaan.
 - **Een geslaagde login is een volledige shell als `claude`** — inclusief schrijfrechten op de host-bindmount `${PROJECTS_DIR}:/home/claude/projects` en leestoegang tot de `claude login`-credentials op het volume. De SSH-hardening beperkt wie binnenkomt, niet wat die daarna mag.
+- **`ANTHROPIC_API_KEY` blijft leesbaar binnen de sessie.** De entrypoint draait na de privilege-drop als `claude` met die variabele in zijn omgeving, en een SSH-sessie is dezelfde uid: `/proc/<pid van de entrypoint>/environ` levert hem. Dat geldt voor elk proces van `claude` dat de container-env draagt. (Niet `/proc/1/environ`: `init: true` zet daar tini neer, als root.) De env-scrub op de daemon verkleint het pre-auth-oppervlak, ze maakt de sleutel niet onbereikbaar voor wie binnen is.
+- **`claude` kan de host-identiteit laten wisselen.** `/home/claude` is van hem, dus hij kan `.ssh-host` hernoemen; de entrypoint maakt dan een verse host-key aan. Kiezen welke sleutel dat wordt kan hij niet, maar hij kan bij elke start een `known_hosts`-mismatch afdwingen en zo de remote breken. Reageer daar niet routineus op met `ssh-keygen -R`: dat maakt de pinning waardeloos.
 - **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee poorten op de container zelf benaderen. `PermitOpen` houdt dat binnen de container — draait je devserver niet op loopback maar op het container-IP, dan werkt de tunnel ernaartoe niet.
 - **Geen agent-forwarding.** `AllowAgentForwarding no` houdt je host-sleutels buiten de sandbox, maar betekent ook dat je vanuit een Kepler-worktree niet met de host-sleutel kunt pushen. Regel git-toegang ín de container (`gh auth login`).
 - **De auth-log is niet duurzaam en roteert niet.** `/var/log/sshd.log` staat op de container-laag, niet op het volume: een recreate wist hem. Er is geen rotatie, dus veel loginverkeer laat de writable layer groeien. Wil je bewaren, schrijf hem zelf weg.
 - **Een lek in sshd levert container-root op.** De daemon draait als root (nodig voor privilege separation), dus een pre-auth-kwetsbaarheid weegt zwaarder dan een gecompromitteerde sessie als `claude`.
-- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot. CI scant de sshd-variant wel met Trivy, dus een kwetsbare sshd blokkeert de PR; de fix is een rebuild. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
+- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot. CI scant de os-pakketten van de sshd-variant wel met Trivy, dus een kwetsbare sshd blokkeert de PR; de fix is een rebuild. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
 - **Bij een `docker exec` als root** staat `/home/claude/.local/bin` — door `claude` beschrijfbaar — vooraan in `PATH`. Dat is niet nieuw in deze opzet, maar de kring die als `claude` kan draaien wordt met SSH wel groter. Gebruik `docker exec -u claude`.
 
 ### Opzet
@@ -225,13 +227,16 @@ Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — 
 ## Dependency-onderhoud
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
-1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh`, `get.sdkman.io` en de gepinde `rtk` v0.35.0 staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
+1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
 2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+
+`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v0.44.1) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
 - een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
+- een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL en `RTK_VERSION` samen bij)
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 

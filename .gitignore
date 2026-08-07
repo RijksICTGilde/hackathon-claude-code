@@ -1,5 +1,6 @@
 .env
 .worktrees/
+.claude/worktrees/
 **/.claude/settings.local.json
 
 # Editor / IDE

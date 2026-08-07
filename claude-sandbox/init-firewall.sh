@@ -2,6 +2,12 @@
 set -euo pipefail  # Exit on error, undefined vars, and pipeline failures
 IFS=$'\n\t'       # Stricter word splitting
 
+# Vaste PATH. De image zet `/home/claude/.local/bin` vooraan voor de
+# gebruikersfase, en dat pad ligt op het claude-home volume en is van `claude`.
+# Dit script draait als root, dus zonder deze regel bepaalt de ingesloten partij
+# welke `iptables` root uitvoert.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Pre-flight: verify we have iptables permissions (requires NET_ADMIN capability)
 if ! iptables -L -n >/dev/null 2>&1; then
     echo "ERROR: iptables not available - is the container running with --cap-add=NET_ADMIN?"
