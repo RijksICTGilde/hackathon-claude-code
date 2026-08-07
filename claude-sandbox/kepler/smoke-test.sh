@@ -290,6 +290,16 @@ else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
+# Zonder luisteraar op /dev/log gooit syslog() elke regel weg, en sshd merkt daar
+# niets van: hij blijft logins accepteren zonder spoor. Dat is geen storing die
+# vanzelf opvalt, dus toets hem.
+# `-f` en niet `-x`: als busybox-applet heet het proces `busybox`, dus een match
+# op de procesnaam zou altijd falen en deze assertie zou nooit groen worden.
+if "$CLI" exec "$CONTAINER" sh -c 'pgrep -f syslogd >/dev/null && [ -S /dev/log ]'; then
+    pass "syslogd draait en /dev/log bestaat"
+else
+    fail "geen syslogd of geen /dev/log — sshd logt dan naar niets, terwijl logins gewoon slagen"
+fi
 # Directory, bestand én ouder. De ouder telt mee: is /var/log ooit van `claude`,
 # dan kan hij de hele logdirectory hernoemen en er een eigen sshd.log voor in de
 # plaats zetten, en leest iedereen die het pad opvraagt zijn versie.
@@ -384,11 +394,12 @@ if [[ -z "$AUTH_LOG_OFFSET" ]]; then
 elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /var/log/sshd/sshd.log" 2>&1)"; then
     fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_NEW")"
 elif ! AUTH_LINE="$(grep -m1 'Accepted publickey for claude' <<<"$AUTH_NEW")"; then
-    fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+    fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait syslogd, en logt sshd met SyslogFacility AUTH? Zonder een luisteraar op /dev/log gooit syslog() de regels weg"
 # Zonder tijd beantwoordt het spoor niet wanneer iemand binnenkwam, en OpenSSH
-# zet die zelf niet neer: de leesluis in entrypoint-root.sh doet dat. Valt die
-# weg, dan blijft de regel zelf ongewijzigd en zou een kale grep groen blijven.
-elif [[ ! "$AUTH_LINE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}\  ]]; then
+# zet die zelf niet neer: syslogd doet dat. Schrijft sshd ooit weer rechtstreeks
+# naar het bestand, dan blijft de regel zelf ongewijzigd en zou een kale grep
+# groen blijven. Syslog-formaat: `Mon DD HH:MM:SS`, met de dag rechts uitgelijnd.
+elif [[ ! "$AUTH_LINE" =~ ^[A-Z][a-z]{2}\ [\ 0-9][0-9]\ [0-9]{2}:[0-9]{2}:[0-9]{2}\  ]]; then
     fail "login-event zonder tijdstempel: '${AUTH_LINE:0:60}…' — wie wanneer binnenkwam is zo niet te herleiden"
 else
     pass "auth-log bevat het login-event van deze run, met tijdstempel"

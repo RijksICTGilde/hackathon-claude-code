@@ -123,18 +123,13 @@ export SSHD_STATUS=disabled
 # De gelogde partij kan bestaande regels niet aanpassen of verwijderen, en omdat
 # de ouder (/var/log) van root is ook het pad zelf niet omleggen.
 SSHD_LOG=/var/log/sshd/sshd.log
-# OpenSSH zet zelf geen datum of tijd voor een regel: het schrijfpad achter -E/-e
-# is `"%s%s%.*s\r\n"`, waarin alleen de progname-prefix optioneel is. Een spoor
-# zonder tijd beantwoordt niet wie wanneer binnenkwam, dus sshd schrijft naar een
-# fifo en een leesluis zet de tijd erbij. De luis draait als root en is de enige
-# schrijver van het bestand.
-#
-# Valt de luis weg, dan is er geen vangnet: sshd negeert SIGPIPE en gooit de
-# returnwaarde van write() weg, dus regels van de daemon verdwijnen geruisloos.
-# Nieuwe verbindingen heropenen dit pad en blokkeren dan op open(), vóór
-# authenticatie. De ingesloten partij kan dat uitlokken door het volume vol te
-# schrijven. Zie de README-sectie over wat deze opzet niet dekt.
-SSHD_LOG_FIFO=/run/sshd-log.fifo
+# sshd logt via syslog en niet met -E naar een bestand: het schrijfpad achter
+# -E/-e is `"%s%s%.*s\r\n"`, dus zonder datum of tijd, en een spoor dat niet
+# beantwoordt wanneer iemand binnenkwam is geen auth-spoor. busybox syslogd zet
+# de tijd erbij, roteert op grootte, en blokkeert sshd niet als hij wegvalt —
+# syslog() schrijft naar een socket en is best-effort.
+SSHD_LOG_ROTATE_KB=1024
+SSHD_LOG_KEEP=3
 # Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
 # aangeroepen, en daar staat errexit uit.
 prepare_auth_log() {
@@ -158,21 +153,16 @@ prepare_auth_log() {
     # Rechten elke start terugzetten: het bestand staat op een volume dat een
     # eerdere image met andere waarden kan hebben achtergelaten.
     chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG" || return 1
-    # Vers per start: een restant op de container-laag zou een fifo kunnen zijn
-    # waar al iemand anders aan de leeskant zit.
-    rm -f -- "$SSHD_LOG_FIFO" || return 1
-    mkfifo -m 600 "$SSHD_LOG_FIFO" || return 1
-    # De leesluis draait als root en is de enige schrijver van het spoor.
-    # `read -r` zonder IFS-splitsing houdt de regel intact; printf '%(…)T' is een
-    # bash-builtin, dus er komt geen extra proces per regel bij.
-    # De `||`-tak vangt een laatste regel zonder afsluitende newline: `read`
-    # geeft dan rc 1 terwijl er wel tekst in $line staat, en die zou anders
-    # wegvallen.
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # OpenSSH sluit elke regel af met CRLF; zonder deze strip staat er een CR
-        # aan het eind van elke regel in het spoor.
-        printf '%(%Y-%m-%dT%H:%M:%S%z)T %s\n' -1 "${line%$'\r'}"
-    done <"$SSHD_LOG_FIFO" >>"$SSHD_LOG" &
+    # syslogd vóór sshd, anders gaan de regels van de start verloren: zonder
+    # luisteraar op /dev/log gooit syslog() ze weg. `-b` houdt de geroteerde
+    # bestanden beperkt; die krijgen de default-rechten van syslogd en zijn
+    # daarmee niet schrijfbaar voor `claude`.
+    busybox syslogd -O "$SSHD_LOG" -s "$SSHD_LOG_ROTATE_KB" -b "$SSHD_LOG_KEEP" || return 1
+    # syslogd daemoniseert zonder te wachten tot /dev/log er is; zonder deze
+    # controle start sshd mogelijk vóór de socket bestaat en verdwijnen zijn
+    # eerste regels alsnog.
+    for _ in $(seq 1 15); do [[ -S /dev/log ]] && break; sleep 0.2; done
+    [[ -S /dev/log ]]
 }
 
 sshd_ready=false
@@ -191,8 +181,9 @@ case "${ENABLE_SSHD:-false}" in
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
         elif ! prepare_auth_log; then
-            echo "WAARSCHUWING: $SSHD_LOG niet aan te maken (vol of read-only volume, of rechten" \
-                 "niet te zetten) — sshd blijft uit; zonder auth-log is een login niet te herleiden." >&2
+            echo "WAARSCHUWING: auth-log niet op te zetten — $SSHD_LOG niet aan te maken (vol of" \
+                 "read-only volume, of rechten niet te zetten), of syslogd start niet. sshd blijft" \
+                 "uit; zonder auth-log is een login niet te herleiden." >&2
         else
             sshd_ready=true
         fi ;;
@@ -219,7 +210,7 @@ if [[ "$sshd_ready" == true ]]; then
     # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
     # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
     # en hier niet, belandt stil in het pre-auth-proces. -->
-    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG_FIFO" &&
+    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in $SSHD_LOG)"
