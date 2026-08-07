@@ -54,11 +54,11 @@ RUN apt-get update && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.18.0 && \
+RUN NODE_VERSION=v24.18.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742 ;; \
-      arm64) NODE_ARCH=arm64; SHA=58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6 ;; \
+      amd64) NODE_ARCH=x64;   SHA=d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0 ;; \
+      arm64) NODE_ARCH=arm64; SHA=7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -188,11 +188,14 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.35.0/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.44.1/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
+# RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
+# image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
+# het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
-      true) sh /tmp/rtk-install.sh && \
+      true) RTK_VERSION=v0.44.1 sh /tmp/rtk-install.sh && \
             rm /tmp/rtk-install.sh && \
             command -v rtk >/dev/null && \
             rtk init -g --auto-patch ;; \
@@ -337,13 +340,18 @@ RUN case "$INSTALL_SSHD" in \
             ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
             sshd -t && \
             effective="$(sshd -T)" && \
+            # `-i` op de grep hieronder: `sshd -T` dumpt de sleutelnamen vandaag in
+            # lowercase, maar dat is geen toegezegd formaat. Zou een latere versie
+            # er mixed case van maken, dan faalt de build met de melding dat de
+            # drop-in niet toegepast is, wat de verkeerde kant op wijst. De -i
+            # kost hier niets: geen van deze waarden onderscheidt zich op casing.
             for d in 'passwordauthentication no' 'permitrootlogin no' \
                      'allowagentforwarding no' 'allowtcpforwarding local' \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
                      'allowusers claude' 'pidfile /run/sshd.pid' \
                      'authorizedkeysfile .ssh/authorized_keys' \
                      'requiredrsasize 3072'; do \
-              grep -qxF "$d" <<<"$effective" || \
+              grep -qixF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \
             rm -rf /home/claude/.ssh-host ;; \
