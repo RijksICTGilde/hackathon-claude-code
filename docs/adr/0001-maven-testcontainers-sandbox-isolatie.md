@@ -297,6 +297,40 @@ Verruim het profiel gericht op basis van de `DENIED`-regels. Val niet terug op
   host-filesystem gemount, en is daarmee host-root. Een socket doorgeven is
   functioneel gelijk aan root op de host weggeven.
 - **`--no-new-privs` bij de privilege-drop.** Gemeten en verworpen; zie §2.3.3.
+- **sshd zonder root, op een onbevoorrechte poort.** Uitgewerkt en verworpen.
+  Het idee: laat sshd ná de privilege-drop starten als `claude` op poort 2222,
+  dan draait er geen root-daemon en levert een pre-auth-kwetsbaarheid geen
+  container-root op. Bij uitwerking bleek de ruil de verkeerde kant op te vallen.
+
+  OpenSSH splitst zijn pre-auth-proces alleen af als het als root start: het
+  `chroot`t dan naar `/run/sshd` en zet de uid op de rechtenloze user `sshd`.
+  Draait de daemon als `claude`, dan gebeurt geen van beide en komt pre-auth-code
+  direct uit als `claude` — met de host-bindmount, de `claude login`-credentials
+  en de container-env binnen bereik, in plaats van in een lege chroot. De winst
+  is dus dat bugs in de bevoorrechte listener `claude` opleveren in plaats van
+  root; de prijs is dat bugs in de pre-auth-code `claude` opleveren in plaats van
+  niets. In een sandbox waarvan het doel juist is `claude` in te sluiten, weegt
+  die prijs zwaarder dan de winst.
+
+  Daar komt bij dat de zorg achter het oorspronkelijke punt al afgedekt is:
+  sshd start via `setpriv --bounding-set=-net_admin,-net_raw`, dus een lek in de
+  daemon levert geen container-root met de capabilities waarmee de firewall te
+  flushen is (§2.3.4).
+
+  De variant sleept bovendien gevolgen mee die geen van beide kanten van de ruil
+  zijn. sshd moet de host-key kunnen lezen, dus `claude` kan dat ook: hij doodt
+  de daemon (zelfde uid), bindt zelf poort 2222 — onbevoorrecht, dus geen enkel
+  recht nodig — en levert dezelfde host-identiteit af zonder dat de client een
+  `known_hosts`-mismatch ziet. Daarmee staat `kepler.conf` als geheel onder
+  controle van de partij die het moet beperken, inclusief `AllowAgentForwarding`:
+  wie aan de andere kant `ForwardAgent` gebruikt, geeft toegang tot zijn
+  SSH-agent op de host. Het auth-spoor gaat naar een stroom waar elk
+  `claude`-proces in kan schrijven, en de eis "geen auth-log dan geen sshd"
+  vervalt omdat er geen logbestand meer aan te maken is.
+
+  Een niet-root sshd kan alleen sessies leveren als zichzelf. Dat is geen detail
+  van deze uitwerking maar een eigenschap van de opzet, dus er is geen versie van
+  dit idee die de bezwaren wegneemt.
 - **fuse-overlayfs als snellere storage.** Verworpen om het
   kernel-aanvaloppervlak; zie §2.4.1.
 
@@ -345,7 +379,10 @@ dat wel.
   luistert sshd op `0.0.0.0:22` en accepteert de firewall het hele bridge-subnet:
   een andere container op datzelfde netwerk bereikt hem rechtstreeks. De daemon
   draait als root, dus een pre-auth-kwetsbaarheid weegt zwaarder dan een
-  gecompromitteerde sessie. `openssh-server` komt ongepind uit apt en valt
+  gecompromitteerde sessie. Dat is een bewuste keuze: root is wat OpenSSH's
+  privilege separation mogelijk maakt, en de bounding set van de daemon is
+  verkleind zodat een lek de firewall niet kan flushen. De niet-root-variant is
+  uitgewerkt en verworpen; zie §3. `openssh-server` komt ongepind uit apt en valt
   buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
   os-pakketten van de gebouwde variant daarom met Trivy (`scan-type: image`),
   zodat een kwetsbare sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
