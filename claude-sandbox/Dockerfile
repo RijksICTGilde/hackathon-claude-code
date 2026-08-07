@@ -350,7 +350,7 @@ RUN case "$INSTALL_SSHD" in \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
                      'allowusers claude' 'pidfile /run/sshd.pid' \
                      'authorizedkeysfile .ssh/authorized_keys' \
-                     'requiredrsasize 3072'; do \
+                     'requiredrsasize 3072' 'loglevel VERBOSE'; do \
               grep -qixF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \
