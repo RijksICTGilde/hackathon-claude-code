@@ -14,6 +14,13 @@ services:
     # (SSH-remote)', sectie Beveiliging.
     ports:
       - "127.0.0.1:2222:22"
+    volumes:
+      # Het auth-spoor krijgt een eigen volume, niet een pad op claude-home:
+      # /var/log is van root, dus de ingesloten partij kan de directory niet
+      # wegschuiven en er een eigen sshd.log voor in de plaats zetten. Een
+      # bestand op de container-laag zou dat ook oplossen, maar is bij elke
+      # recreate weg.
+      - sshd-log:/var/log/sshd
     environment:
       # Zet sshd aan in déze run. Zonder deze var start de entrypoint geen sshd,
       # ook niet in een image die met INSTALL_SSHD=true gebouwd is: SSH hoort
@@ -22,3 +29,8 @@ services:
       # Publieke SSH-sleutel van Kepler. Zet de waarde in .env:
       # KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler".
       - KEPLER_SSH_PUBKEY
+
+volumes:
+  # Niet `external`, dus compose maakt hem aan: het spoor hoort er te zijn zodra
+  # je sshd aanzet, zonder losse voorbereidingsstap.
+  sshd-log:

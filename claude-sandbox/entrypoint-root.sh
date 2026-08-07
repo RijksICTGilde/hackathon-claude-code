@@ -67,12 +67,8 @@ esac
 # wordt elke start gecontroleerd: `/home/claude` is van `claude`, en sshd
 # accepteert een host-key van een andere user zonder morren.
 #
-# -E, niet syslog: er draait geen syslog-daemon in deze image, dus zonder deze
-# vlag verdwijnt élke geslaagde en mislukte login spoorloos. sshd opent het
-# bestand vóór het daemoniseren, dus het overleeft de fd-reset. `claude` mag
-# meelezen via de groep, niet schrijven. Het bestand wordt alleen aangemaakt als
-# het nog niet bestaat: opnieuw aanmaken zou bij elke restart het auth-spoor
-# wissen.
+# Waar het auth-log staat en waarom: zie bij SSHD_LOG hieronder. sshd opent dat
+# pad vóór het daemoniseren, dus het overleeft de fd-reset.
 #
 # De hele voorbereiding is niet-fataal: een gesloopt pad op het volume mag de
 # sandbox niet onstartbaar maken.
@@ -112,6 +108,48 @@ prepare_host_key() {
 # een sleutel weg met een INFO-regel terwijl er geen sshd luistert, of geeft hij
 # advies over een var die wél gezet is. setpriv laat de omgeving ongemoeid.
 export SSHD_STATUS=disabled
+# 750 op de directory en 640 op het bestand: root schrijft, `claude` leest mee.
+# De gelogde partij kan bestaande regels niet aanpassen of verwijderen, en omdat
+# /var/log niet voor hem schrijfbaar is ook het pad zelf niet omleggen —
+# hernoemen vereist schrijfrecht op de ouder, niet op de directory zelf.
+SSHD_LOG=/var/log/sshd/sshd.log
+# Een eigen volume onder /var/log, niet de container-laag en niet de
+# containerlog: die laatste is de stroom waar `claude` na de drop zelf in
+# schrijft, dus daar is een auth-regel niet van een verzonnen regel te
+# onderscheiden. Een pad in `/home/claude` zou root-eigen te maken zijn, maar de
+# ouder is van `claude` en hernoemen vereist alleen schrijfrecht daarop.
+#
+# `-E` rechtstreeks naar dit bestand, geen logdaemon ertussen. De regels dragen
+# daardoor geen datum of tijd: OpenSSH laat die aan syslog over en schrijft
+# achter -E alleen de kale boodschap. Een tijdstempel vereist een logsysteem, en
+# dat brengt een eigen rechtenmodel mee — een syslog-socket is per ontwerp voor
+# elk lokaal proces schrijfbaar. TODO(#110).
+# Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
+# aangeroepen, en daar staat errexit uit.
+prepare_auth_log() {
+    local dir=${SSHD_LOG%/*}
+    if [[ -L "$dir" || ( -e "$dir" && ! -d "$dir" ) ]]; then
+        echo "WAARSCHUWING: $dir is geen directory (symlink of bestand) — vervangen." >&2
+        rm -f -- "$dir" || return 1
+    fi
+    install -d -m 750 -o root -g claude "$dir" || return 1
+    # `-f` dereferencet, dus zonder deze guard laat een symlink op de plek van de
+    # log het auth-spoor ergens anders belanden — en zet de chown hieronder een
+    # bestand naar keuze op root:claude. `rm -f` haalt de link weg, niet het doel.
+    # Dekt geen hardlink: die is van een gewoon bestand niet te onderscheiden.
+    # Alleen root kan er een leggen — de directory geeft `claude` geen
+    # schrijfrecht — dus dit gaat over een volume dat een eerdere image ruimer
+    # heeft achtergelaten, niet over de ingesloten partij.
+    if [[ -L "$SSHD_LOG" || ( -e "$SSHD_LOG" && ! -f "$SSHD_LOG" ) ]]; then
+        echo "WAARSCHUWING: $SSHD_LOG is geen gewoon bestand — vervangen." >&2
+        rm -f -- "$SSHD_LOG" || return 1
+    fi
+    [[ -f "$SSHD_LOG" ]] || install -m 640 -o root -g claude /dev/null "$SSHD_LOG" || return 1
+    # Rechten elke start terugzetten: het bestand staat op een volume dat een
+    # eerdere image met andere waarden kan hebben achtergelaten.
+    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG"
+}
+
 sshd_ready=false
 case "${ENABLE_SSHD:-false}" in
     true)
@@ -127,8 +165,9 @@ case "${ENABLE_SSHD:-false}" in
             echo "WAARSCHUWING: /home/claude/.ssh-host niet aanmaakbaar (vol of read-only volume) — sshd blijft uit." >&2
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
-        elif [[ ! -f /var/log/sshd.log ]] && ! install -m 640 -o root -g claude /dev/null /var/log/sshd.log; then
-            echo "WAARSCHUWING: /var/log/sshd.log niet aanmaakbaar — sshd blijft uit (zonder auth-log is een login niet te herleiden)." >&2
+        elif ! prepare_auth_log; then
+            echo "WAARSCHUWING: $SSHD_LOG niet aan te maken (vol of read-only volume, of rechten" \
+                 "niet te zetten) — sshd blijft uit; zonder auth-log is een login niet te herleiden." >&2
         else
             sshd_ready=true
         fi ;;
@@ -145,9 +184,9 @@ if [[ "$sshd_ready" == true ]]; then
     # maatregel waar de sandbox op rust.
     # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
     # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
-    # pas ná het binden geschreven en is daarmee het bruikbare signaal; het pad
-    # ligt vast via PidFile in kepler.conf. /run is een verse tmpfs per start,
-    # dus de rm ruimt hooguit een restant van deze run op.
+    # pas ná het binden geschreven en is het bruikbare signaal; het pad ligt vast
+    # via PidFile in kepler.conf. /run ligt op de container-laag, dus een pidfile
+    # van vóór een restart blijft staan; de rm haalt die weg.
     rm -f /run/sshd.pid
     # `env -u`: sshd erft anders de volledige container-env, en zijn pre-auth-child
     # erft die over de fork heen. Een pre-auth-lek in OpenSSH leest dan de
@@ -155,10 +194,10 @@ if [[ "$sshd_ready" == true ]]; then
     # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
     # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
     # en hier niet, belandt stil in het pre-auth-proces. -->
-    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E /var/log/sshd.log &&
+    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG" &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
-        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in /var/log/sshd.log)"
+        echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in $SSHD_LOG)"
     else
         # Opruimen voor we "mislukt" melden: bindt sshd wél maar bleef het
         # pidfile uit, dan luistert er iets terwijl het log zegt van niet.
@@ -166,7 +205,7 @@ if [[ "$sshd_ready" == true ]]; then
         {
             echo "WAARSCHUWING: sshd starten mislukt — Kepler-remote werkt niet. Container draait door."
             echo "Veelvoorkomende oorzaken:"
-            echo "  - poort 22 al bezet in deze netwerk-namespace (zie /var/log/sshd.log)"
+            echo "  - poort 22 al bezet in deze netwerk-namespace (zie $SSHD_LOG)"
             echo "  - onbekende optie in /etc/ssh/sshd_config.d/kepler.conf (controleer met 'sshd -t')"
             echo "  - /run/sshd niet aanwezig"
             echo "  - onbruikbare host-key op het volume (verwijder /home/claude/.ssh-host)"

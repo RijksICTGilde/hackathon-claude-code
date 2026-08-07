@@ -100,8 +100,8 @@ dump_logs() {
     else
         grep -iE 'sshd|kepler|WAARSCHUWING|FATAL' <<<"$raw" || echo "  (geen sshd/kepler-regels in de laatste 100)"
     fi
-    echo "sshd-auth-log (/var/log/sshd.log, laatste 20):"
-    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd.log 2>&1)"; then
+    echo "sshd-auth-log (laatste 20):"
+    if ! err="$("$CLI" exec "$CONTAINER" tail -n 20 /var/log/sshd/sshd.log 2>&1)"; then
         echo "  (niet op te halen: $(tr '\n' ' ' <<<"$err"))"
     else
         printf '%s\n' "$err"
@@ -289,10 +289,24 @@ if "$CLI" exec "$CONTAINER" sh -c '
 else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
-if "$CLI" exec "$CONTAINER" sh -c '[ "$(stat -c "%u %a" /var/log/sshd.log)" = "0 640" ]'; then
-    pass "auth-log 640 en van root (claude leest mee, schrijft niet)"
+# De gelogde partij mag het spoor niet kunnen aanpassen.
+# Directory, bestand én ouder. Bij de ouder tellen mode én eigenaar: hernoemen
+# vereist schrijfrecht daarop, dus 755 sluit groep en others uit, en
+# root-eigendom voorkomt dat `claude` die mode zelf oprekt. Lukt het wel, dan
+# verplaatst hij de hele logdirectory en zet er een eigen sshd.log voor in de
+# plaats — waarna iedereen die het pad opvraagt zijn versie leest.
+# De mount zelf telt mee: zonder de volume-regel in compose.override.kepler.yml
+# maakt de entrypoint dezelfde directory met dezelfde rechten aan op de
+# container-laag, en blijft elke andere assertie hier groen terwijl het spoor
+# juist niet meer duurzaam is.
+if "$CLI" exec "$CONTAINER" sh -c '
+    awk "\$2 == \"/var/log/sshd\" { found = 1 } END { exit !found }" /proc/self/mounts &&
+    [ "$(stat -c "%U %G %a" /var/log)" = "root root 755" ] &&
+    [ "$(stat -c "%U %G %a" /var/log/sshd)" = "root claude 750" ] &&
+    [ "$(stat -c "%U %G %a" /var/log/sshd/sshd.log)" = "root claude 640" ]'; then
+    pass "auth-log 640 root:claude op een eigen mount, in een 750 root:claude-directory onder een root-eigen ouder"
 else
-    fail "/var/log/sshd.log heeft verkeerde eigenaar of rechten — claude hoort niet te kunnen schrijven"
+    fail "auth-log niet op een eigen mount, of verkeerde eigenaar/rechten op het bestand, de directory of /var/log — het spoor hoort een recreate te overleven en niet door claude aan te passen, te verwijderen of om te leggen te zijn"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
@@ -330,6 +344,21 @@ else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
+# Regelnummer vóór de login vastleggen: het bestand staat op het volume en
+# overleeft een recreate, dus een 'Accepted publickey' van een vorige run zou de
+# assertie hieronder voorgoed groen houden.
+# Alleen "bestand bestaat nog niet" mag 0 opleveren. Een mislukte of onleesbare
+# meting stil op 0 zetten betekent "tel het hele bestand", en dan houdt een
+# 'Accepted publickey' van een vorige run de assertie voorgoed groen — precies
+# het gat dat deze offset dicht.
+if ! AUTH_LOG_OFFSET="$("$CLI" exec "$CONTAINER" sh -c '
+        [ -e /var/log/sshd/sshd.log ] || { echo 0; exit 0; }
+        wc -l < /var/log/sshd/sshd.log' 2>&1)" ||
+   [[ ! "$AUTH_LOG_OFFSET" =~ ^[0-9]+$ ]]; then
+    fail "kon de omvang van de auth-log niet bepalen ($(tr '\n' ' ' <<<"$AUTH_LOG_OFFSET")) — de login-assertie verderop zou een event van een vorige run kunnen tellen"
+    AUTH_LOG_OFFSET=""
+fi
+
 section "3. SSH-login met key"
 if ssh_run 'echo ok' >/dev/null 2>&1; then
     pass "login als 'claude' met pubkey"
@@ -352,6 +381,26 @@ if "$CLI" exec -u claude "$CONTAINER" sh -c \
     pass "authorized_keys van claude en niet schrijfbaar voor groep/anderen"
 else
     fail "authorized_keys ontbreekt, is niet van claude (dan is hij in de root-fase geschreven), of /home/claude, ~/.ssh of het bestand is schrijfbaar voor groep/anderen (dan weigert sshd de login): chmod 755 /home/claude; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
+fi
+
+# Het auth-spoor is de reden dat deze log bestaat, dus toets het event zelf en
+# niet de startbanner. Alleen de regels die ná de offset hierboven zijn
+# bijgekomen tellen, zodat een event van een vorige run niet meetelt.
+if [[ -z "$AUTH_LOG_OFFSET" ]]; then
+    : # offset onbekend; hierboven al gemeld, niet nog eens falen
+elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET + 1)) /var/log/sshd/sshd.log" 2>&1)"; then
+    fail "auth-log niet te lezen: $(tr '\n' ' ' <<<"$AUTH_NEW")"
+elif ! AUTH_LINE="$(grep -m1 'Accepted publickey for claude' <<<"$AUTH_NEW")"; then
+    fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
+# De fingerprint is de enige identificatie in het spoor: het bron-IP is door NAT
+# altijd de gateway, en er is één sleutel. OpenSSH plakt hem ongeacht LogLevel
+# aan de Accepted-regel, dus dit is geen controle op de drop-in — dat doet
+# sectie 5 — maar op het formaat: een `FingerprintHash md5` in de config zou een
+# spoor opleveren dat niet meer tegen de bekende SHA256-vingerafdruk te leggen is.
+elif [[ ! "$AUTH_LINE" =~ SHA256: ]]; then
+    fail "login-event met een fingerprint die geen SHA256 is: '${AUTH_LINE:0:60}…' — staat er een FingerprintHash in de drop-in?"
+else
+    pass "auth-log bevat het login-event van deze run, met key-fingerprint"
 fi
 
 section "4. PATH in een non-interactieve sessie"
@@ -401,7 +450,8 @@ else
         'requiredrsasize 3072' \
         'permitopen localhost:* 127.0.0.1:* [::1]:*' \
         'permittunnel no' \
-        'gatewayports no'
+        'gatewayports no' \
+        'loglevel VERBOSE'
     do
         # `-F`: `permitopen localhost:* 127.0.0.1:* [::1]:*` is als reguliere
         # expressie iets heel anders — `[::1]` is een bracket-expressie en `:*`
