@@ -296,7 +296,7 @@ RUN case "$INSTALL_PODMAN" in \
 # wegwerpsleutel verdwijnt weer in dezelfde laag.
 RUN case "$INSTALL_SSHD" in \
       true) apt-get update && \
-            apt-get install -y --no-install-recommends openssh-server busybox-syslogd && \
+            apt-get install -y --no-install-recommends openssh-server && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
             rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
             mkdir -p /run/sshd && \
@@ -321,7 +321,6 @@ RUN case "$INSTALL_SSHD" in \
               'GatewayPorts no' \
               'PermitTunnel no' \
               'LogLevel VERBOSE' \
-              'SyslogFacility AUTH' \
               'LoginGraceTime 30' \
               'MaxAuthTries 3' \
               'ClientAliveInterval 300' \
@@ -351,7 +350,7 @@ RUN case "$INSTALL_SSHD" in \
                      'permitopen localhost:* 127.0.0.1:* [::1]:*' \
                      'allowusers claude' 'pidfile /run/sshd.pid' \
                      'authorizedkeysfile .ssh/authorized_keys' \
-                     'requiredrsasize 3072' 'syslogfacility AUTH'; do \
+                     'requiredrsasize 3072'; do \
               grep -qixF "$d" <<<"$effective" || \
                 { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
             done && \

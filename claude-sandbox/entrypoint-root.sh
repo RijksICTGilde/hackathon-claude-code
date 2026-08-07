@@ -123,13 +123,13 @@ export SSHD_STATUS=disabled
 # De gelogde partij kan bestaande regels niet aanpassen of verwijderen, en omdat
 # de ouder (/var/log) van root is ook het pad zelf niet omleggen.
 SSHD_LOG=/var/log/sshd/sshd.log
-# sshd logt via syslog en niet met -E naar een bestand: het schrijfpad achter
-# -E/-e is `"%s%s%.*s\r\n"`, dus zonder datum of tijd, en een spoor dat niet
-# beantwoordt wanneer iemand binnenkwam is geen auth-spoor. busybox syslogd zet
-# de tijd erbij, roteert op grootte, en blokkeert sshd niet als hij wegvalt —
-# syslog() schrijft naar een socket en is best-effort.
-SSHD_LOG_ROTATE_KB=1024
-SSHD_LOG_KEEP=3
+# `-E` rechtstreeks naar dit bestand, geen logdaemon ertussen. De regels dragen
+# daardoor geen datum of tijd: OpenSSH laat die aan syslog over en schrijft
+# achter -E alleen de kale boodschap. Een tijdstempel vereist een logsysteem in
+# de container, en dat brengt een eigen rechtenmodel mee — een syslog-socket is
+# per ontwerp voor elk lokaal proces schrijfbaar, en daarmee zou de ingesloten
+# partij regels kunnen verzinnen. Dat is een aparte afweging; zie het issue over
+# tijdstempels in het auth-spoor.
 # Elke stap een eigen `|| return 1`: deze functie wordt in een conditie-context
 # aangeroepen, en daar staat errexit uit.
 prepare_auth_log() {
@@ -152,17 +152,7 @@ prepare_auth_log() {
     [[ -f "$SSHD_LOG" ]] || install -m 640 -o root -g claude /dev/null "$SSHD_LOG" || return 1
     # Rechten elke start terugzetten: het bestand staat op een volume dat een
     # eerdere image met andere waarden kan hebben achtergelaten.
-    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG" || return 1
-    # syslogd vóór sshd, anders gaan de regels van de start verloren: zonder
-    # luisteraar op /dev/log gooit syslog() ze weg. `-b` houdt de geroteerde
-    # bestanden beperkt; die krijgen de default-rechten van syslogd en zijn
-    # daarmee niet schrijfbaar voor `claude`.
-    busybox syslogd -O "$SSHD_LOG" -s "$SSHD_LOG_ROTATE_KB" -b "$SSHD_LOG_KEEP" || return 1
-    # syslogd daemoniseert zonder te wachten tot /dev/log er is; zonder deze
-    # controle start sshd mogelijk vóór de socket bestaat en verdwijnen zijn
-    # eerste regels alsnog.
-    for _ in $(seq 1 15); do [[ -S /dev/log ]] && break; sleep 0.2; done
-    [[ -S /dev/log ]]
+    chown root:claude "$SSHD_LOG" && chmod 640 "$SSHD_LOG"
 }
 
 sshd_ready=false
@@ -181,9 +171,8 @@ case "${ENABLE_SSHD:-false}" in
         elif ! prepare_host_key; then
             echo "WAARSCHUWING: SSH-host-key niet aan te maken op het volume — sshd blijft uit." >&2
         elif ! prepare_auth_log; then
-            echo "WAARSCHUWING: auth-log niet op te zetten — $SSHD_LOG niet aan te maken (vol of" \
-                 "read-only volume, of rechten niet te zetten), of syslogd start niet. sshd blijft" \
-                 "uit; zonder auth-log is een login niet te herleiden." >&2
+            echo "WAARSCHUWING: $SSHD_LOG niet aan te maken (vol of read-only volume, of rechten" \
+                 "niet te zetten) — sshd blijft uit; zonder auth-log is een login niet te herleiden." >&2
         else
             sshd_ready=true
         fi ;;
@@ -210,7 +199,7 @@ if [[ "$sshd_ready" == true ]]; then
     # bouwt voor een sessie toch een verse omgeving op, dus hij mist hier niets.
     # <!-- Houd deze lijst in sync met de secrets in compose.yml: wat daar bijkomt
     # en hier niet, belandt stil in het pre-auth-proces. -->
-    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd &&
+    if env -u ANTHROPIC_API_KEY setpriv --bounding-set=-net_admin,-net_raw /usr/sbin/sshd -E "$SSHD_LOG" &&
        { for _ in $(seq 1 15); do [[ -s /run/sshd.pid ]] && break; sleep 0.2; done; [[ -s /run/sshd.pid ]]; }; then
         SSHD_STATUS=running
         echo "INFO: sshd gestart (luistert op 22; host-side bind 127.0.0.1:2222 via compose.override.kepler.yml; auth-log in $SSHD_LOG)"
