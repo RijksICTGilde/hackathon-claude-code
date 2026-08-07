@@ -1,4 +1,4 @@
-FROM debian:13.6-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+FROM debian:13.6-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -68,6 +68,19 @@ RUN NODE_VERSION=v24.18.1 && \
     actual=$(node --version) && \
     { [[ "$actual" == "${NODE_VERSION}" ]] || { echo "FOUT: node-versie '$actual' != verwacht '${NODE_VERSION}'" >&2; exit 1; }; } && \
     npm --version >/dev/null
+
+# npm apart pinnen: de versie die met de Node-tarball meekomt loopt achter op
+# npm's eigen release-lijn, en die achterstand zit in dependencies die npm
+# bundelt (tar, undici, brace-expansion). Node bumpen lost dat niet op — alleen
+# npm zelf brengt nieuwere versies van die modules mee.
+#
+# Blijf op dezelfde major als de gebundelde npm: een major-bump hoort een eigen
+# afweging te zijn, niet een bijvangst van een security-fix.
+# Versie wordt wekelijks gemonitord door .github/workflows/check-upstream.yml.
+RUN NPM_VERSION=11.19.0 && \
+    npm install -g "npm@${NPM_VERSION}" --no-audit --no-fund && \
+    actual=$(npm --version) && \
+    { [[ "$actual" == "${NPM_VERSION}" ]] || { echo "FOUT: npm-versie '$actual' != verwacht '${NPM_VERSION}'" >&2; exit 1; }; }
 
 # git-delta installeren (amd64 + arm64); SHAs uit de upstream release pinnen voor supply-chain integriteit
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
