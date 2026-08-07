@@ -290,18 +290,23 @@ else
     fail "host-key op /home/claude/.ssh-host ontbreekt of is niet van root — prepare_host_key in entrypoint-root.sh hoort dat af te vangen"
 fi
 # De gelogde partij mag het spoor niet kunnen aanpassen.
-# Directory, bestand én ouder. Bij de ouder telt de mode en niet de eigenaar:
-# hernoemen vereist schrijfrecht op de ouder, dus een groep- of other-schrijfbare
-# /var/log laat `claude` de hele logdirectory verplaatsen en er een eigen
-# sshd.log voor in de plaats zetten — waarna iedereen die het pad opvraagt zijn
-# versie leest.
+# Directory, bestand én ouder. Bij de ouder tellen mode én eigenaar: hernoemen
+# vereist schrijfrecht daarop, dus 755 sluit groep en others uit, en
+# root-eigendom voorkomt dat `claude` die mode zelf oprekt. Lukt het wel, dan
+# verplaatst hij de hele logdirectory en zet er een eigen sshd.log voor in de
+# plaats — waarna iedereen die het pad opvraagt zijn versie leest.
+# De mount zelf telt mee: zonder de volume-regel in compose.override.kepler.yml
+# maakt de entrypoint dezelfde directory met dezelfde rechten aan op de
+# container-laag, en blijft elke andere assertie hier groen terwijl het spoor
+# juist niet meer duurzaam is.
 if "$CLI" exec "$CONTAINER" sh -c '
+    awk "\$2 == \"/var/log/sshd\" { found = 1 } END { exit !found }" /proc/self/mounts &&
     [ "$(stat -c "%U %G %a" /var/log)" = "root root 755" ] &&
     [ "$(stat -c "%U %G %a" /var/log/sshd)" = "root claude 750" ] &&
     [ "$(stat -c "%U %G %a" /var/log/sshd/sshd.log)" = "root claude 640" ]'; then
-    pass "auth-log 640 root:claude in een 750 root:claude-directory onder een root-eigen ouder"
+    pass "auth-log 640 root:claude op een eigen mount, in een 750 root:claude-directory onder een root-eigen ouder"
 else
-    fail "auth-log, de directory eromheen of /var/log heeft verkeerde eigenaar of rechten — claude hoort het spoor niet te kunnen aanpassen, verwijderen of omleggen"
+    fail "auth-log niet op een eigen mount, of verkeerde eigenaar/rechten op het bestand, de directory of /var/log — het spoor hoort een recreate te overleven en niet door claude aan te passen, te verwijderen of om te leggen te zijn"
 fi
 # sshd mag de firewall-capabilities niet erven; anders zet een pre-auth-lek in
 # OpenSSH meteen de iptables-regels uit.
@@ -388,11 +393,12 @@ elif ! AUTH_NEW="$("$CLI" exec "$CONTAINER" sh -c "tail -n +$((AUTH_LOG_OFFSET +
 elif ! AUTH_LINE="$(grep -m1 'Accepted publickey for claude' <<<"$AUTH_NEW")"; then
     fail "geen 'Accepted publickey' bijgekomen in /var/log/sshd/sshd.log terwijl de login hierboven slaagde — draait sshd met '-E'? Zonder dat verdwijnt elke login spoorloos (er is geen syslog-daemon)"
 # De fingerprint is de enige identificatie in het spoor: het bron-IP is door NAT
-# altijd de gateway, en er is één sleutel. OpenSSH plakt hem aan de
-# Accepted-regel ongeacht LogLevel, dus dit toetst dat er een sleutel achter de
-# login zat — niet of de drop-in nog klopt. Dat laatste doet sectie 5.
+# altijd de gateway, en er is één sleutel. OpenSSH plakt hem ongeacht LogLevel
+# aan de Accepted-regel, dus dit is geen controle op de drop-in — dat doet
+# sectie 5 — maar op het formaat: een `FingerprintHash md5` in de config zou een
+# spoor opleveren dat niet meer tegen de bekende SHA256-vingerafdruk te leggen is.
 elif [[ ! "$AUTH_LINE" =~ SHA256: ]]; then
-    fail "login-event zonder key-fingerprint: '${AUTH_LINE:0:60}…' — een login zonder sleutel in het spoor is niet aan een sleutel te koppelen"
+    fail "login-event met een fingerprint die geen SHA256 is: '${AUTH_LINE:0:60}…' — staat er een FingerprintHash in de drop-in?"
 else
     pass "auth-log bevat het login-event van deze run, met key-fingerprint"
 fi

@@ -185,8 +185,8 @@ if [[ "$sshd_ready" == true ]]; then
     # De exit-code alleen is niet genoeg: sshd daemoniseert vóór hij de poort
     # bindt, dus "Address already in use" komt als 0 terug. /run/sshd.pid wordt
     # pas ná het binden geschreven en is het bruikbare signaal; het pad ligt vast
-    # via PidFile in kepler.conf. Onder podman is /run een tmpfs, onder Docker niet,
-    # dus de rm ruimt ook een restant van een vorige run op.
+    # via PidFile in kepler.conf. /run ligt op de container-laag, dus een pidfile
+    # van vóór een restart blijft staan; de rm haalt die weg.
     rm -f /run/sshd.pid
     # `env -u`: sshd erft anders de volledige container-env, en zijn pre-auth-child
     # erft die over de fork heen. Een pre-auth-lek in OpenSSH leest dan de
