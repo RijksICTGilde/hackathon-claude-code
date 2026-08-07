@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# Vaste PATH voor de root-fase. De image zet `/home/claude/.local/bin` vooraan,
+# en dat pad ligt op het claude-home volume en is van `claude`: zonder deze regel
+# bepaalt de ingesloten partij welke `iptables` of `setpriv` root uitvoert, en
+# een herstart volstaat om dat te laten gebeuren. De gebruikersfase krijgt zijn
+# eigen PATH terug vlak vóór de privilege-drop.
+ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+USER_PATH="$PATH"
+PATH="$ROOT_PATH"
+
 # Draait als root, uitsluitend om de firewall op te zetten, en dropt daarna
 # onherroepelijk naar `claude`. OPEN_HTTPS en ALLOWED_DOMAINS worden alleen hier
 # gelezen — na de drop kan `claude` de egress-allowlist niet meer heropenen.
@@ -61,5 +70,8 @@ claude_gid="$(id -g claude)"
 #
 # --inh-caps=-all leegt de inheritable set. De bounding set blijft staan, want
 # setuid-root newuidmap moet daar in multi-uid CAP_SYS_ADMIN uit kunnen trekken.
+# PATH terug naar die van de image: de gebruikersfase draait als `claude` en
+# heeft `/home/claude/.local/bin` nodig voor de claude-CLI.
+PATH="$USER_PATH"
 exec setpriv --reuid="$claude_uid" --regid="$claude_gid" --init-groups \
     --inh-caps=-all /opt/entrypoint.sh "$@"
