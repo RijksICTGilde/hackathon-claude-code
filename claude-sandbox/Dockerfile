@@ -14,6 +14,7 @@ ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
 ARG INSTALL_PODMAN=false
 ARG PODMAN_MULTIUID=false
+ARG INSTALL_SSHD=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -252,6 +253,116 @@ RUN case "$INSTALL_PODMAN" in \
       false) echo "INFO: INSTALL_PODMAN=false — rootless Podman overgeslagen" ;; \
       *) echo "FOUT: INSTALL_PODMAN='$INSTALL_PODMAN' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
+
+# Optioneel: OpenSSH-server zodat GitKraken Kepler via SSH een agent-sessie ín
+# deze sandbox kan draaien. Default uit. Bediening, beperkingen en de Kepler-bug
+# waarvoor hieronder een workaround staat: README-sectie "Kepler (SSH-remote)".
+# Let op: houd de README-tools-tabel + Kepler-sectie in sync.
+#
+# Staat achter de podman-installatie zodat een flip van INSTALL_SSHD niet de
+# apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
+# over de openssh-bestanden gaat.
+#
+# Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
+# eerste start op het volume. De `rm` is nodig omdat Debians
+# openssh-server-postinst er zelf drie aanmaakt tijdens de apt-install.
+#
+# PATH-fix in zshenv: een non-interactieve SSH-sessie erft de Docker `ENV PATH`
+# niet, dus `claude` in ~/.local/bin zou "command not found" geven. zsh is de
+# login-shell van `claude` en sourcet zshenv altijd, ook bij `zsh -c`.
+#
+# Ciphers wel gepind, KexAlgorithms bewust niet: de default-kexlijst begint met
+# de post-quantum hybride uit OpenSSH 10, en vastpinnen op curve25519 zou een
+# downgrade zijn. De MACs-regel is een vangnet: bij deze AEAD-only cipherlijst
+# onderhandelt OpenSSH sowieso geen aparte MAC, maar hij vangt een latere
+# cipher-wijziging af.
+#
+# PermitOpen houdt `-L` binnen de container; zonder die regel reikt een forward
+# tot alles wat de firewall doorlaat, inclusief de docker-gateway. Alle drie de
+# loopback-vormen, want sshd vergelijkt de bestemming letterlijk: een client die
+# `127.0.0.1` stuurt matcht niet op `localhost`.
+#
+# PerSourcePenalties uit: achter een NAT/port-forward deelt elke client één
+# bron-IP, en Keplers kortlevende tunnel-connecties tellen als afgebroken
+# sessies — die straf zou dus alle clients treffen. LoginGraceTime/MaxAuthTries
+# dekken de DoS-hoek af. Volledige afweging: README 'Kepler (SSH-remote)'.
+#
+# `sshd -t`/`sshd -T` in dezelfde laag: zonder die controle levert een niet-
+# toegepaste drop-in (Include weg, optie onbekend in deze OpenSSH) een groene
+# build met stil uitgevallen hardening. De lus noemt de ontbrekende directive bij
+# naam; een kale exit-code laat de bouwer raden welke het was. De controle draait tegen het echte
+# HostKey-pad — met `sshd -h` erlangs zou sshd de config-HostKey er alleen bij
+# nemen en per aanroep een ERROR-regel over de ontbrekende sleutel printen. De
+# wegwerpsleutel verdwijnt weer in dezelfde laag.
+RUN case "$INSTALL_SSHD" in \
+      true) apt-get update && \
+            apt-get install -y --no-install-recommends openssh-server && \
+            apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && \
+            mkdir -p /run/sshd && \
+            printf '%s\n' \
+              'PasswordAuthentication no' \
+              'KbdInteractiveAuthentication no' \
+              'PermitEmptyPasswords no' \
+              'HostbasedAuthentication no' \
+              'IgnoreRhosts yes' \
+              'PubkeyAuthentication yes' \
+              'AuthenticationMethods publickey' \
+              'PermitRootLogin no' \
+              'AllowUsers claude' \
+              'PermitUserEnvironment no' \
+              'PermitUserRC no' \
+              'AuthorizedKeysFile .ssh/authorized_keys' \
+              'X11Forwarding no' \
+              'AllowAgentForwarding no' \
+              'AllowStreamLocalForwarding no' \
+              'AllowTcpForwarding local' \
+              'PermitOpen localhost:* 127.0.0.1:* [::1]:*' \
+              'GatewayPorts no' \
+              'PermitTunnel no' \
+              'LogLevel VERBOSE' \
+              'LoginGraceTime 30' \
+              'MaxAuthTries 3' \
+              'ClientAliveInterval 300' \
+              'ClientAliveCountMax 2' \
+              'Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com' \
+              'MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' \
+              'RequiredRSASize 3072' \
+              'PidFile /run/sshd.pid' \
+              'PerSourcePenalties no' \
+              'HostKey /home/claude/.ssh-host/ssh_host_ed25519_key' \
+              > /etc/ssh/sshd_config.d/kepler.conf && \
+            printf '\ncase ":$PATH:" in *:/home/claude/.local/bin:*) ;; *) export PATH="/home/claude/.local/bin:$PATH" ;; esac\n' \
+              >> /etc/zsh/zshenv && \
+            printf '\n# Kepler tunnel-race workaround — zie README "Kepler (SSH-remote)".\nif [[ ! -o interactive && -n "$SSH_CONNECTION" && $SHLVL -eq 1 ]]; then sleep 0.4; fi\n' \
+              >> /etc/zsh/zprofile && \
+            mkdir -p /home/claude/.ssh-host && \
+            ssh-keygen -q -t ed25519 -N '' -f /home/claude/.ssh-host/ssh_host_ed25519_key && \
+            sshd -t && \
+            effective="$(sshd -T)" && \
+            # `-i` op de grep hieronder: `sshd -T` dumpt de sleutelnamen vandaag in
+            # lowercase, maar dat is geen toegezegd formaat. Zou een latere versie
+            # er mixed case van maken, dan faalt de build met de melding dat de
+            # drop-in niet toegepast is, wat de verkeerde kant op wijst. De -i
+            # kost hier niets: geen van deze waarden onderscheidt zich op casing.
+            for d in 'passwordauthentication no' 'permitrootlogin no' \
+                     'allowagentforwarding no' 'allowtcpforwarding local' \
+                     'permitopen localhost:* 127.0.0.1:* [::1]:*' \
+                     'allowusers claude' 'pidfile /run/sshd.pid' \
+                     'authorizedkeysfile .ssh/authorized_keys' \
+                     'requiredrsasize 3072' 'loglevel VERBOSE'; do \
+              grep -qixF "$d" <<<"$effective" || \
+                { echo "FOUT: '$d' staat niet in de effectieve sshd-config — de drop-in is niet toegepast" >&2; exit 1; }; \
+            done && \
+            rm -rf /home/claude/.ssh-host ;; \
+      false) echo "INFO: INSTALL_SSHD=false — OpenSSH-server overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_SSHD='$INSTALL_SSHD' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
+# Vangnet op de invariant hierboven: de wegwerpsleutel van de configcontrole
+# hoort in dezelfde laag opgeruimd te zijn. Herordent iemand die keten, dan komt
+# er stil weer privésleutelmateriaal in de image te staan.
+RUN test ! -e /home/claude/.ssh-host
 
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
 # heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip

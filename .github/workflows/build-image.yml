@@ -31,6 +31,69 @@ env:
   IMAGE_NAME: rijksictgilde/claude-sandbox
 
 jobs:
+  # De sshd-laag bouwt alleen bij INSTALL_SSHD=true, en juist daarin zitten de
+  # `sshd -t`/`sshd -T`-asserties op de hardening-drop-in. Zonder deze job draait
+  # dat pad nergens in CI. Let op wat het niet zegt: komt de laag uit de cache,
+  # dan zijn de asserties niet opnieuw gedraaid — een openssh-update in Debian
+  # invalideert die laag niet.
+  #
+  # Een eigen job en niet een stap in build-and-push: daar zou een falende build
+  # ná de push maar vóór het signen kunnen landen, precies de toestand
+  # 'gepusht maar onverifieerbaar' die die job uitsluit. Bouwt niets dat gepusht
+  # wordt — dit is een controle, geen artefact.
+  sshd-hardening:
+    name: build-sshd-variant
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build met INSTALL_SSHD=true
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: claude-sandbox
+          file: claude-sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: claude-sandbox:sshd-scan
+          build-args: INSTALL_SSHD=true
+          cache-from: |
+            type=gha,scope=sshd
+            type=gha
+          cache-to: type=gha,mode=min,scope=sshd
+          provenance: false
+          sbom: false
+
+      # De andere Trivy-runs zijn `scan-type: fs` en zien daarmee geen enkel
+      # apt-pakket. openssh-server komt ongepind uit apt en valt buiten
+      # Dependabot, dus zonder deze scan is er geen enkel signaal op een
+      # kwetsbare sshd. ignore-unfixed houdt het actionable: alleen CVE's met
+      # een beschikbare fix blokkeren, en die fix is een rebuild.
+      #
+      # Alleen os-pakketten: de npm-modules die met de Node.js-tarball meekomen
+      # zitten net zo goed in de default-image, die hier niet gescand wordt. Die
+      # in déze job gaten laten schieten zou de sshd-PR blokkeren op iets dat er
+      # los van staat. TRIVY_PKG_TYPES i.p.v. een action-input, zodat het niet
+      # afhangt van welke inputs deze versie van de action doorgeeft.
+      - name: Trivy image scan op de sshd-variant (CRITICAL/HIGH, os-pakketten)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: os
+        with:
+          scan-type: image
+          image-ref: claude-sandbox:sshd-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          exit-code: '1'
+
   build:
     name: build-and-push
     runs-on: ubuntu-latest

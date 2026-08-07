@@ -1,0 +1,36 @@
+# Runtime-vereisten voor de Kepler-remote-opzet: publiceert de sandbox-sshd zodat
+# GitKraken Kepler er via SSH een Claude-agent-sessie in kan draaien. Vereist een
+# image gebouwd met INSTALL_SSHD=true (zie README 'Kepler (SSH-remote)').
+#
+# Geef expliciet mee met -f (NIET hernoemen naar compose.override.yml — dat zou
+# auto-laden en de SSH-poort op elke `docker compose up` publiceren):
+#   INSTALL_SSHD=true docker compose -f compose.yml -f compose.override.kepler.yml up --build -d
+services:
+  claude:
+    # Poort ALLEEN op 127.0.0.1 binden — nooit 0.0.0.0. Draait de sandbox in een
+    # VM (aanbevolen kernel-grens), dan is dit de VM-loopback; Kepler bereikt 'm
+    # via de VM (of een SSH-tunnel naar de VM). Dit beperkt het pad vanaf de
+    # host, niet dat vanaf het container-netwerk — zie README 'Kepler
+    # (SSH-remote)', sectie Beveiliging.
+    ports:
+      - "127.0.0.1:2222:22"
+    volumes:
+      # Het auth-spoor krijgt een eigen volume, niet een pad op claude-home:
+      # /var/log is van root, dus de ingesloten partij kan de directory niet
+      # wegschuiven en er een eigen sshd.log voor in de plaats zetten. Een
+      # bestand op de container-laag zou dat ook oplossen, maar is bij elke
+      # recreate weg.
+      - sshd-log:/var/log/sshd
+    environment:
+      # Zet sshd aan in déze run. Zonder deze var start de entrypoint geen sshd,
+      # ook niet in een image die met INSTALL_SSHD=true gebouwd is: SSH hoort
+      # alleen te luisteren als je er expliciet om vraagt.
+      - ENABLE_SSHD=true
+      # Publieke SSH-sleutel van Kepler. Zet de waarde in .env:
+      # KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler".
+      - KEPLER_SSH_PUBKEY
+
+volumes:
+  # Niet `external`, dus compose maakt hem aan: het spoor hoort er te zijn zodra
+  # je sshd aanzet, zonder losse voorbereidingsstap.
+  sshd-log:

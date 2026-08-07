@@ -14,7 +14,7 @@ docker exec -tiu claude claude-sandbox bash   # werkt ook vanuit andere director
 
 Daarna kun je claude starten met `claude-danger`.
 
-> **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Het exacte startcommando verschilt per OS en staat in [podman/README.md](podman/README.md). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen.
+> **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Het exacte startcommando verschilt per OS en staat in [podman/README.md](podman/README.md). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen. Gebruik je óók `INSTALL_SSHD=true`, geef dan beide overrides mee — zie [Kepler (SSH-remote)](#kepler-ssh-remote).
 
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
@@ -45,7 +45,7 @@ De image bevat de volgende tools:
 |---------------------|---------------------------------------------------------------------------------------------------------------------------------------|
 | Shell & editors     | zsh, nano, vim, less, fzf, man-db                                                                                                     |
 | Versiebeheer        | git, git-delta, gh (GitHub CLI)                                                                                                       |
-| Netwerk             | curl, openssh-client, ca-certificates                                                                                                 |
+| Netwerk             | curl, openssh-client, ca-certificates (+ openssh-server bij `INSTALL_SSHD=true`, zie [Kepler (SSH-remote)](#kepler-ssh-remote))        |
 | Zoeken              | ripgrep, file                                                                                                                         |
 | Data & scripting    | jq                                                                                                                                    |
 | Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
@@ -138,6 +138,96 @@ De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist
 - **Developer experience**: nieuwe tools, package registries en documentatiesites werken direct zonder de whitelist aan te passen.
 
 > **Let op:** voor omgevingen waar wel gevoelige data wordt verwerkt, is de strikte whitelist (`OPEN_HTTPS=false`) aan te raden.
+
+## Kepler (SSH-remote)
+
+[GitKraken Kepler](https://www.gitkraken.com/kepler) is een agentic development environment die coding-agents (o.a. Claude Code) orkestreert. Kepler kan agents op een **remote machine via SSH** draaien: worktrees én agent-sessies draaien remote, de Kepler-UI blijft lokaal. Kepler kent géén "custom agent-command"-optie, dus de agent draait op wát je in-SSH't — daarom draaien we een gehard `sshd` **ín** deze sandbox, zodat Claude in de gecureerde, gefirewallde image blijft draaien i.p.v. op de kale host/VM.
+
+> **Isolatie:** draai de sandbox bij voorkeur in een VM (eigen kernel-grens). De VM omhult de container; Kepler bereikt de sandbox-sshd via de VM. Zo voegt SSH inbound-oppervlak toe binnen een grens, niet direct op je host-kernel.
+
+> **Combineer je dit met `INSTALL_PODMAN=true`? Dan is de VM geen voorkeur maar een vereiste.** De podman-override peelt outer-sandbox-hardening af (`systempaths=unconfined` heft de masked/RO `/proc`-paden op, seccomp gaat naar `defaultAction=ALLOW` met een blocklist). Die verzwakte containergrens combineren met een inbound SSH-poort betekent dat één gecompromitteerde SSH-sessie merkbaar dichter bij de kernel staat. In een VM raakt dat de VM-kernel, niet die van je host.
+
+### Beveiliging (niet omzeild)
+- **sshd gehard**: pubkey-only (`AuthenticationMethods publickey`), geen root-login, alleen user `claude`, geen agent- of X11-forwarding, `AllowTcpForwarding local` (Kepler heeft alleen `-L` nodig), `LoginGraceTime 30`, `MaxAuthTries 3`, `LogLevel VERBOSE`, `RequiredRSASize 3072` (genereer bij voorkeur een ed25519-sleutel). De volledige stand staat in `/etc/ssh/sshd_config.d/kepler.conf`; de build weigert als die drop-in niet toegepast blijkt (`sshd -t`/`sshd -T`).
+- **SSH staat alleen aan als je erom vraagt**: de entrypoint start sshd op `ENABLE_SSHD=true`, wat `compose.override.kepler.yml` zet — niet op de aanwezigheid van de binary. Een image die één keer met `INSTALL_SSHD=true` gebouwd is, zet dus niet bij elke `up` een poort open.
+- **Geen sleutels in de image**: host-keys worden bij eerste start op het `claude-home` volume aangemaakt, niet tijdens de build — een privésleutel in een image-layer zou iedereen met die image de identiteit van je sandbox geven. Je Kepler-pubkey komt runtime via `KEPLER_SSH_PUBKEY` en wordt gevalideerd voor hij weggeschreven wordt.
+- **Auth-logging**: sshd logt met `-E` naar `/var/log/sshd/sshd.log` op een eigen volume (er draait geen syslog-daemon; zonder deze vlag verdwijnt elke login spoorloos). Het bestand is `640 root:claude` en `/var/log` is van root: root schrijft, `claude` leest mee maar kan bestaande regels niet aanpassen, verwijderen of het pad omleggen. De key-fingerprint staat in de regel van een geslaagde login, en dat is de enige identificatie in het spoor — het bron-IP is door NAT altijd de gateway. `LogLevel VERBOSE` voegt daarbovenop de eerste mislukte poging per verbinding van een toegelaten gebruiker toe, plus de key-probe; geweigerde gebruikers en herhaalde mislukkingen staan al op het standaardniveau, en afgebroken verbindingen loggen als fout. De build en de smoke-test toetsen dat die directive effectief blijft.
+- **`ANTHROPIC_API_KEY` staat buiten sshd zelf**: de daemon wordt gestart met `env -u ANTHROPIC_API_KEY`, zodat een pre-auth-lek in OpenSSH de sleutel niet uit zijn eigen omgeving kan lezen. Dat beschermt de daemon, niet de sessie: de sessie zelf krijgt de variabele niet — sshd bouwt daar een verse omgeving op — maar de entrypoint en alles wat daaruit voortkomt draagt hem wél, en een sessie is dezelfde uid, dus `/proc/<pid>/environ` van zo'n proces levert hem alsnog. Gebruik bij voorkeur `claude login`.
+- **Geen sudo- of setuid-route naar root**: sshd start in de root-fase van de entrypoint, vóór de privilege-drop — zelfde patroon als de firewall. Er is geen `sudo` en geen sudoers-regel in de image, en setuid-bits worden gestript.
+- **sshd erft de firewall-capabilities niet**: hij start via `setpriv --bounding-set=-net_admin,-net_raw`, zodat een lek in OpenSSH niet meteen `iptables -F` kan doen.
+- **`PermitOpen localhost:* 127.0.0.1:* [::1]:*`**: Keplers `-L`-tunnel mag alleen naar de container zelf, niet naar de docker-gateway of buurcontainers. Alle drie de loopback-vormen staan erin omdat sshd de bestemming letterlijk vergelijkt, zonder naamresolutie.
+- **`PerSourcePenalties no`**: OpenSSH ≥9.8 straft per bron-IP. Keplers kortlevende tunnel-connecties tellen als afgebroken sessies, en achter een NAT/port-forward (gvproxy op macOS, Docker's portpublish) ziet sshd élke client als dezelfde bron — die straf treft dus alle clients samen. Met pubkey-only valt er niets te raden, dus de maatregel kost meer dan hij oplevert; `LoginGraceTime`/`MaxAuthTries` dekken de resterende DoS-hoek af. De smoke-test heeft er een regressie-guard voor.
+
+### Beveiliging (wat het níet dekt)
+- **De loopback-binding geldt alleen vanaf de host.** Binnen de container luistert sshd op `0.0.0.0:22`, en `init-firewall.sh` accepteert inbound vanaf het hele bridge-subnet. Een andere container op datzelfde compose-netwerk bereikt poort 22 dus rechtstreeks, langs de `127.0.0.1`-publish om. Draai geen onvertrouwde containers op dit netwerk.
+- **Een geslaagde login is een volledige shell als `claude`** — inclusief schrijfrechten op de host-bindmount `${PROJECTS_DIR}:/home/claude/projects` en leestoegang tot de `claude login`-credentials op het volume. De SSH-hardening beperkt wie binnenkomt, niet wat die daarna mag.
+- **`ANTHROPIC_API_KEY` blijft leesbaar binnen de sessie.** De entrypoint draait na de privilege-drop als `claude` met die variabele in zijn omgeving, en een SSH-sessie is dezelfde uid: `/proc/<pid van de entrypoint>/environ` levert hem. Dat geldt voor elk proces van `claude` dat de container-env draagt. (Niet `/proc/1/environ`: `init: true` zet daar tini neer, als root.) De env-scrub op de daemon verkleint het pre-auth-oppervlak, ze maakt de sleutel niet onbereikbaar voor wie binnen is.
+- **`claude` kan de host-identiteit laten wisselen.** `/home/claude` is van hem, dus hij kan `.ssh-host` hernoemen; de entrypoint maakt dan een verse host-key aan. Kiezen welke sleutel dat wordt kan hij niet, maar hij kan bij elke start een `known_hosts`-mismatch afdwingen en zo de remote breken. Reageer daar niet routineus op met `ssh-keygen -R`: dat maakt de pinning waardeloos.
+- **Poortforwarding blijft mogelijk.** `AllowTcpForwarding local` is nodig voor Keplers tunnel; een sessie kan daarmee poorten op de container zelf benaderen. `PermitOpen` houdt dat binnen de container — draait je devserver niet op loopback maar op het container-IP, dan werkt de tunnel ernaartoe niet.
+- **Geen agent-forwarding.** `AllowAgentForwarding no` houdt je host-sleutels buiten de sandbox, maar betekent ook dat je vanuit een Kepler-worktree niet met de host-sleutel kunt pushen. Regel git-toegang ín de container (`gh auth login`).
+- **Een vol filesystem legt het spoor stil.** sshd controleert het resultaat van zijn schrijfactie niet, dus als het volume vol is gaan logins gewoon door zonder dat er iets bijkomt. `claude` kan dat uitlokken via zijn eigen home, want die deelt het filesystem.
+- **Regels eindigen op CRLF.** Dat is wat OpenSSH achter `-E` schrijft; een `grep` met `$` als anker matcht daardoor niet zoals verwacht.
+- **De auth-log roteert niet en verlaat de container niet.** Het bestand staat op het `sshd-log` volume en overleeft een container-recreate, maar groeit onbegrensd en verdwijnt zodra je dat volume verwijdert. Let op het verschil met `claude-home`: dat volume is `external`, `sshd-log` niet, dus `docker compose down -v` wist juist het spoor en laat de data staan. Wil je het als bewijsmateriaal, stuur het dan naar een bestemming buiten de sandbox — binnen de container blijft het het enige exemplaar, en wie root in de container heeft kan het alsnog herschrijven.
+- **De regels dragen geen tijdstempel.** OpenSSH laat de tijd aan syslog over en schrijft achter `-E` alleen de kale boodschap. Er draait hier geen logdaemon die hem toevoegt, dus je kunt wel zien wie er binnenkwam en met welke sleutel, en in welke volgorde, maar niet wanneer. Binnen één containerleven zijn regels globaal te plaatsen tussen twee starts: sshd schrijft bij elke start een `Server listening`-regel in ditzelfde bestand, en de bijbehorende containerstart draagt wél een tijd in `docker logs -t`. Maar het spoor overleeft een recreate en die containerlog niet, dus voor oudere regels vervalt ook dat anker. Een logdaemon toevoegen brengt een eigen rechtenmodel mee — een syslog-socket is per ontwerp voor elk lokaal proces schrijfbaar — en dat is een aparte afweging.
+- **Een lek in sshd levert container-root op.** De daemon draait als root (nodig voor privilege separation), dus een pre-auth-kwetsbaarheid weegt zwaarder dan een gecompromitteerde sessie als `claude`.
+- **`openssh-server` komt ongepind uit apt** en valt buiten Dependabot. CI scant de os-pakketten van de sshd-variant wel met Trivy, dus een kwetsbare sshd blokkeert de PR; de fix is een rebuild. Met een luisterende dienst erbij is regelmatig herbouwen geen hygiëne meer maar een beveiligingseis.
+- **Bij een `docker exec` als root** staat `/home/claude/.local/bin` — door `claude` beschrijfbaar — vooraan in `PATH`. Dat is niet nieuw in deze opzet, maar de kring die als `claude` kan draaien wordt met SSH wel groter. Gebruik `docker exec -u claude`.
+
+### Opzet
+1. **Build met sshd** (opt-in; vereist image-rebuild + volume-recreate zoals elke toggle):
+   ```
+   INSTALL_SSHD=true docker compose build
+   ```
+   > **Bouw je met `podman-compose` (bv. macOS Podman-machine)?** Zet dan `BUILDAH_FORMAT=docker`, anders honoreert buildah de Dockerfile-`SHELL ["/bin/bash", …]` niet en breken de `bash`-constructies (`[[ … ]]`) met `sh: [[: not found`:
+   > ```
+   > BUILDAH_FORMAT=docker INSTALL_SSHD=true podman-compose -f compose.yml -f compose.override.kepler.yml up --build -d --force-recreate
+   > ```
+2. **Pubkey + poort** via de override. Zet je Kepler-pubkey in `.env`:
+   ```
+   KEPLER_SSH_PUBKEY="ssh-ed25519 AAAA... kepler"
+   ```
+   Start met de override erbij — die publiceert de poort én zet `ENABLE_SSHD=true`, waarop de entrypoint sshd start (waarom je 'm niet hernoemt: zie de kop van `compose.override.kepler.yml`):
+   ```
+   INSTALL_SSHD=true docker compose -f compose.yml -f compose.override.kepler.yml up --build -d
+   ```
+   **Draai je ook met `INSTALL_PODMAN=true`, geef dan béide overrides mee.** Overrides stapelen — ze vervangen elkaar niet, maar een `-f` die je weglaat is simpelweg weg. Alleen de kepler-override betekent dus geen `/dev/net/tun` en geen security-opts, waarna de entrypoint waarschuwt en nested containers (Testcontainers, Quarkus Dev Services) falen:
+   ```
+   INSTALL_SSHD=true docker compose \
+     -f compose.yml \
+     -f compose.override.podman-linux.yml \
+     -f compose.override.kepler.yml \
+     up --build -d
+   ```
+   De twee overrides botsen niet: kepler zet `ports`, `volumes` en `environment`, podman `devices`/`security_opt` + `environment`; `environment` merget per key en `volumes` per doelpad. Verifieer het resultaat met `docker compose -f ... config` — check dat `ports`, de `sshd-log`-mount, `/dev/net/tun`, alle vier de `security_opt`-entries en beide env-vars erin staan. Op macOS gebruik je `compose.override.podman-macos.yml`; zie de per-OS-matrix in [podman/README.md](podman/README.md).
+3. **Claude authenticeren** (eenmalig, persist in het volume):
+   ```
+   docker exec -it claude-sandbox claude login
+   ```
+4. **Kepler-remote toevoegen**: in Kepler → Settings → Remote Environments → Add Remote Machine, host `127.0.0.1`, poort `2222`, user `claude`, key-based auth. Draait de sandbox in een VM, wijs dan naar de VM (of een SSH-tunnel daarheen).
+
+> **Gebruik `127.0.0.1`, niet `localhost`.** Op macOS met een Podman-machine bindt gvproxy de doorgezette poort **alleen op IPv4** (`lsof -iTCP:2222 -sTCP:LISTEN -n -P` toont één IPv4-regel). macOS resolvet `localhost` eerst naar `::1`, waar niets luistert → `Connection refused`, terwijl `127.0.0.1` het wél doet. Vul dus overal het IP-adres in: in Kepler, in `~/.ssh/config` en in scripts.
+
+> **Caveat — host-key na volume-recreate:** de host-key staat op het `claude-home` volume en overleeft een image-rebuild. Verwijder je het volume (nodig bij elke wijziging in environment-variabelen), dan komt er een nieuwe en ziet Kepler een known_hosts-mismatch; verwijder dan de oude entry.
+
+> **Het auth-spoor staat op een eigen volume.** `sshd-log` wordt door compose aangemaakt en staat los van `claude-home`: verwijder je dat laatste om een environment-variabele te wijzigen, dan blijven de auth-events staan. Voor de omgekeerde richting — `down -v` — zie de beveiligingssectie hierboven.
+
+> **Caveat — `authorized_keys` wordt elke start overschreven:** staat `KEPLER_SSH_PUBKEY` gezet, dan schrijft de entrypoint het bestand bij iedere container-start opnieuw. Een handmatig toegevoegde tweede sleutel overleeft dus geen `restart`. De var houdt één sleutel; een meerregelige of ongeldige waarde wordt geweigerd en laat het bestaande bestand ongemoeid. Meerdere sleutels nodig? Laat `KEPLER_SSH_PUBKEY` leeg en beheer `authorized_keys` zelf op het volume — de entrypoint laat een bestaand, niet-leeg bestand met rust.
+
+> **Kepler-bug — `ssh exited before the tunnel on local port N was ready (code 0)`:** Kepler zet een SSH ControlMaster op en draait de tunnel als `ssh -N -L` mux-slave. Een mux-slave vraagt áltijd een sessie aan (ook met `-N` — bekend OpenSSH-gedrag), draagt de forward over aan de master en exit binnen ~10-30 ms. De poort is dan al klaar, maar Keplers readiness-poll (`waitForTunnelReady`) behandelt het ssh-child-exit als fataal en gooit vóór z'n poort-check. De forward zélf werkt; het is een race die Kepler verliest, en de bug ligt bij Kepler — wij kunnen 'm hier alleen omzeilen. **Workaround in het image:** `/etc/zsh/zprofile` rekt die fantoom-login-shell met een `sleep 0.4`, zodat Keplers eerste poll de al-klare poort pakt vóór het child exit. De guard beperkt dat tot echte SSH-sessies (`$SSH_CONNECTION` gezet, niet-interactief, buitenste shell), zodat een `zsh -lc` van een orchestrator die vertraging niet betaalt. De smoke-test heeft er een regressie-guard voor (sectie 7). Zodra Kepler dit upstream fixt, kan de workaround eruit.
+
+### Testen
+`kepler/smoke-test.sh` draait vanaf de **host** (niet in de container) tegen een al draaiende sandbox, en verifieert poortbinding, login, PATH in een non-interactieve sessie, de effectieve sshd-config, de host-key op het volume, de capabilities van het sshd-proces, een echte `-L`-tunnel, de PerSourcePenalties- en tunnel-race-workarounds en de firewall:
+```
+./kepler/smoke-test.sh -i ~/.ssh/kepler
+./kepler/smoke-test.sh -i ~/.ssh/kepler --podman   # gestapelde override
+```
+`--help` toont de rest (`--host`/`--port` voor een sandbox in een VM, `--cli podman`). Exit-code 0 = alles groen.
+
+Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — zowel een build met `INSTALL_SSHD=false` als een image mét sshd die je zónder de kepler-override start:
+
+```
+./kepler/smoke-test.sh --expect-no-sshd
+```
 
 ## Dependency-onderhoud
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
