@@ -1,5 +1,6 @@
-# Trivy misconfig suppressions. Format: één check-ID per regel.
-# Misconfig/secret-scans worden ongefilterd gegated in .github/workflows/trivy.yml;
+# Trivy-suppressions (misconfig-check-IDs en CVE's). Format: één ID per regel.
+# Gelezen door zowel .github/workflows/trivy.yml als de image-scan in
+# build-image.yml. Misconfig/secret-scans worden ongefilterd gegated;
 # bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
 
 # DS-0026 (LOW): Add HEALTHCHECK instruction in your Dockerfile
@@ -27,3 +28,27 @@ DS-0026
 # container na een herstart terug zonder dat die service opnieuw draait, wat een
 # sandbox met open egress oplevert. Zie #98.
 DS-0002
+
+
+# ── npm-bundel in de Node.js-tarball ──────────────────────────────────────────
+# Deze CVE's zitten in dependencies die npm bundelt
+# (/usr/local/lib/node_modules/npm/node_modules). De Dockerfile pint npm op de
+# nieuwste 11.x, wat tar, undici en één brace-expansion-CVE verhelpt; voor de drie
+# hieronder brengt geen enkele npm-release een gefixte versie mee. `apt-get
+# upgrade` raakt ze niet: Node komt van nodejs.org, niet uit apt.
+#
+# Het zijn twee DoS-bevindingen in een sandbox die geen dienst aanbiedt, en een
+# SSRF in npm's proxy-afhandeling die alleen speelt als npm een vijandige
+# registry of proxyconfiguratie verwerkt.
+#
+# LET OP — een regel hier geldt repo-breed en per CVE-ID, niet per pakket: ook de
+# fs-scans in trivy.yml en elke andere kopie van dezelfde module vallen eronder.
+# Haal een regel weg zodra npm de dependency bumpt; check-upstream.yml opent een
+# PR bij een nieuwe npm-release, wat het moment is om dat na te lopen.
+
+# brace-expansion — DoS via geheugenuitputting in expand(), fix in 5.0.8
+CVE-2026-14257
+# brace-expansion — DoS via onbegrensde tussenarrays, fix in 5.0.9
+CVE-2026-69152
+# ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1
+CVE-2026-69192
