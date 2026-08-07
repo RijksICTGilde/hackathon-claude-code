@@ -344,6 +344,64 @@ else
     fail "poort niet op loopback gepubliceerd ($BINDING) — MOET 127.0.0.1 zijn"
 fi
 
+# De poortbinding hierboven dekt alleen het pad vanaf de host. Binnen het
+# container-netwerk luistert sshd op alle adressen; de firewall hoort inbound
+# naar die poort te beperken tot de gateway.
+#
+# Positie én bronbeperking toetsen, niet alleen aanwezigheid: een DROP ná de
+# subnet-ACCEPT doet niets, en een DROP zonder `! -s` sluit juist iedereen buiten.
+# Op allebei blijft een kale grep op '--dport … -j DROP' groen.
+# De poorten komen uit `sshd -T`: dat is de toestand die sshd echt draait. De
+# DROP wordt daartegen gezocht, dus loopt de firewall ooit achter op de drop-in,
+# dan vindt deze assertie geen regel in plaats van de verkeerde goed te keuren.
+# Elke luisterpoort apart, want Port is cumulatief: een DROP voor de eerste zegt
+# niets over de tweede.
+if ! INPUT_RULES="$("$CLI" exec "$CONTAINER" iptables -S INPUT 2>&1)"; then
+    fail "kon de INPUT-chain niet uitlezen: $(tr '\n' ' ' <<<"$INPUT_RULES")"
+# De ruwe uitvoer eerst opvangen en pas daarna filteren: bij `2>&1 | awk` gaan de
+# foutregels de awk in, die alles wegfiltert wat niet op ^port matcht, en blijft
+# er niets over om te tonen.
+elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
+    fail "'sshd -T' faalde ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregel de juiste poort dekt is niet vast te stellen"
+else
+    # Ook listenaddress: die kan een eigen poort dragen, en sshd rapporteert hem
+    # niet als `port`-regel. Een kaal IPv6-adres telt niet mee.
+    mapfile -t LISTEN_PORTS < <(awk '
+        tolower($1) == "port" { print $2 }
+        tolower($1) == "listenaddress" {
+            a = $2
+            if (a ~ /\]:[0-9]+$/)                   { sub(/.*\]:/, "", a); print a }
+            else if (a !~ /:.*:/ && a ~ /:[0-9]+$/) { sub(/.*:/,   "", a); print a }
+        }' <<<"$SSHD_T" | sort -u)
+    GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
+    # `|| true`: een lege grep geeft rc 1, en met pipefail zou de toewijzing het
+    # script hier neerleggen — precies bij de regressie die de takken hieronder
+    # moeten melden, en vóór de secties die erna komen.
+    subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1) || true
+    if [[ ${#LISTEN_PORTS[@]} -eq 0 ]]; then
+        fail "geen poortregel in 'sshd -T' ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregels de juiste poorten dekken is niet vast te stellen"
+    elif [[ -z "$subnet_line" ]]; then
+        fail "geen subnet-ACCEPT gevonden in de INPUT-chain — de volgorde van de DROP is niet te beoordelen"
+    elif [[ -z "$GW" ]]; then
+        fail "kon de gateway niet bepalen — de bronbeperking van de DROP is niet te toetsen"
+    else
+        for listen_port in "${LISTEN_PORTS[@]}"; do
+            # `-p tcp` mee: een UDP-DROP op dezelfde poort zou anders slagen
+            # terwijl TCP open blijft voor het hele subnet.
+            drop_line=$(grep -nE -- "-p tcp .*--dport ${listen_port}( |$)" <<<"$INPUT_RULES" | grep -- '-j DROP' | head -1 | cut -d: -f1) || true
+            if [[ -z "$drop_line" ]]; then
+                fail "geen DROP-regel voor poort $listen_port in de INPUT-chain — elke container op hetzelfde bridge-netwerk bereikt sshd rechtstreeks (init-firewall.sh)"
+            elif [[ "$drop_line" -ge "$subnet_line" ]]; then
+                fail "de DROP voor poort $listen_port staat ná de subnet-ACCEPT (regel $drop_line vs $subnet_line) en doet dus niets"
+            elif ! grep -qF -- "! -s $GW/32" <<<"$(sed -n "${drop_line}p" <<<"$INPUT_RULES")"; then
+                fail "de DROP voor poort $listen_port beperkt niet exact tot de gateway ($GW) — te breed laat buurcontainers binnen, te smal sluit ook Kepler buiten"
+            else
+                pass "firewall beperkt inbound naar poort $listen_port tot de gateway ($GW), vóór de subnet-ACCEPT"
+            fi
+        done
+    fi
+fi
+
 # Regelnummer vóór de login vastleggen: het bestand staat op het volume en
 # overleeft een recreate, dus een 'Accepted publickey' van een vorige run zou de
 # assertie hieronder voorgoed groen houden.
@@ -367,6 +425,7 @@ else
     echo "  - 'Permission denied (publickey)' → key hoort niet bij KEPLER_SSH_PUBKEY; check .env en de entrypoint-logs." >&2
     echo "  - 'Connection refused' terwijl de poort gepubliceerd is → probeer 127.0.0.1 i.p.v. een hostnaam (IPv4-only forward)." >&2
     echo "  - RSA-sleutel kleiner dan 3072 bits → sshd weigert 'm (RequiredRSASize); gebruik ed25519." >&2
+    echo "  - verbinding blijft hangen tot de timeout → de INPUT-DROP laat alleen de gateway toe; komt de port-forward van je runtime met een ander bronadres binnen, dan valt het verkeer stil weg." >&2
     dump_logs >&2
     exit 1
 fi
