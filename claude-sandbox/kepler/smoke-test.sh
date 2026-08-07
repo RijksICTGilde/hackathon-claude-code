@@ -403,7 +403,10 @@ else
         'permittunnel no' \
         'gatewayports no'
     do
-        if grep -qix "$directive" <<<"$EFFECTIVE"; then
+        # `-F`: `permitopen localhost:* 127.0.0.1:* [::1]:*` is als reguliere
+        # expressie iets heel anders — `[::1]` is een bracket-expressie en `:*`
+        # nul of meer dubbele punten — waardoor die regel zichzelf nooit matcht.
+        if grep -qixF "$directive" <<<"$EFFECTIVE"; then
             pass "$directive"
         else
             fail "$directive staat niet zo in de effectieve config — check /etc/ssh/sshd_config.d/kepler.conf"
