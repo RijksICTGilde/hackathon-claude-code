@@ -387,3 +387,121 @@ jobs:
             Bekijk de diff van `vendor/install-scripts/rtk.sh`: dat script draait tijdens
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
+
+  # Job 3: security-updates in de image zelf.
+  # De base image is per digest gepind en wordt door Debian niet opnieuw
+  # gebouwd, dus pakket-fixes komen uitsluitend binnen via de `apt-get upgrade`
+  # in de Dockerfile. Die laag komt normaal uit de layer cache en bevriest
+  # daarmee de pakketversies van het moment dat de cache werd gevuld. Deze job
+  # scant de gepubliceerde image en bumpt APT_UPGRADE_EPOCH zodra er fixbare
+  # CRITICAL/HIGH-CVE's in zitten; de nieuwe waarde invalideert de laag zodat de
+  # volgende build de updates ophaalt.
+  #
+  # De image-scan in build-image.yml gate't alleen nieuwe builds. Deze job dekt
+  # het andere geval: een ongewijzigde image tegenover een bewegende
+  # CVE-database.
+  apt-security-refresh:
+    name: apt-security-refresh
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Ook nodig wanneer het package publiek is: anonieme GHCR-pulls lopen
+      # tegen een lagere rate limit aan.
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # exit-code 0: deze job faalt niet op bevindingen maar telt ze en opent
+      # een PR. Verder identiek aan de gate in build-image.yml, zodat een
+      # bevinding hier ook echt een falende gate daar voorspelt.
+      - name: Trivy scan of published image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/rijksictgilde/claude-sandbox:latest
+          format: json
+          output: /tmp/trivy-latest.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '0'
+
+      - name: Bump APT_UPGRADE_EPOCH if fixable CVEs found
+        id: compare
+        run: |
+          set -euo pipefail
+          count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' /tmp/trivy-latest.json)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `|| true`: zonder match zou grep onder pipefail de stap laten
+          # eindigen voor de foutmelding hieronder wordt bereikt.
+          current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon ARG APT_UPGRADE_EPOCH niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          new=$(date -u +%F)
+          if [ "$current" = "$new" ]; then
+            # Al vandaag gebumpt: een tweede bump levert dezelfde inhoud op en
+            # dus een lege commit.
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -i "s|^ARG APT_UPGRADE_EPOCH=${current}$|ARG APT_UPGRADE_EPOCH=${new}|" Dockerfile
+          grep -qx "ARG APT_UPGRADE_EPOCH=${new}" Dockerfile || {
+            echo "FOUT: bump van APT_UPGRADE_EPOCH is niet toegepast" >&2
+            exit 1
+          }
+          # Velden komen uit de Trivy-output en gaan als tekst een
+          # GITHUB_OUTPUT-heredoc in: de delimiter-regel filteren zodat de
+          # scanuitvoer de output niet vroegtijdig kan afsluiten.
+          {
+            echo 'summary<<TRIVY_EOF'
+            jq -r '[.Results[]?.Vulnerabilities[]?]
+                   | group_by(.VulnerabilityID)
+                   | .[]
+                   | "- `\(.[0].VulnerabilityID)` (\(.[0].Severity)) — \([.[].PkgName] | unique | join(", ")): `\(.[0].InstalledVersion)` → `\(.[0].FixedVersion)`"' \
+              /tmp/trivy-latest.json | grep -vFx 'TRIVY_EOF'
+            echo 'TRIVY_EOF'
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "current=$current"
+            echo "new=$new"
+            echo "changed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if fixable CVEs found
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/apt-security-refresh
+          delete-branch: true
+          commit-message: "chore(deps): bump APT_UPGRADE_EPOCH naar ${{ steps.compare.outputs.new }}"
+          title: "chore(deps): apt security-updates ophalen (APT_UPGRADE_EPOCH ${{ steps.compare.outputs.new }})"
+          labels: dependencies
+          body: |
+            De gepubliceerde image `ghcr.io/rijksictgilde/claude-sandbox:latest` bevat
+            ${{ steps.compare.outputs.count }} fixbare CRITICAL/HIGH-bevinding(en). De pakketten
+            komen uit de `apt-get upgrade`-laag, die uit de layer cache kwam en daardoor op
+            oudere versies staat. `APT_UPGRADE_EPOCH` is gebumpt zodat die laag opnieuw draait.
+
+            - **Oude waarde:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe waarde:** `${{ steps.compare.outputs.new }}`
+
+            ${{ steps.compare.outputs.summary }}
+
+            De image-scan op deze PR bevestigt of de bump de bevindingen wegneemt. Blijft er
+            iets staan, dan is er geen Debian-update voor dat pakket en hoort het met reden
+            in `.trivyignore`.
