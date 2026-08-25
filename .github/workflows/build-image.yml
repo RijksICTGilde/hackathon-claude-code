@@ -89,7 +89,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           load: ${{ github.event_name == 'pull_request' }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=max op een PR exporteert elke tussenlaag naar een PR-scoped
+          # namespace die main nooit kan lezen; restore uit main blijft wel
+          # werken.
+          cache-to: type=gha,mode=${{ github.event_name == 'pull_request' && 'min' || 'max' }}
           provenance: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
           sbom: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
 
@@ -133,6 +136,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore
           exit-code: '1'
 
       - name: Install cosign
