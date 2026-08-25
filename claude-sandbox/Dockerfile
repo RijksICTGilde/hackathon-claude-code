@@ -19,11 +19,14 @@ ARG PODMAN_MULTIUID=false
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
 #
 # De expansie van APT_UPGRADE_EPOCH hieronder is het cache-busting-mechanisme en
-# mag niet weg: zonder wijziging in dit commando hergebruikt de builder de laag
-# en blijft `apt-get upgrade` op de pakketversies van het moment dat de cache
-# werd gevuld, ook nadat Debian security-updates heeft uitgebracht — de
-# digest-pin op de base image volgt die rebuilds niet. De job
-# apt-security-refresh in check-upstream.yml bumpt de waarde.
+# mag niet weg: zonder wijziging in dit commando komt `apt-get upgrade` uit de
+# layer cache en blijft hij op oude pakketversies staan, terwijl de digest-pin op
+# de base image Debians rebuilds niet volgt. De job apt-security-refresh in
+# check-upstream.yml bumpt de waarde.
+#
+# De ARG staat bewust vóór de SHA-gepinde downloads verderop, die een bump dus
+# mee herbouwt (~187 MB): dat kost per bump eenmalig CI-tijd, terwijl de upgrade
+# in een eigen laag verderop elke pull permanent groter zou maken.
 ARG APT_UPGRADE_EPOCH=2026-08-24
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \

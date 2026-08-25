@@ -35,7 +35,7 @@ DS-0002
 # Deze CVE's zitten in dependencies die npm bundelt
 # (/usr/local/lib/node_modules/npm/node_modules). De Dockerfile pint npm op de
 # nieuwste 11.x; voor de vier hieronder bundelt geen enkele npm-release een
-# gefixte versie, ook de nieuwste major niet. `apt-get upgrade` raakt ze niet:
+# gefixte versie. `apt-get upgrade` raakt ze niet:
 # Node komt van nodejs.org, niet uit apt.
 #
 # Het zijn drie DoS-bevindingen in een sandbox die geen dienst aanbiedt, en een
@@ -54,5 +54,4 @@ CVE-2026-69152
 # ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1
 CVE-2026-69192
 # tar — DoS via een geprepareerd archief met lange paden, fix in tar 7.5.21
-# (nog door geen npm-release gebundeld)
 CVE-2026-73566

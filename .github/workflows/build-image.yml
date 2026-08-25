@@ -100,10 +100,10 @@ jobs:
       # Inline in deze job: de PR-build staat al in de lokale daemon (`load`), dus
       # er valt niets opnieuw te bouwen.
       #
-      # Alleen op PR — wat deze gate dus NIET dekt: de multi-arch build op
-      # main/tag (inclusief arm64, dat op PR niet gebouwd wordt). Tijdsverloop
-      # wordt gedekt door apt-security-refresh in check-upstream.yml, dat de
-      # gepubliceerde image wekelijks herscant.
+      # Alleen op PR, en PR-builds zijn amd64-only: deze gate dekt niets van de
+      # gepubliceerde multi-arch image. Die wordt wekelijks op beide architecturen
+      # herscand door apt-security-refresh in check-upstream.yml, dat bij fixbare
+      # bevindingen een PR opent in plaats van te blokkeren.
       #
       # `ignore-unfixed` beperkt de gate bewust tot CVE's waar upstream een fix
       # voor heeft: Debian markeert veel bevindingen als deferred of no-DSA, en
