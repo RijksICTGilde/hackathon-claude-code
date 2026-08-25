@@ -198,7 +198,7 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | head -1 | cut -d= -f2)
+          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
           if [ -z "$current" ]; then
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
             exit 1
