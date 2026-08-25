@@ -3,8 +3,8 @@ name: actionlint
 on:
   push:
     branches: [ "main" ]
-  # Geen basisbranch-filter: een gestapelde PR draait anders geen enkele
-  # controle, terwijl die net zo goed een workflow kan breken.
+  # Geen basisbranch-filter: ook een gestapelde pull request kan een workflow
+  # breken.
   pull_request:
 
 permissions:
@@ -15,47 +15,90 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Vaste versie plus SHA-256 voor allebei: een linter die zichzelf
+      # ongemerkt bijwerkt verschuift de lat waarop de build groen staat.
+      # shellcheck hoort daar net zo goed bij — het levert de bevindingen in de
+      # run-blokken, en de versie uit het runner-image meldt andere dingen dan
+      # de versie op een ontwikkelmachine.
+      # TODO(#131): upstream-tracking voor deze pins.
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      SHELLCHECK_VERSION: 0.11.0
+      SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # Vaste versie plus SHA-256, zoals elke andere release-binary hier: een
-      # linter die zichzelf ongemerkt bijwerkt verschuift de lat waarop de
-      # build groen staat.
-      # TODO(#131): upstream-tracking voor deze pin.
-      - name: actionlint ophalen
-        env:
-          ACTIONLINT_VERSION: 1.7.12
-          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      - name: Linters ophalen
         run: |
           set -euo pipefail
-          archief="${RUNNER_TEMP}/actionlint.tar.gz"
-          curl -fsSL --retry 3 --retry-all-errors -o "${archief}" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          echo "${ACTIONLINT_SHA256}  ${archief}" | sha256sum -c -
-          tar -xzf "${archief}" -C "${RUNNER_TEMP}" actionlint
+          haal() {
+            curl -fsSL --retry 3 --retry-all-errors -o "$2" "$1"
+            echo "$3  $2" | sha256sum -c -
+          }
+          haal "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+               "${RUNNER_TEMP}/actionlint.tar.gz" "${ACTIONLINT_SHA256}"
+          tar -xzf "${RUNNER_TEMP}/actionlint.tar.gz" -C "${RUNNER_TEMP}" actionlint
+          haal "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" \
+               "${RUNNER_TEMP}/shellcheck.tar.gz" "${SHELLCHECK_SHA256}"
+          tar -xzf "${RUNNER_TEMP}/shellcheck.tar.gz" --strip-components=1 \
+              -C "${RUNNER_TEMP}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           "${RUNNER_TEMP}/actionlint" --version
+          "${RUNNER_TEMP}/shellcheck" --version | sed -n '2p'
 
-      # actionlint valideert workflow-syntax, expressies en action-inputs, en
-      # draait shellcheck over de `run:`-blokken. Die blokken vallen buiten de
-      # scriptcontrole, die alleen losse *.sh-bestanden ziet.
+      # actionlint slaat de shellcheck-koppeling stilzwijgend over zodra het
+      # opgegeven pad niet werkt, en meldt dan nul bevindingen. Groen zegt dus
+      # pas iets als een bewust fout run-blok eerst rood geeft.
+      - name: Controle ijken
+        run: |
+          set -euo pipefail
+          ijk="$(mktemp -d)"
+          mkdir -p "${ijk}/.github/workflows"
+          git -C "${ijk}" init -q .
+          cat > "${ijk}/.github/workflows/ijk.yml" <<'IJK'
+          name: ijk
+          on: push
+          jobs:
+            a:
+              runs-on: ubuntu-latest
+              steps:
+                - run: echo $ONGEQUOOT
+          IJK
+          uitvoer="$( cd "${ijk}" && "${RUNNER_TEMP}/actionlint" \
+            -shellcheck "${RUNNER_TEMP}/shellcheck" .github/workflows/ijk.yml 2>&1 || true )"
+          if ! grep -q SC2086 <<<"${uitvoer}"; then
+            echo "Een run-blok met een ongequote variabele blijft onopgemerkt; de shellcheck-koppeling werkt niet." >&2
+            echo "${uitvoer}" >&2
+            exit 1
+          fi
+
+      # De run-blokken in de workflows vallen buiten differential-shellcheck,
+      # dat alleen losse shellscripts ziet. actionlint dekt ze, plus de
+      # workflow-syntax en de expressies.
       #
-      # Beide voorwaarden worden hard gecontroleerd: zonder shellcheck slaat
-      # actionlint die integratie stilzwijgend over, en zonder bestandslijst
-      # meldt het commando groen zonder iets te hebben gelezen.
+      # Niet gedekt: de inputs van gepinde actions (#133) en python-run-blokken,
+      # waarvoor pyflakes nodig is. Die laatste worden hier hard geweigerd in
+      # plaats van ongemerkt overgeslagen.
       - name: actionlint draaien
         run: |
           set -euo pipefail
-          command -v shellcheck >/dev/null || {
-            echo "shellcheck ontbreekt; actionlint zou de run-blokken overslaan." >&2
-            exit 1
-          }
-          shellcheck --version | sed -n '2p'
-          mapfile -d '' bestanden < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
-          if [ ${#bestanden[@]} -eq 0 ]; then
-            echo "Geen workflowbestanden gevonden; de controle zou niets meten." >&2
+          if git grep -qE '^[[:space:]]*shell:[[:space:]]*python' \
+               -- '.github/workflows/*.yml' '.github/workflows/*.yaml'; then
+            echo "Er staan python-run-blokken in de workflows; voeg pyflakes aan deze job toe, anders slaat actionlint ze over." >&2
             exit 1
           fi
-          "${RUNNER_TEMP}/actionlint" -color "${bestanden[@]}"
+          # Via een bestand en niet via een pipe of procesvervanging: een
+          # falende `git` moet de stap beëindigen, en command substitution
+          # gooit de NUL-scheiding weg waardoor alle paden aan elkaar plakken.
+          git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+            > "${RUNNER_TEMP}/workflowlijst"
+          mapfile -d '' bestanden < "${RUNNER_TEMP}/workflowlijst"
+          if [ ${#bestanden[@]} -eq 0 ]; then
+            echo "Lege bestandslijst; actionlint zou terugvallen op zijn eigen zoektocht en een kapotte selectie zou onzichtbaar blijven." >&2
+            exit 1
+          fi
+          "${RUNNER_TEMP}/actionlint" -color \
+            -shellcheck "${RUNNER_TEMP}/shellcheck" "${bestanden[@]}"
