@@ -21,18 +21,20 @@ beginnen geeft gegarandeerd conflicten. De PR-beschrijving noemt welke PR de bas
 
 ## Volgorde
 
-De volgorde is niet vrij: elk nummer leunt op wat ervoor staat.
+Vier van de zeven staan vast ten opzichte van elkaar; de rest is vrije volgorde.
 
 | # | Onderwerp | Waarom hier |
 |---|---|---|
 | 129 | actionlint in CI | bewaakt alle volgende PR's, dus eerst |
-| 124 | `.trivyignore` → `.trivyignore.yaml` met paths en `expired_at` | |
-| 130 | auto-PR-jobs verifiëren hun eigen wijziging (`rtk-version`, `delta-version` eerst) | zelfde workflow als #126 |
-| 126 | beschikbaarheid van de fix controleren vóór er een bump-PR opengaat | |
-| 125 | wekelijkse scan op de gepubliceerde SBOM in plaats van de volledige image | |
+| 124 | `.trivyignore` → `.trivyignore.yaml` met paths en `expired_at` | raakt hetzelfde scanbestand als #125 en #127 |
+| 130 | auto-PR-jobs verifiëren hun eigen wijziging (`rtk-version`, `delta-version` eerst) | legt de vorm vast die #126 uitbreidt |
+| 126 | beschikbaarheid van de fix controleren vóór er een bump-PR opengaat | zelfde jobs als #130 |
+| 125 | wekelijkse scan op de gepubliceerde SBOM in plaats van de volledige image | levert de scanroute waar #127 op leunt |
 | 127 | SARIF naar code scanning + step summary | bouwt op de scanroute uit #125 |
 | 128 | native arm64-runners in plaats van QEMU | raakt cosign; apart en zorgvuldig |
 
+Nevenbevindingen krijgen een eigen issue en staan onderaan de statustabel; die
+blokkeren de volgorde niet.
 ## Werkwijze per issue
 
 - Lees het issue volledig, inclusief "Technische details" en latere aanvullingen.
@@ -83,13 +85,15 @@ criteria.
 
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
-| 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | PR geopend, review-loop gestart |
+| 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | reviewronde 1 verwerkt |
 | 124 | `.trivyignore.yaml` | open | — | — | — |
 | 130 | auto-PR-jobs verifiëren hun wijziging | open | — | — | — |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
+| 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | nevenbevinding uit #129; oppakken ná #130 |
+| 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | nevenbevinding uit #129 |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
 stap begint en direct nadat je hem afrondt — niet aan het eind van een sessie, want een
@@ -98,7 +102,6 @@ afbreking komt midden in een stap.
 ## Doorgaan na een gebruikslimiet
 
 Een gebruikslimiet breekt de lopende beurt af zonder kans om nog iets in te plannen. Daarom
-draait er een cloud-routine (`trig_01Med48qPzWQVhXB2LS2am6h`, elke twee uur) die dit bestand
-leest en verdergaat met het eerstvolgende issue dat niet op "gemerged" staat. Verwijder die
-routine zodra alle zeven issues gemerged zijn:
-<https://claude.ai/code/routines/trig_01Med48qPzWQVhXB2LS2am6h>.
+draait er een terugkerende taak die dit bestand leest en verdergaat met het eerstvolgende
+issue dat niet op "gemerged" staat. Ruim die taak op zodra alles in de statustabel gemerged
+is.
