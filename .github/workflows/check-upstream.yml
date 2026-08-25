@@ -388,21 +388,22 @@ jobs:
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
 
-  # Job 3: security-updates in de image zelf.
-  # De base image is per digest gepind en wordt door Debian niet opnieuw
-  # gebouwd, dus pakket-fixes komen uitsluitend binnen via de `apt-get upgrade`
-  # in de Dockerfile. Die laag komt normaal uit de layer cache en bevriest
-  # daarmee de pakketversies van het moment dat de cache werd gevuld. Deze job
-  # scant de gepubliceerde image en bumpt APT_UPGRADE_EPOCH zodra er fixbare
-  # CRITICAL/HIGH-CVE's in zitten; de nieuwe waarde invalideert de laag zodat de
-  # volgende build de updates ophaalt.
+  # Job 3: Debian-security-updates in de gepubliceerde image.
+  # De digest-pin op de base image volgt de rebuilds van Debian niet, dus nieuwe
+  # pakketversies komen binnen via de `apt-get upgrade`-laag in de Dockerfile of
+  # via een Dependabot-bump van de digest. Waarom die laag een epoch nodig heeft
+  # staat bij de ARG zelf.
   #
-  # De image-scan in build-image.yml gate't alleen nieuwe builds. Deze job dekt
-  # het andere geval: een ongewijzigde image tegenover een bewegende
-  # CVE-database.
+  # Wat deze job toevoegt: de image-scan in build-image.yml draait alleen op
+  # PR-builds, dus een ongewijzigde image wordt nooit hergetoetst aan een
+  # bewegende CVE-database. Deze job doet dat wekelijks.
+  #
+  # `:latest` is een manifest list en Trivy resolvet die naar het platform van de
+  # runner: arm64-only bevindingen blijven buiten beeld.
   apt-security-refresh:
     name: apt-security-refresh
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -419,9 +420,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # exit-code 0: deze job faalt niet op bevindingen maar telt ze en opent
-      # een PR. Verder identiek aan de gate in build-image.yml, zodat een
-      # bevinding hier ook echt een falende gate daar voorspelt.
+      # Zelfde severity, ignore-unfixed en suppressies als de gate in
+      # build-image.yml, zodat een bevinding hier een falende gate daar
+      # voorspelt. Alleen exit-code 0: deze job opent een PR in plaats van te
+      # falen.
       - name: Trivy scan of published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -439,15 +441,42 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' /tmp/trivy-latest.json)
+          report=/tmp/trivy-latest.json
+          # Trivy geeft ook exit 0 wanneer er niets te scannen viel. Zonder deze
+          # assertie is "image niet gescand" niet te onderscheiden van "image
+          # schoon" en meldt de job groen wat hij nooit heeft gecontroleerd.
+          targets=$(jq '[.Results[]?] | length' "$report" || true)
+          case "$targets" in
+            ''|*[!0-9]*|0)
+              echo "FOUT: geen scanresultaat in $report (targets='${targets}'); de scan is niet uitgevoerd" >&2
+              exit 1 ;;
+          esac
+          # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel, de
+          # gevendorde binaries of de JVM-toolchain lost een bump van deze laag
+          # niet op; die volgen hun eigen versiepin en horen bij de jobs
+          # hierboven. Tellen gebeurt per CVE-ID, net als de samenvatting
+          # verderop: één CVE die tien pakketten raakt is één bevinding.
+          count=$(jq '[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?] | group_by(.VulnerabilityID) | length' "$report" || true)
+          other=$(jq '[.Results[]? | select(.Class != "os-pkgs") | .Vulnerabilities[]?] | group_by(.VulnerabilityID) | length' "$report" || true)
+          for var in count other; do
+            case "${!var}" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling uit $report (${var}='${!var}')" >&2
+                exit 1 ;;
+            esac
+          done
+          if [ "$other" -gt 0 ]; then
+            echo "::warning::${other} fixbare CRITICAL/HIGH buiten de apt-pakketten; die volgen hun eigen versiepin, niet APT_UPGRADE_EPOCH"
+          fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
           if [ "$count" -eq 0 ]; then
+            echo "Gescand: ${targets} target(s), geen fixbare CRITICAL/HIGH in de apt-pakketten."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # `|| true`: zonder match zou grep onder pipefail de stap laten
           # eindigen voor de foutmelding hieronder wordt bereikt.
-          current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | cut -d= -f2 || true)
+          current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | head -1 | cut -d= -f2 || true)
           if [ -z "$current" ]; then
             echo "FOUT: kon ARG APT_UPGRADE_EPOCH niet uit Dockerfile lezen" >&2
             exit 1
@@ -455,7 +484,9 @@ jobs:
           new=$(date -u +%F)
           if [ "$current" = "$new" ]; then
             # Al vandaag gebumpt: een tweede bump levert dezelfde inhoud op en
-            # dus een lege commit.
+            # dus een lege commit. Luid melden, anders is dit niet te
+            # onderscheiden van een schone scan.
+            echo "::notice::${count} fixbare bevinding(en), maar APT_UPGRADE_EPOCH staat al op ${new}; geen PR. De rebuild van :latest moet nog langskomen."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -467,16 +498,15 @@ jobs:
           # Velden komen uit de Trivy-output en gaan als tekst een
           # GITHUB_OUTPUT-heredoc in: de delimiter-regel filteren zodat de
           # scanuitvoer de output niet vroegtijdig kan afsluiten.
+          summary=$(jq -r '[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]
+                           | group_by(.VulnerabilityID)
+                           | .[]
+                           | "- `\(.[0].VulnerabilityID)` (\(.[0].Severity)) — \([.[].PkgName] | unique | join(", ")): `\(.[0].InstalledVersion)` → `\(.[0].FixedVersion)`"' \
+                     "$report" | { grep -vFx 'TRIVY_EOF' || true; })
           {
             echo 'summary<<TRIVY_EOF'
-            jq -r '[.Results[]?.Vulnerabilities[]?]
-                   | group_by(.VulnerabilityID)
-                   | .[]
-                   | "- `\(.[0].VulnerabilityID)` (\(.[0].Severity)) — \([.[].PkgName] | unique | join(", ")): `\(.[0].InstalledVersion)` → `\(.[0].FixedVersion)`"' \
-              /tmp/trivy-latest.json | grep -vFx 'TRIVY_EOF'
+            printf '%s\n' "$summary"
             echo 'TRIVY_EOF'
-          } >> "$GITHUB_OUTPUT"
-          {
             echo "current=$current"
             echo "new=$new"
             echo "changed=true"
@@ -493,8 +523,8 @@ jobs:
           labels: dependencies
           body: |
             De gepubliceerde image `ghcr.io/rijksictgilde/claude-sandbox:latest` bevat
-            ${{ steps.compare.outputs.count }} fixbare CRITICAL/HIGH-bevinding(en). De pakketten
-            komen uit de `apt-get upgrade`-laag, die uit de layer cache kwam en daardoor op
+            ${{ steps.compare.outputs.count }} fixbare CRITICAL/HIGH-bevinding(en) in Debian-pakketten.
+            Die komen uit de `apt-get upgrade`-laag, die uit de layer cache kwam en daardoor op
             oudere versies staat. `APT_UPGRADE_EPOCH` is gebumpt zodat die laag opnieuw draait.
 
             - **Oude waarde:** `${{ steps.compare.outputs.current }}`
@@ -503,5 +533,5 @@ jobs:
             ${{ steps.compare.outputs.summary }}
 
             De image-scan op deze PR bevestigt of de bump de bevindingen wegneemt. Blijft er
-            iets staan, dan is er geen Debian-update voor dat pakket en hoort het met reden
+            iets staan, dan is er voor dat pakket geen Debian-update en hoort het met reden
             in `.trivyignore`.

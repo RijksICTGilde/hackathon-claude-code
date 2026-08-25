@@ -1,7 +1,8 @@
 # Trivy-suppressions (misconfig-check-IDs en CVE's). Format: één ID per regel.
-# Gelezen door zowel .github/workflows/trivy.yml als de image-scan in
-# build-image.yml. Misconfig/secret-scans worden ongefilterd gegated;
-# bewuste uitzonderingen horen hier expliciet (en met reden) genoteerd.
+# Gelezen door .github/workflows/trivy.yml, de image-scan in build-image.yml en
+# apt-security-refresh in check-upstream.yml. Misconfig/secret-scans worden
+# ongefilterd gegated; bewuste uitzonderingen horen hier expliciet (en met
+# reden) genoteerd.
 
 # DS-0026 (LOW): Add HEALTHCHECK instruction in your Dockerfile
 # claude-sandbox is interactieve dev-sandbox; entrypoint eindigt op
@@ -33,9 +34,9 @@ DS-0002
 # ── npm-bundel in de Node.js-tarball ──────────────────────────────────────────
 # Deze CVE's zitten in dependencies die npm bundelt
 # (/usr/local/lib/node_modules/npm/node_modules). De Dockerfile pint npm op de
-# nieuwste 11.x; voor de vier hieronder brengt geen enkele npm-release een
-# gefixte versie mee — ook de laatste 12.x bundelt ze nog. `apt-get upgrade`
-# raakt ze niet: Node komt van nodejs.org, niet uit apt.
+# nieuwste 11.x; voor de vier hieronder bundelt geen enkele npm-release een
+# gefixte versie, ook de nieuwste major niet. `apt-get upgrade` raakt ze niet:
+# Node komt van nodejs.org, niet uit apt.
 #
 # Het zijn drie DoS-bevindingen in een sandbox die geen dienst aanbiedt, en een
 # SSRF in npm's proxy-afhandeling die alleen speelt als npm een vijandige
@@ -52,5 +53,6 @@ CVE-2026-14257
 CVE-2026-69152
 # ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1
 CVE-2026-69192
-# tar — DoS via een geprepareerd archief met lange paden, fix in 7.5.21
+# tar — DoS via een geprepareerd archief met lange paden, fix in tar 7.5.21
+# (nog door geen npm-release gebundeld)
 CVE-2026-73566
