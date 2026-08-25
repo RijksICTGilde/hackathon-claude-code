@@ -22,7 +22,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
 | `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
-| `.github/workflows/` | build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
+| `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
 
 ## Commando's
 

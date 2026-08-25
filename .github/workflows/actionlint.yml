@@ -1,0 +1,60 @@
+name: actionlint
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Vaste versie plus SHA-256, zoals elke andere release-binary hier: een
+      # linter die zichzelf ongemerkt bijwerkt verschuift de lat waarop de
+      # build groen staat.
+      # TODO(#131): upstream-tracking voor deze pin.
+      - name: actionlint ophalen
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archief="${RUNNER_TEMP}/actionlint.tar.gz"
+          curl -fsSL --retry 3 --retry-all-errors -o "${archief}" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archief}" | sha256sum -c -
+          tar -xzf "${archief}" -C "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" --version
+
+      # actionlint valideert workflow-syntax, expressies en action-inputs, en
+      # draait shellcheck over de `run:`-blokken. Die blokken vallen buiten de
+      # scriptcontrole, die alleen losse *.sh-bestanden ziet.
+      #
+      # Beide voorwaarden worden hard gecontroleerd: zonder shellcheck slaat
+      # actionlint die integratie stilzwijgend over, en zonder bestandslijst
+      # meldt het commando groen zonder iets te hebben gelezen.
+      - name: actionlint draaien
+        run: |
+          set -euo pipefail
+          command -v shellcheck >/dev/null || {
+            echo "shellcheck ontbreekt; actionlint zou de run-blokken overslaan." >&2
+            exit 1
+          }
+          shellcheck --version | sed -n '2p'
+          mapfile -d '' bestanden < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          if [ ${#bestanden[@]} -eq 0 ]; then
+            echo "Geen workflowbestanden gevonden; de controle zou niets meten." >&2
+            exit 1
+          fi
+          "${RUNNER_TEMP}/actionlint" -color "${bestanden[@]}"
