@@ -198,9 +198,16 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          # Beide `|| true`'s: onder `set -e` met pipefail zou een niet-matchende
+          # grep of een gefaalde curl de stap beëindigen voor de foutmelding
+          # eronder wordt bereikt.
+          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
           if [ -z "$current" ]; then
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          if [ "$(grep -c 'NPM_VERSION=[0-9]' Dockerfile)" -ne 1 ]; then
+            echo "FOUT: meerdere NPM_VERSION-pins; de bump zou er maar één verzetten" >&2
             exit 1
           fi
           major=${current%%.*}
@@ -208,7 +215,7 @@ jobs:
           # sorteren anders mee en leveren een onbruikbare pin op.
           latest=$(curl -fsSL https://registry.npmjs.org/npm \
             | jq -r --arg m "$major" '.versions | keys[] | select(test("^" + $m + "\\.[0-9]+\\.[0-9]+$"))' \
-            | sort -V | tail -1)
+            | sort -V | tail -1 || true)
           if [ -z "$latest" ]; then
             echo "FOUT: kon laatste npm-versie binnen major $major niet bepalen" >&2
             exit 1
@@ -220,9 +227,16 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           if [ "$current" = "$latest" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          sed -i "s|NPM_VERSION=${current}|NPM_VERSION=${latest}|" Dockerfile
+          # sed geeft ook exit 0 bij nul substituties; zonder deze controle zou
+          # create-pull-request een schone worktree vinden en stil niets doen.
+          if ! grep -qF "NPM_VERSION=${latest}" Dockerfile || grep -qF "NPM_VERSION=${current}" Dockerfile; then
+            echo "FOUT: bump van NPM_VERSION is niet volledig toegepast" >&2
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open auto-PR if npm changed
         if: steps.compare.outputs.changed == 'true'
