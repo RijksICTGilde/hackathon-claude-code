@@ -395,19 +395,20 @@ jobs:
   # staat bij de ARG zelf.
   #
   # Wat deze job toevoegt: de image-scan in build-image.yml draait alleen op
-  # PR-builds, dus een ongewijzigde image wordt nooit hergetoetst aan een
-  # bewegende CVE-database. Deze job doet dat wekelijks.
-  #
-  # `:latest` is een manifest list en Trivy resolvet die naar het platform van de
-  # runner: arm64-only bevindingen blijven buiten beeld.
+  # PR-builds en die zijn amd64-only, dus een ongewijzigde image wordt nooit
+  # hergetoetst aan een bewegende CVE-database en arm64 helemaal niet. Deze job
+  # scant beide gepubliceerde architecturen wekelijks, elk op de digest uit de
+  # manifest list — `:latest` zou naar het platform van de runner resolven.
   apt-security-refresh:
     name: apt-security-refresh
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
       packages: read
+    env:
+      IMAGE: ghcr.io/rijksictgilde/claude-sandbox:latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -420,17 +421,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # De digests komen uit het register en belanden hieronder in een image-ref:
+      # valideren op vorm voor ze verder gaan.
+      - name: Resolve per-architecture digests
+        id: digests
+        run: |
+          set -euo pipefail
+          manifest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}')
+          for arch in amd64 arm64; do
+            digest=$(jq -r --arg a "$arch" \
+              '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a) | .digest] | first // ""' \
+              <<<"$manifest")
+            if ! grep -qE '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
+              echo "FOUT: geen bruikbare linux/${arch}-digest in ${IMAGE} (waarde: '${digest}')" >&2
+              exit 1
+            fi
+            echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
+          done
+
       # Zelfde severity, ignore-unfixed en suppressies als de gate in
       # build-image.yml, zodat een bevinding hier een falende gate daar
       # voorspelt. Alleen exit-code 0: deze job opent een PR in plaats van te
       # falen.
-      - name: Trivy scan of published image
+      - name: Trivy scan of published image (amd64)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ghcr.io/rijksictgilde/claude-sandbox:latest
+          image-ref: ghcr.io/rijksictgilde/claude-sandbox@${{ steps.digests.outputs.amd64 }}
           format: json
-          output: /tmp/trivy-latest.json
+          output: /tmp/trivy-amd64.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '0'
+
+      - name: Trivy scan of published image (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/rijksictgilde/claude-sandbox@${{ steps.digests.outputs.arm64 }}
+          format: json
+          output: /tmp/trivy-arm64.json
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
@@ -441,27 +473,39 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          report=/tmp/trivy-latest.json
-          # Trivy geeft ook exit 0 wanneer er niets te scannen viel. Zonder deze
-          # assertie is "image niet gescand" niet te onderscheiden van "image
-          # schoon" en meldt de job groen wat hij nooit heeft gecontroleerd.
-          targets=$(jq '[.Results[]?] | length' "$report" || true)
-          case "$targets" in
-            ''|*[!0-9]*|0)
-              echo "FOUT: geen scanresultaat in $report (targets='${targets}'); de scan is niet uitgevoerd" >&2
-              exit 1 ;;
-          esac
           # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel, de
           # gevendorde binaries of de JVM-toolchain lost een bump van deze laag
           # niet op; die volgen hun eigen versiepin en horen bij de jobs
-          # hierboven. Tellen gebeurt per CVE-ID, net als de samenvatting
-          # verderop: één CVE die tien pakketten raakt is één bevinding.
-          count=$(jq '[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?] | group_by(.VulnerabilityID) | length' "$report" || true)
-          other=$(jq '[.Results[]? | select(.Class != "os-pkgs") | .Vulnerabilities[]?] | group_by(.VulnerabilityID) | length' "$report" || true)
+          # hierboven.
+          os='[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]'
+          rest='[.Results[]? | select(.Class != "os-pkgs") | .Vulnerabilities[]?]'
+          fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
+          : > /tmp/os-all.json
+          : > /tmp/rest-all.json
+          for arch in amd64 arm64; do
+            report="/tmp/trivy-${arch}.json"
+            # Trivy geeft ook exit 0 wanneer er niets te scannen viel. Zonder
+            # deze assertie is "image niet gescand" niet te onderscheiden van
+            # "image schoon" en meldt de job groen wat hij nooit controleerde.
+            targets=$(jq '[.Results[]?] | length' "$report" || true)
+            case "$targets" in
+              ''|*[!0-9]*|0)
+                echo "FOUT: geen scanresultaat in $report (targets='${targets}'); de scan is niet uitgevoerd" >&2
+                exit 1 ;;
+            esac
+            echo "Gescand: ${arch}, ${targets} target(s)."
+            jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
+            jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
+          done
+          # Tellen per CVE-ID over beide architecturen samen, net als de
+          # samenvatting verderop: één CVE die tien pakketten op twee
+          # architecturen raakt is één bevinding.
+          count=$(jq -s 'add | [.[].id] | unique | length' /tmp/os-all.json || true)
+          other=$(jq -s 'add | [.[].id] | unique | length' /tmp/rest-all.json || true)
           for var in count other; do
             case "${!var}" in
               ''|*[!0-9]*)
-                echo "FOUT: geen bruikbare telling uit $report (${var}='${!var}')" >&2
+                echo "FOUT: geen bruikbare telling (${var}='${!var}')" >&2
                 exit 1 ;;
             esac
           done
@@ -470,7 +514,7 @@ jobs:
           fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
           if [ "$count" -eq 0 ]; then
-            echo "Gescand: ${targets} target(s), geen fixbare CRITICAL/HIGH in de apt-pakketten."
+            echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten van beide architecturen."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -498,11 +542,11 @@ jobs:
           # Velden komen uit de Trivy-output en gaan als tekst een
           # GITHUB_OUTPUT-heredoc in: de delimiter-regel filteren zodat de
           # scanuitvoer de output niet vroegtijdig kan afsluiten.
-          summary=$(jq -r '[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]
-                           | group_by(.VulnerabilityID)
-                           | .[]
-                           | "- `\(.[0].VulnerabilityID)` (\(.[0].Severity)) — \([.[].PkgName] | unique | join(", ")): `\(.[0].InstalledVersion)` → `\(.[0].FixedVersion)`"' \
-                     "$report" | { grep -vFx 'TRIVY_EOF' || true; })
+          summary=$(jq -rs 'add
+                            | group_by(.id)
+                            | .[]
+                            | "- `\(.[0].id)` (\(.[0].sev)) — \([.[].pkg] | unique | join(", ")): `\(.[0].inst)` → `\(.[0].fix)` (\([.[].arch] | unique | join(", ")))"' \
+                     /tmp/os-all.json | { grep -vFx 'TRIVY_EOF' || true; })
           {
             echo 'summary<<TRIVY_EOF'
             printf '%s\n' "$summary"
@@ -523,15 +567,16 @@ jobs:
           labels: dependencies
           body: |
             De gepubliceerde image `ghcr.io/rijksictgilde/claude-sandbox:latest` bevat
-            ${{ steps.compare.outputs.count }} fixbare CRITICAL/HIGH-bevinding(en) in Debian-pakketten.
-            Die komen uit de `apt-get upgrade`-laag, die uit de layer cache kwam en daardoor op
-            oudere versies staat. `APT_UPGRADE_EPOCH` is gebumpt zodat die laag opnieuw draait.
+            ${{ steps.compare.outputs.count }} fixbare CRITICAL/HIGH-bevinding(en) in Debian-pakketten,
+            geteld over linux/amd64 en linux/arm64 samen. Die komen uit de `apt-get upgrade`-laag,
+            die uit de layer cache kwam en daardoor op oudere versies staat. `APT_UPGRADE_EPOCH`
+            is gebumpt zodat die laag opnieuw draait.
 
             - **Oude waarde:** `${{ steps.compare.outputs.current }}`
             - **Nieuwe waarde:** `${{ steps.compare.outputs.new }}`
 
             ${{ steps.compare.outputs.summary }}
 
-            De image-scan op deze PR bevestigt of de bump de bevindingen wegneemt. Blijft er
-            iets staan, dan is er voor dat pakket geen Debian-update en hoort het met reden
-            in `.trivyignore`.
+            De image-scan op deze PR bevestigt of de bump de bevindingen wegneemt, maar dekt
+            alleen amd64. Blijft er iets staan, dan is er voor dat pakket geen Debian-update en
+            hoort het met reden in `.trivyignore`.
