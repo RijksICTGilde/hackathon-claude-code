@@ -3,8 +3,9 @@ name: actionlint
 on:
   push:
     branches: [ "main" ]
+  # Geen basisbranch-filter: een gestapelde PR draait anders geen enkele
+  # controle, terwijl die net zo goed een workflow kan breken.
   pull_request:
-    branches: [ "main" ]
 
 permissions:
   contents: read

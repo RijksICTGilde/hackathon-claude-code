@@ -83,7 +83,7 @@ criteria.
 
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
-| 129 | actionlint in CI | in uitvoering | `chore/actionlint-in-ci` | — | plan aangelegd |
+| 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | PR geopend, review-loop gestart |
 | 124 | `.trivyignore.yaml` | open | — | — | — |
 | 130 | auto-PR-jobs verifiëren hun wijziging | open | — | — | — |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
