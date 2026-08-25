@@ -419,11 +419,15 @@ jobs:
       pull-requests: write
       packages: read
     env:
-      IMAGE: ghcr.io/rijksictgilde/claude-sandbox:latest
-      # Patchen is een cyclus, geen reactie op een scannerdrempel: zonder deze
-      # ondergrens komen MEDIUM- en LOW-updates nooit binnen en blijft de laag
-      # onbeperkt staan als de CVE-database stilvalt.
-      MAX_EPOCH_AGE_DAYS: '30'
+      IMAGE_REPO: ghcr.io/rijksictgilde/claude-sandbox
+      # Drempel waarboven een verversings-PR opengaat, ook zonder bevindingen.
+      # Patchen is een cyclus, geen reactie op een scannerdrempel: de scan ziet
+      # alleen fixbare CRITICAL/HIGH, dus MEDIUM en LOW komen alleen binnen via
+      # een rebuild — deze verversing of een Dependabot-bump van de
+      # base-digest. 28 is vier keer de wekelijkse cron: staat de epoch op de
+      # crondag, dan valt de vierde run precies op de drempel in plaats van
+      # erover.
+      MAX_EPOCH_AGE_DAYS: '28'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -444,22 +448,22 @@ jobs:
         id: digests
         run: |
           set -euo pipefail
-          manifest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}')
+          manifest=$(docker buildx imagetools inspect "${IMAGE_REPO}:latest" --format '{{json .Manifest}}')
           resolved=()
           for arch in amd64 arm64; do
             digest=$(jq -r --arg a "$arch" \
               '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a) | .digest] | first // ""' \
               <<<"$manifest")
             if ! grep -qE '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
-              echo "FOUT: geen bruikbare linux/${arch}-digest in ${IMAGE} (waarde: '${digest}')" >&2
+              echo "FOUT: geen bruikbare linux/${arch}-digest in ${IMAGE_REPO}:latest (waarde: '${digest}')" >&2
               jq -c '[.manifests[]?.platform]' <<<"$manifest" >&2
               exit 1
             fi
             resolved+=("$digest")
             echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
           done
-          # Twee identieke digests zouden dezelfde architectuur twee keer laten
-          # scannen en als "beide schoon" rapporteren.
+          # De manifest list hoort twee verschillende digests te bevatten;
+          # gelijke digests wijzen op een kapotte publicatie.
           if [ "${resolved[0]}" = "${resolved[1]}" ]; then
             echo "FOUT: amd64 en arm64 verwijzen naar dezelfde digest (${resolved[0]})" >&2
             exit 1
@@ -473,7 +477,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ghcr.io/rijksictgilde/claude-sandbox@${{ steps.digests.outputs.amd64 }}
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.amd64 }}
           format: json
           output: /tmp/trivy-amd64.json
           severity: CRITICAL,HIGH
@@ -486,7 +490,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: ghcr.io/rijksictgilde/claude-sandbox@${{ steps.digests.outputs.arm64 }}
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.arm64 }}
           format: json
           output: /tmp/trivy-arm64.json
           severity: CRITICAL,HIGH
@@ -505,16 +509,21 @@ jobs:
           # gepinde binaries (Node, git-delta, rtk) lost een bump van deze laag
           # niet op; die volgen hun eigen versiepin, met een eigen job hierboven.
           os='[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]'
-          rest='[.Results[]? | select(.Class != "os-pkgs") | .Vulnerabilities[]?]'
+          rest='[.Results[]? | select(.Class != null and .Class != "os-pkgs") | .Vulnerabilities[]?]'
           fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
           : > /tmp/os-all.json
           : > /tmp/rest-all.json
           for arch in amd64 arm64; do
             report="/tmp/trivy-${arch}.json"
-            # Een leeg of misgelopen rapport is niet aan de stapstatus af te
-            # lezen. Assert per architectuur dat er werkelijk een Debian-image
-            # van die architectuur met apt-pakketten is gescand: anders leest
-            # "geen bevindingen" als schoon terwijl er niets gecontroleerd is.
+            # Een crashende scan maakt de stap rood, maar een scan die netjes
+            # exit 0 geeft over het verkeerde ding niet: OS niet herkend, of een
+            # rapport over de andere architectuur. Assert daarom per
+            # architectuur dat er werkelijk een Debian-image van díe
+            # architectuur met apt-pakketten is gescand.
+            if [ ! -s "$report" ]; then
+              echo "FOUT: $report ontbreekt of is leeg; de scanstap heeft niets weggeschreven" >&2
+              exit 1
+            fi
             family=$(jq -r '.Metadata.OS.Family // ""' "$report" || true)
             if [ "$family" != "debian" ]; then
               echo "FOUT: geen Debian-OS gedetecteerd in $report (family='${family}'); de apt-laag is niet gescand" >&2
@@ -551,7 +560,6 @@ jobs:
           if [ "$other" -gt 0 ]; then
             echo "::warning::${other} fixbare CRITICAL/HIGH buiten de apt-pakketten; die volgen hun eigen versiepin, niet APT_UPGRADE_EPOCH"
           fi
-          echo "count=$count" >> "$GITHUB_OUTPUT"
           # `|| true`: zonder match zou grep onder pipefail de stap laten
           # eindigen voor de foutmelding hieronder wordt bereikt.
           current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | head -1 | cut -d= -f2 || true)
@@ -564,13 +572,33 @@ jobs:
             exit 1
           fi
           new=$(date -u +%F)
-          age=$(( ( $(date -u +%s) - $(date -u -d "$current" +%s) ) / 86400 ))
+          # De regex hierboven dekt de vorm, niet de semantiek: 2026-02-30 komt
+          # er doorheen en zou verderop op een rekenfout stranden.
+          current_seconds=$(date -u -d "$current" +%s) || {
+            echo "FOUT: APT_UPGRADE_EPOCH '${current}' is geen bestaande datum" >&2
+            exit 1
+          }
+          now_seconds=$(date -u +%s)
+          # Op seconden vergelijken: integer-deling kapt af richting nul, dus een
+          # epoch van morgen zou als leeftijd 0 langs deze guard glippen.
+          if [ "$current_seconds" -gt "$now_seconds" ]; then
+            echo "FOUT: APT_UPGRADE_EPOCH (${current}) ligt in de toekomst; de periodieke verversing slaat pas ${MAX_EPOCH_AGE_DAYS} dagen ná die datum aan" >&2
+            exit 1
+          fi
+          age=$(( ( now_seconds - current_seconds ) / 86400 ))
+          # Een leeftijd ver boven de drempel betekent dat eerdere verversingen
+          # niet zijn geland: meestal een PR die blijft liggen of een rebuild van
+          # :latest die nog moet komen, soms een schedule dat GitHub na
+          # langdurige repo-inactiviteit heeft uitgeschakeld.
+          if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
+            echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
+          fi
           if [ "$count" -gt 0 ]; then
             reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten"
           elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
             reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
           else
-            echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten; epoch is ${age} dagen oud (ondergrens ${MAX_EPOCH_AGE_DAYS})."
+            echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten; epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -586,12 +614,15 @@ jobs:
             echo "FOUT: bump van APT_UPGRADE_EPOCH is niet toegepast" >&2
             exit 1
           }
-          # Eén regel per pakket: dezelfde CVE kan per architectuur een andere
-          # geïnstalleerde en gefixte versie hebben.
+          # Eén regel per unieke combinatie van CVE, pakket en versiepaar.
+          # Architecturen met hetzelfde versiepaar staan samen op één regel;
+          # verschillen de versies, dan krijgt elke architectuur een eigen
+          # regel. Het aantal regels kan daarom hoger liggen dan de telling, die
+          # per CVE-ID gaat.
           #
-          # Velden komen uit de Trivy-output en gaan als tekst een
-          # GITHUB_OUTPUT-heredoc in: de delimiter-regel filteren zodat de
-          # scanuitvoer de output niet vroegtijdig kan afsluiten.
+          # De delimiter-filter op de jq-uitvoer is een vangnet: de regels
+          # beginnen altijd met een streepje, dus scanuitvoer kan de
+          # GITHUB_OUTPUT-heredoc niet vroegtijdig afsluiten.
           if [ "$count" -gt 0 ]; then
             summary=$(jq -rs 'add
                               | group_by([.id, .pkg, .inst, .fix])
@@ -622,14 +653,15 @@ jobs:
           labels: dependencies
           body: |
             Aanleiding: ${{ steps.compare.outputs.reason }}, gemeten op
-            `ghcr.io/rijksictgilde/claude-sandbox:latest` over linux/amd64 en linux/arm64.
+            `${{ env.IMAGE_REPO }}:latest` over linux/amd64 en linux/arm64.
             `APT_UPGRADE_EPOCH` is gebumpt zodat de `apt-get upgrade`-laag opnieuw draait
             in plaats van uit de layer cache te komen.
 
             - **Oude waarde:** `${{ steps.compare.outputs.current }}`
             - **Nieuwe waarde:** `${{ steps.compare.outputs.new }}`
 
-            Bevindingen (één regel per pakket, want versies verschillen per architectuur):
+            Bevindingen (één regel per CVE, pakket en versiepaar; architecturen met
+            hetzelfde versiepaar staan samen op één regel):
 
             ${{ steps.compare.outputs.summary }}
 

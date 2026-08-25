@@ -24,9 +24,11 @@ ARG PODMAN_MULTIUID=false
 # de base image Debians rebuilds niet volgt. De job apt-security-refresh in
 # check-upstream.yml bumpt de waarde.
 #
-# De ARG staat bewust vóór de SHA-gepinde downloads verderop, die een bump dus
-# mee herbouwt (~187 MB): dat kost per bump eenmalig CI-tijd, terwijl de upgrade
-# in een eigen laag verderop elke pull permanent groter zou maken.
+# De upgrade zit bewust in deze eerste apt-laag en niet in een eigen laag
+# verderop: dat zou elke pull permanent groter maken. De prijs is dat een bump
+# alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
+# dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
+# ophaalt.
 ARG APT_UPGRADE_EPOCH=2026-08-24
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
