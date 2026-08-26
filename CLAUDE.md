@@ -40,7 +40,8 @@ shellcheck --severity=warning <script>         # zoals CI (vendor/** uitgesloten
 Vanuit de repo-wortel, voor workflowwijzigingen:
 
 ```bash
-actionlint .github/workflows/*.yml             # CI pint actionlint 1.7.12 en shellcheck 0.11.0
+# shellcheck expliciet meegeven: zonder dat pad slaat actionlint de run-blokken stil over
+actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
