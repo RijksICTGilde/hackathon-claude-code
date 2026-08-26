@@ -14,9 +14,9 @@ sessie op dezelfde plek verder kan.
 
 PR #121 is nog niet gemerged. Zolang dat zo is, vertrekt elke nieuwe branch vanaf de branch
 van de vorige PR in de reeks — de eerste vanaf `fix/apt-cache-bust-security-updates`, de
-volgende vanaf `chore/actionlint-in-ci`, enzovoort, zodat dit voortgangsbestand meereist en niet vanaf `main`: #130 raakt dezelfde workflow,
-#124 hetzelfde `.trivyignore` en #127 bouwt voort op de scanroute uit #125. Vanaf `main`
-beginnen geeft gegarandeerd conflicten. De PR-beschrijving noemt welke PR de basis is; zodra
+volgende vanaf `chore/actionlint-in-ci`, enzovoort, zodat dit voortgangsbestand meereist.
+Vanaf `main` beginnen geeft gegarandeerd conflicten: #130 raakt dezelfde workflow, #124
+hetzelfde scanfilter en #127 bouwt voort op de scanroute uit #125. De PR-beschrijving noemt welke PR de basis is; zodra
 #121 landt wordt de hele stack gerebased. Is #121 wél gemerged, dan begint elke branch vanaf
 `main`.
 

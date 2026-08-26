@@ -2,17 +2,30 @@
 # is opgeschreven en verloopt vanzelf, zodat de lijst niet stil veroudert.
 #
 # Gelezen door .github/workflows/trivy.yml, de image-scan in build-image.yml en
-# apt-security-refresh in check-upstream.yml. Misconfig- en secret-scans worden
+# apt-security-refresh in check-upstream.yml. Trivy vindt dit bestand niet uit
+# zichzelf — alleen `.trivyignore` wordt automatisch opgepikt — dus elke
+# scanstap geeft het expliciet mee, en lokaal draaien vraagt om
+# `--ignorefile .trivyignore.yaml`. Misconfig- en secret-scans worden verder
 # ongefilterd gegated; bewuste uitzonderingen horen hier met reden te staan.
 #
-# Een verlopen regel maakt de scan rood. Dat is het moment om te kijken of de
-# uitzondering nog klopt: verlengen mag, maar dan met een nieuwe onderbouwing.
+# Een verlopen regel maakt de gates in trivy.yml en build-image.yml rood. In
+# apt-security-refresh, dat met exit-code 0 draait om een PR te kunnen openen,
+# komt hij terug als waarschuwing in de joboutput. Zo'n rode gate of
+# waarschuwing is het moment om te kijken of de uitzondering nog klopt:
+# verlengen mag, maar dan met een nieuwe onderbouwing.
+#
+# De sleutels worden afgedwongen door de job `suppressies` in trivy.yml: Trivy
+# negeert een onbekende sleutel zonder melding, en dat verbergt meer dan
+# bedoeld in plaats van minder.
 
 misconfigurations:
+  # De twee misconfig-uitzonderingen leggen een architectuurkeuze vast en niet
+  # een wachtstand; ze verlopen daarom een jaar later dan de CVE-regels, die
+  # aan een npm-release hangen.
   - id: DS-0026
     paths:
       - "claude-sandbox/Dockerfile"
-    expired_at: 2026-11-26
+    expired_at: 2027-08-26
     statement: |
       Add HEALTHCHECK instruction in your Dockerfile (LOW).
       claude-sandbox is een interactieve dev-sandbox; het entrypoint eindigt op
@@ -22,14 +35,14 @@ misconfigurations:
   - id: DS-0002
     paths:
       - "claude-sandbox/Dockerfile"
-    expired_at: 2026-11-26
+    expired_at: 2027-08-26
     statement: |
       Last USER command in Dockerfile should not be 'root' (HIGH).
       De container start als root omdat init-firewall.sh NET_ADMIN nodig heeft,
       en dropt in entrypoint-root.sh onherroepelijk naar `claude` (setpriv) vóór
       er iets draait dat de gebruiker aanstuurt. Er is geen weg terug: geen
       sudo, geen sudoers-regel, en de setuid/setgid-bits zijn image-breed
-      gestript op de podman-helpers na.
+      gestript (Dockerfile, "Strip setuid/setgid-bits") op de podman-helpers na.
 
       De check gaat over de gedeclareerde image-gebruiker, niet over wie de
       workload draait. De agent bereikt de root-fase nooit. De twee paden die er
@@ -55,7 +68,9 @@ vulnerabilities:
   # Het pad bindt elke regel aan de npm-bundel: dezelfde CVE in een systeem-
   # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
   # weg zodra npm de dependency bumpt; check-upstream.yml opent een PR bij een
-  # nieuwe npm-release, wat het moment is om dat na te lopen.
+  # nieuwe npm-release, wat het moment is om dat na te lopen. Verlopen deze
+  # regels, dan merkt de image-gate in build-image.yml dat als eerste, en die
+  # draait alleen op een pull request.
   - id: CVE-2026-14257
     paths:
       - "usr/local/lib/node_modules/npm/**"
