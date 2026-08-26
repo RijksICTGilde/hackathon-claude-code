@@ -17,7 +17,7 @@ zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd c
 #130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
 uit #125. De PR-beschrijving noemt welke PR de basis is.
 
-#121, #132 en #134 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+#121, #132, #134 en #135 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
 onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
 commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
 meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
@@ -100,7 +100,7 @@ criteria.
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
-| 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt, CI groen |
+| 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
 | 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
@@ -130,7 +130,7 @@ zodra alles in de statustabel gemerged is.
 
 ## Waar het werk stond bij het onderbreken
 
-De stack is `main` ← #135 (#130) ← #139 (#126); #121, #132 en #134 zitten in `main`. #139 is
-draft en heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
+De stack is `main` ← #139 (#126); #121, #132, #134 en #135 zitten in `main`. #139 is draft en
+heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
 volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
 zijn, dus de harde go/no-go van dat issue is uitvoerbaar.
