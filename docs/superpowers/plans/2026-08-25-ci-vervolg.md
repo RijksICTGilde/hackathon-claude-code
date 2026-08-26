@@ -64,6 +64,12 @@ nodig heeft daar zijn vorm krijgt.
   goede pad getest is, telt niet als getest.
 - Bij wijzigingen aan de image: `docker compose build --no-cache`, met het resultaat in de
   PR. Kun je niet bouwen, zeg dat expliciet in de PR in plaats van het weg te laten.
+- Containers draaien met podman (`docker` in PATH is een shim). Twee valkuilen in deze
+  omgeving: een verweesde `pause.pid` in `$XDG_RUNTIME_DIR/libpod/tmp/` uit een vorige sessie
+  geeft "cannot re-exec process to join the existing user namespace" — verwijderen wanneer het
+  pid niet meer leeft. En poort 80 is dicht, dus `apt-get update` in een container heeft
+  https-sources plus `-o Acquire::https::CaInfo=` naar de CA-bundel van de host nodig; zonder
+  dat mislukken de indexen stil, want `apt-get update` geeft dan nog steeds exitcode 0.
 - Wachten op groene CI voor de PR als klaar gepresenteerd wordt.
 - #125 heeft een harde go/no-go: beide scanroutes in één run draaien en de CVE-ID-sets van
   `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg.
