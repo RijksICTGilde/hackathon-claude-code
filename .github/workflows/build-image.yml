@@ -126,9 +126,10 @@ jobs:
             exit 1
           fi
 
-      # De suppressielijst gaat mee de gate in; een schrijffout daarin zou
-      # meer verbergen dan de lijst laat zien. Deze workflow draait ook op een
-      # tag, waar trivy.yml niet komt.
+      # De suppressielijst gaat mee de gate hieronder in; een schrijffout
+      # daarin zou meer verbergen dan de lijst laat zien. trivy.yml scant de
+      # repo en niet de gebouwde image, dus die gate heeft hier zijn eigen
+      # controle nodig.
       - name: Sleutels in .trivyignore.yaml afdwingen
         if: github.event_name == 'pull_request'
         run: .github/scripts/valideer-trivyignore.sh

@@ -37,12 +37,20 @@ printf 'licenses:\n  - id: MIT\n    paths: ["a"]\n    expired_at: 2027-08-26\n  
   > "${werkmap}/licenses.yaml"
 printf 'vulnerabilities:\n  - id: CVE-1\n    paths: ["a"]\n    expired_at: "2027-08-26"\n    statement: reden\n' \
   > "${werkmap}/gequote-datum.yaml"
+# Zijn alle uitzonderingen vervallen, dan blijft er een kop of niets over;
+# Trivy accepteert dat en deze controle hoort dat ook te doen.
+printf '# alleen een kop\n' > "${werkmap}/alleen-kop.yaml"
+printf 'vulnerabilities:\n' > "${werkmap}/lege-sectie.yaml"
+: > "${werkmap}/leeg.yaml"
 
 toets "pad-binding"                0 pad.yaml
 toets "glob binnen een map"        0 glob.yaml
 toets "purl-binding"               0 purl.yaml
 toets "licenses-sectie"            0 licenses.yaml
 toets "gequote datum"              0 gequote-datum.yaml
+toets "alleen een kop"             0 alleen-kop.yaml
+toets "lege sectie"                0 lege-sectie.yaml
+toets "leeg bestand"               0 leeg.yaml
 
 # Vormen die stil meer zouden onderdrukken dan bedoeld.
 regel '    paths: ["**"]\n'                          > "${werkmap}/ster.yaml"
@@ -84,7 +92,6 @@ printf 'misconfigurations:\n  - id: DS-0002\n    expired_at: 2027-08-26\n    sta
 regel '    paths: ["a"]\n    notitie: extra\n'       > "${werkmap}/extra-sleutel.yaml"
 printf 'vulnerability:\n  - id: CVE-1\n    paths: ["a"]\n    expired_at: 2027-08-26\n    statement: reden\n' \
   > "${werkmap}/onbekende-hoofdsleutel.yaml"
-: > "${werkmap}/leeg.yaml"
 
 toets "paths als losse tekst"      1 scalar-pad.yaml
 toets "id als getal"               1 getal-id.yaml
@@ -94,7 +101,6 @@ toets "regel zonder statement"     1 geen-statement.yaml
 toets "regel zonder pad of purl"   1 geen-binding.yaml
 toets "onbekende sleutel"          1 extra-sleutel.yaml
 toets "onbekende hoofdsleutel"     1 onbekende-hoofdsleutel.yaml
-toets "leeg bestand"               1 leeg.yaml
 toets "bestand ontbreekt"          1 bestaat-niet.yaml
 
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"

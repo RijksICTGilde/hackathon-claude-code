@@ -33,10 +33,12 @@ fi
 # `**` als eerste teken maakt de uitzondering weer projectbreed — correct
 # gespeld, dus onzichtbaar voor een sleutelcontrole — en een leeg of niet-tekst
 # element levert stil een regel op die alles onderdrukt of niets doet.
+# Een lijst waaruit alle uitzonderingen zijn vervallen houdt alleen zijn kop
+# over; Trivy accepteert dat en deze controle dus ook.
 if ! yq -e '
-  (keys - ["licenses", "misconfigurations", "secrets", "vulnerabilities"] | length == 0)
+  (. == null or (keys - ["licenses", "misconfigurations", "secrets", "vulnerabilities"] | length == 0))
   and
-  ([.[] | .[]] | all_c(
+  ([. // {} | .[] // [] | .[]] | all_c(
     (keys - ["expired_at", "id", "paths", "purls", "statement"] | length == 0)
     and (.id | tag == "!!str" and length > 0)
     and (.statement | tag == "!!str" and length > 0)
@@ -60,4 +62,4 @@ while read -r datum; do
     echo "Ongeldige ${bestand}: '${datum}' is geen bestaande datum." >&2
     exit 1
   }
-done < <(yq '[.[] | .[] | .expired_at | to_string] | .[]' "${bestand}")
+done < <(yq '[. // {} | .[] // [] | .[] | .expired_at | to_string] | .[]' "${bestand}")

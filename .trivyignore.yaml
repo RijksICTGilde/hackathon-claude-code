@@ -14,9 +14,10 @@
 # waarschuwing is het moment om te kijken of de uitzondering nog klopt:
 # verlengen mag, maar dan met een nieuwe onderbouwing.
 #
-# De sleutels worden afgedwongen door de job `suppressies` in trivy.yml: Trivy
-# negeert een onbekende sleutel zonder melding, en dat verbergt meer dan
-# bedoeld in plaats van minder.
+# De vorm wordt afgedwongen door .github/scripts/valideer-trivyignore.sh, dat
+# in elke scanjob draait en in de workflow suppressies: Trivy negeert een
+# onbekende sleutel zonder melding, en dat verbergt meer dan bedoeld in plaats
+# van minder.
 
 misconfigurations:
   # De twee misconfig-uitzonderingen leggen een architectuurkeuze vast en niet
