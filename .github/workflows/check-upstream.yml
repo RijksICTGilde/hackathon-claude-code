@@ -60,6 +60,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL "$URL" -o /tmp/upstream.sh
+          # Een 200 met een lege of vervangen body passeert `curl -f`; zonder
+          # deze controle belandt zoiets in de vendor-map.
+          if [ ! -s /tmp/upstream.sh ] || ! head -1 /tmp/upstream.sh | grep -q '^#!'; then
+            echo "FOUT: het opgehaalde script van $URL is leeg of begint niet met een shebang" >&2
+            exit 1
+          fi
           upstream_sha=$(sha256sum /tmp/upstream.sh | awk '{print $1}')
           if [ ! -f "$FILE" ]; then
             echo "FOUT: vendored bestand '$FILE' bestaat niet" >&2
@@ -134,7 +140,7 @@ jobs:
           # Precies één pin verwachten: een tweede pin met een ander
           # versienummer valt buiten de telling van de vervanging en zou stil
           # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
-          if [ "$(grep -oE 'NODE_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+          if [ "$(grep -oE 'NODE_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
             echo "FOUT: verwacht precies één NODE_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
@@ -150,16 +156,20 @@ jobs:
           shasums=$(curl -fsSL "https://nodejs.org/dist/${latest}/SHASUMS256.txt" || true)
           sha_amd64=$(echo "$shasums" | awk -v f="node-${latest}-linux-x64.tar.xz"   '$2==f {print $1}')
           sha_arm64=$(echo "$shasums" | awk -v f="node-${latest}-linux-arm64.tar.xz" '$2==f {print $1}')
-          if [ -z "$sha_amd64" ] || [ -z "$sha_arm64" ]; then
-            echo "FOUT: kon SHAs voor ${latest} niet uit SHASUMS256.txt halen" >&2
-            exit 1
-          fi
+          # De checksums komen van buiten en belanden in de Dockerfile; een
+          # waarde die geen sha256 is, sneuvelt anders pas bij de build.
+          for sha in "$sha_amd64" "$sha_arm64"; do
+            if ! [[ "$sha" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha}' is geen sha256 uit SHASUMS256.txt voor ${latest}" >&2
+              exit 1
+            fi
+          done
           # Huidige SHAs uit de Dockerfile lezen. Het patroon hangt aan
           # NODE_ARCH en niet aan de kolomuitlijning: hertabelleren van dat blok
           # zou de job anders wekelijks zwijgend laten sterven.
           for arch in x64 arm64; do
             if [ "$(grep -oP "NODE_ARCH=${arch};\\s*SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
-              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor Node in de Dockerfile" >&2
+              echo "FOUT: verwacht precies één SHA-pin voor NODE_ARCH=${arch} in de Dockerfile" >&2
               exit 1
             fi
           done
@@ -230,10 +240,8 @@ jobs:
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
             exit 1
           fi
-          # Precies één pin verwachten: een tweede pin met een ander
-          # versienummer valt buiten de telling van de vervanging en zou stil
-          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
-          if [ "$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'NPM_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
             echo "FOUT: verwacht precies één NPM_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
@@ -310,10 +318,8 @@ jobs:
             echo "FOUT: kon huidige DELTA_VERSION niet uit Dockerfile lezen" >&2
             exit 1
           fi
-          # Precies één pin verwachten: een tweede pin met een ander
-          # versienummer valt buiten de telling van de vervanging en zou stil
-          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
-          if [ "$(grep -oE 'DELTA_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'DELTA_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
             echo "FOUT: verwacht precies één DELTA_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
@@ -331,6 +337,19 @@ jobs:
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_amd64.deb"
           curl -fsSL -o "$tmpdir/arm64.deb" \
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_arm64.deb"
+          # `curl -f` weert alleen HTTP-fouten; een 200 met een andere body
+          # levert een keurige SHA over de verkeerde inhoud, die pas bij de
+          # image-build sneuvelt.
+          for arch in amd64 arm64; do
+            if [ ! -s "$tmpdir/${arch}.deb" ]; then
+              echo "FOUT: de ${arch}-download van delta is leeg" >&2
+              exit 1
+            fi
+            if ! head -c 8 "$tmpdir/${arch}.deb" | grep -q '^!<arch>'; then
+              echo "FOUT: de ${arch}-download van delta is geen .deb-archief" >&2
+              exit 1
+            fi
+          done
           sha_amd64=$(sha256sum "$tmpdir/amd64.deb" | awk '{print $1}')
           sha_arm64=$(sha256sum "$tmpdir/arm64.deb" | awk '{print $1}')
           rm -rf "$tmpdir"
@@ -376,8 +395,8 @@ jobs:
 
   # Job 2c: rtk — volgt de release-tag zelf, omdat het script per tag wordt
   # gevendord en een sha256-diff tegen die URL dus nooit iets detecteert.
-  # Bumpt de drie plekken die samen moeten verschuiven: het vendored script, de
-  # herkomst-URL en RTK_VERSION. Een aparte SHA-pin voor de binary is niet
+  # Bumpt de vier plekken die samen moeten verschuiven: het vendored script, de
+  # herkomst-URL, RTK_VERSION en de vermelding in de README. Een aparte SHA-pin voor de binary is niet
   # nodig: het script verifieert die tegen de checksums.txt van dezelfde release.
   rtk-version:
     name: rtk-version
@@ -411,10 +430,8 @@ jobs:
             echo "FOUT: kon huidige RTK_VERSION niet uit Dockerfile lezen" >&2
             exit 1
           fi
-          # Precies één pin verwachten: een tweede pin met een ander
-          # versienummer valt buiten de telling van de vervanging en zou stil
-          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
-          if [ "$(grep -oE 'RTK_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'RTK_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
             echo "FOUT: verwacht precies één RTK_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
@@ -442,11 +459,14 @@ jobs:
             exit 1
           fi
           mv "$nieuw_script" vendor/install-scripts/rtk.sh
-          # Twee plekken in de Dockerfile (de binary-pin en de herkomst-URL) en
-          # één in de README. Slaagt er één niet, dan zou de PR een bump claimen
-          # die maar half is doorgevoerd; het script faalt dan zichtbaar.
-          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current" "$latest" 2
-          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" README.md "$current" "$latest" 1
+          # Per vorm apart, niet als telling van twee: anders is "twee
+          # voorkomens" een proxy voor "de goede twee plekken", en zou een derde
+          # vermelding de herkomst-URL ongemerkt op de oude tag laten staan
+          # terwijl de telling toch klopt.
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "RTK_VERSION=$current" "RTK_VERSION=$latest" 1
+          "$vervang" Dockerfile "rtk-ai/rtk/$current/install.sh" "rtk-ai/rtk/$latest/install.sh" 1
+          "$vervang" README.md "$current" "$latest" 1
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open auto-PR if rtk changed

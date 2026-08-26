@@ -44,6 +44,7 @@ Vanuit de repo-wortel, voor workflowwijzigingen:
 actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
 .github/scripts/test-valideer-trivyignore.sh  # fixtures van de suppressie-validatie (vereist yq)
 .github/scripts/test-vervang-pin.sh            # fixtures van de pin-vervanging
+.github/scripts/test-check-upstream-jobs.sh    # fixtures van de wekelijkse versiejobs (vereist yq)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.

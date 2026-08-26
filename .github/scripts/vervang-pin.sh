@@ -14,6 +14,14 @@ oud="${2:?oude waarde ontbreekt}"
 nieuw="${3:?nieuwe waarde ontbreekt}"
 verwacht="${4:-1}"
 
+# Nul verwachte vervangingen zou dit script een geslaagde no-op laten melden,
+# precies waar het tegen bedoeld is.
+case "${verwacht}" in
+  ''|*[!0-9]*|0)
+    echo "FOUT: verwacht aantal moet een getal van 1 of hoger zijn, niet '${verwacht}'." >&2
+    exit 1 ;;
+esac
+
 [ -f "${bestand}" ] || {
   echo "FOUT: ${bestand} bestaat niet." >&2
   exit 1
@@ -58,16 +66,18 @@ if grep -qF -- "${oud}" "${bestand}"; then
   exit 1
 fi
 
+# Op het tussentoken tellen en niet op de nieuwe waarde: die kan al elders in
+# het bestand staan, en dan zou een correcte vervanging als mislukt eindigen.
+vervangen="$(grep -oF -- "${teken}" "${bestand}" | wc -l || true)"
+if [ "${vervangen}" != "${verwacht}" ]; then
+  echo "FOUT: ${vervangen} vervangingen in ${bestand}, verwacht ${verwacht}." >&2
+  exit 1
+fi
+
 sed -i "s|${teken}|${nieuw}|g" "${bestand}"
 
 if grep -qF -- "${teken}" "${bestand}"; then
   echo "FOUT: tussentoken staat nog in ${bestand}; de vervanging is half blijven staan." >&2
-  exit 1
-fi
-
-na="$(grep -oF -- "${nieuw}" "${bestand}" | wc -l || true)"
-if [ "${na}" != "${verwacht}" ]; then
-  echo "FOUT: '${nieuw}' komt ${na}× voor in ${bestand} na de vervanging, verwacht ${verwacht}×." >&2
   exit 1
 fi
 

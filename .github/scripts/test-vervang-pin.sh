@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Fixtures voor vervang-pin.sh: elke controle daarin hoort hier een geval te
-# hebben dat rood wordt zodra die controle verdwijnt.
+# Fixtures voor vervang-pin.sh.
+#
+# De tellingen vooraf en achteraf dekken elkaar af, en de controle op resten van
+# het tussentoken is per constructie onbereikbaar zolang `sed -g` alles
+# vervangt: die drie zijn een vangnet en zijn hier niet los rood te krijgen. De
+# overige controles horen hier wel een geval te hebben dat rood wordt zodra ze
+# verdwijnen.
 set -uo pipefail
 
 hier="$(cd "$(dirname "$0")" && pwd)"
@@ -42,6 +47,23 @@ toets "spatie in waarde"          1 'VERSION=v1.0.0\n'                 'v1.0.0 '
 # v1x0y0 en telt de controle achteraf twee vervangingen.
 toets "punt matcht geen willekeurig teken" 1 'A=v1.0.0\nB=v1x0y0\n'      v1.0.0 v1.1.0 2
 toets "alleen de letterlijke waarde"       0 'A=v1.0.0\nB=v1x0y0\n'      v1.0.0 v1.1.0 1
+toets "nul verwachte vervangingen"        1 'A=v1.0.0\n'                v9.9.9 v9.9.8 0
+toets "niet-numeriek aantal"              1 'A=v1.0.0\n'                v1.0.0 v1.1.0 abc
+# De nieuwe waarde staat al elders; dat mag een correcte vervanging niet
+# als mislukt laten eindigen.
+toets "nieuwe waarde bestond al elders"   0 'A=v1.0.0\nB=v1.1.0\n'      v1.0.0 v1.1.0 1
+
+# Een afgekeurde invoer mag het bestand niet half verminkt achterlaten.
+doel="${werkmap}/onaangeroerd.txt"
+printf 'V=v1.0.0\n' > "${doel}"
+"${vervang}" "${doel}" v1.0.0 'v1&1.0' >/dev/null 2>&1
+if [ "$(cat "${doel}")" = 'V=v1.0.0' ]; then
+  echo "ok   afgekeurde invoer laat het bestand ongemoeid"
+  geslaagd=$((geslaagd + 1))
+else
+  echo "FOUT afgekeurde invoer laat het bestand ongemoeid: $(cat "${doel}")"
+  gefaald=$((gefaald + 1))
+fi
 
 # Bestaat het bestand niet, dan is er niets vervangen en niets te melden.
 rc=0

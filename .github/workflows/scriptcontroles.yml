@@ -28,5 +28,8 @@ jobs:
       - name: Fixtures van de pin-vervanging
         run: .github/scripts/test-vervang-pin.sh
 
+      - name: Fixtures van de wekelijkse versiejobs
+        run: .github/scripts/test-check-upstream-jobs.sh
+
       - name: Sleutels in .trivyignore.yaml afdwingen
         run: .github/scripts/valideer-trivyignore.sh
