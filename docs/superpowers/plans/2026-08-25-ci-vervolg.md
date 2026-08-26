@@ -12,13 +12,16 @@ sessie op dezelfde plek verder kan.
 
 ## Basis-branch
 
-PR #121 is nog niet gemerged. Zolang dat zo is, vertrekt elke nieuwe branch vanaf de branch
-van de vorige PR in de reeks — de eerste vanaf `fix/apt-cache-bust-security-updates`, de
-volgende vanaf `chore/actionlint-in-ci`, enzovoort, zodat dit voortgangsbestand meereist.
-Vanaf `main` beginnen geeft gegarandeerd conflicten: #130 raakt dezelfde workflow, #124
-hetzelfde scanfilter en #127 bouwt voort op de scanroute uit #125. De PR-beschrijving noemt welke PR de basis is; zodra
-#121 landt wordt de hele stack gerebased. Is #121 wél gemerged, dan begint elke branch vanaf
-`main`.
+Elke nieuwe branch vertrekt vanaf de branch van de vorige nog openstaande PR in de reeks,
+zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd conflicten:
+#130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
+uit #125. De PR-beschrijving noemt welke PR de basis is.
+
+#121 en #132 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
+commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
+meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
+per branch, van onder naar boven.
 
 ## Volgorde
 
@@ -89,7 +92,7 @@ criteria.
 
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
-| 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | drie reviewrondes verwerkt, CI groen |
+| 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | PR open | `chore/trivyignore-yaml` | #134 | drie reviewrondes verwerkt, CI groen |
 | 130 | auto-PR-jobs verifiëren hun wijziging | open | — | — | — |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
