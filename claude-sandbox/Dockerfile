@@ -17,7 +17,21 @@ ARG PODMAN_MULTIUID=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
-RUN apt-get update && \
+#
+# De expansie van APT_UPGRADE_EPOCH hieronder is het cache-busting-mechanisme en
+# mag niet weg: zonder wijziging in dit commando komt `apt-get upgrade` uit de
+# layer cache en blijft hij op oude pakketversies staan, terwijl de digest-pin op
+# de base image Debians rebuilds niet volgt. De job apt-security-refresh in
+# check-upstream.yml bumpt de waarde.
+#
+# De upgrade zit bewust in deze eerste apt-laag en niet in een eigen laag
+# verderop: dat zou elke pull permanent groter maken. De prijs is dat een bump
+# alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
+# dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
+# ophaalt.
+ARG APT_UPGRADE_EPOCH=2026-08-24
+RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
+    apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     less \

@@ -152,6 +152,9 @@ De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en
 - een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
 - een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL en `RTK_VERSION` samen bij)
+- een nieuwere `npm`-release binnen dezelfde major beschikbaar is (PR werkt `NPM_VERSION` bij; ook het moment om de npm-suppressies in `.trivyignore` na te lopen)
+- de gepubliceerde image fixbare CRITICAL/HIGH-CVE's in Debian-pakketten bevat, op amd64 of arm64 (PR bumpt `APT_UPGRADE_EPOCH` in de `Dockerfile`, zodat de `apt-get upgrade`-laag opnieuw draait in plaats van uit de layer cache te komen)
+- de `apt-get upgrade`-laag ouder is dan de drempel in `MAX_EPOCH_AGE_DAYS`, ook zonder bevindingen: MEDIUM- en LOW-updates komen alleen via een rebuild binnen
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 
