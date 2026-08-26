@@ -37,6 +37,12 @@ docker exec -tiu claude claude-sandbox bash    # de container in
 shellcheck --severity=warning <script>         # zoals CI (vendor/** uitgesloten)
 ```
 
+Vanuit de repo-wortel, voor workflowwijzigingen:
+
+```bash
+actionlint .github/workflows/*.yml             # CI pint actionlint 1.7.12 en shellcheck 0.11.0
+```
+
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
 
 ## Dependency-onderhoud

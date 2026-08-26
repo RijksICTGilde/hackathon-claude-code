@@ -21,20 +21,23 @@ beginnen geeft gegarandeerd conflicten. De PR-beschrijving noemt welke PR de bas
 
 ## Volgorde
 
-Vier van de zeven staan vast ten opzichte van elkaar; de rest is vrije volgorde.
+#129 gaat voorop; daarna liggen twee paren vast (#130 vóór #126, #125 vóór #127) en is de
+rest vrij.
 
 | # | Onderwerp | Waarom hier |
 |---|---|---|
 | 129 | actionlint in CI | bewaakt alle volgende PR's, dus eerst |
-| 124 | `.trivyignore` → `.trivyignore.yaml` met paths en `expired_at` | raakt hetzelfde scanbestand als #125 en #127 |
+| 124 | `.trivyignore` → `.trivyignore.yaml` met paths en `expired_at` | vrij; raakt wel hetzelfde scanbestand als #125 en #127 |
 | 130 | auto-PR-jobs verifiëren hun eigen wijziging (`rtk-version`, `delta-version` eerst) | legt de vorm vast die #126 uitbreidt |
 | 126 | beschikbaarheid van de fix controleren vóór er een bump-PR opengaat | zelfde jobs als #130 |
 | 125 | wekelijkse scan op de gepubliceerde SBOM in plaats van de volledige image | levert de scanroute waar #127 op leunt |
 | 127 | SARIF naar code scanning + step summary | bouwt op de scanroute uit #125 |
 | 128 | native arm64-runners in plaats van QEMU | raakt cosign; apart en zorgvuldig |
 
-Nevenbevindingen krijgen een eigen issue en staan onderaan de statustabel; die
-blokkeren de volgorde niet.
+Nevenbevindingen krijgen een eigen issue en staan onderaan de statustabel; die blokkeren de
+volgorde niet. #131 en #133 komen uit #129; #131 wacht op #130, omdat de auto-PR-job die het
+nodig heeft daar zijn vorm krijgt.
+
 ## Werkwijze per issue
 
 - Lees het issue volledig, inclusief "Technische details" en latere aanvullingen.
@@ -92,8 +95,8 @@ criteria.
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
-| 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | nevenbevinding uit #129; oppakken ná #130 |
-| 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | nevenbevinding uit #129 |
+| 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
+| 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | — |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
 stap begint en direct nadat je hem afrondt — niet aan het eind van een sessie, want een
