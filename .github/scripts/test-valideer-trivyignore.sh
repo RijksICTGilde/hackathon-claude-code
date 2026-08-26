@@ -15,9 +15,18 @@ regel() {
   printf 'misconfigurations:\n  - id: DS-0002\n%b    expired_at: 2027-08-26\n    statement: reden\n' "$1"
 }
 
-toets() { # naam verwachte_exitcode bestandsinhoud-op-stdin
-  local naam="$1" verwacht="$2" bestand="${werkmap}/${3}"
+toets() { # naam verwachte_exitcode fixturenaam [mag-ontbreken]
+  local naam="$1" verwacht="$2" bestand="${werkmap}/${3}" ontbreken="${4:-nee}"
   local rc=0
+
+  # De validator geeft ook exit 1 op een bestand dat niet bestaat; zonder deze
+  # controle degenereert een tikfout in een fixturenaam stil tot dat geval.
+  if [ "${ontbreken}" = "nee" ] && [ ! -f "${bestand}" ]; then
+    echo "FOUT ${naam}: fixture ${3} bestaat niet"
+    gefaald=$((gefaald + 1))
+    return
+  fi
+
   "${validator}" "${bestand}" >/dev/null 2>&1 || rc=$?
 
   if [ "${rc}" -eq "${verwacht}" ]; then
@@ -54,6 +63,10 @@ toets "leeg bestand"               0 leeg.yaml
 
 # Vormen die stil meer zouden onderdrukken dan bedoeld.
 regel '    paths: ["**"]\n'                          > "${werkmap}/ster.yaml"
+regel '    paths: ["*"]\n'                           > "${werkmap}/enkele-ster.yaml"
+regel '    paths: ["*/**"]\n'                        > "${werkmap}/ster-slash.yaml"
+regel '    paths: ["/**"]\n'                         > "${werkmap}/slash-ster.yaml"
+regel '    paths: ["?*/**"]\n'                       > "${werkmap}/vraagteken.yaml"
 regel '    paths: [""]\n'                            > "${werkmap}/leeg-pad.yaml"
 regel '    paths:\n      -\n'                        > "${werkmap}/null-pad.yaml"
 regel '    path: ["a"]\n'                            > "${werkmap}/path-typo.yaml"
@@ -69,6 +82,10 @@ printf 'misconfigurations:\n  - &b\n    id: DS-0002\n    paths: ["a"]\n    expir
   > "${werkmap}/anker.yaml"
 
 toets "pad begint met **"          1 ster.yaml
+toets "pad is *"                   1 enkele-ster.yaml
+toets "pad begint met */"          1 ster-slash.yaml
+toets "pad begint met /"           1 slash-ster.yaml
+toets "pad begint met ?*"          1 vraagteken.yaml
 toets "leeg pad"                   1 leeg-pad.yaml
 toets "leeg lijstitem in paths"    1 null-pad.yaml
 toets "path in plaats van paths"   1 path-typo.yaml
@@ -101,7 +118,19 @@ toets "regel zonder statement"     1 geen-statement.yaml
 toets "regel zonder pad of purl"   1 geen-binding.yaml
 toets "onbekende sleutel"          1 extra-sleutel.yaml
 toets "onbekende hoofdsleutel"     1 onbekende-hoofdsleutel.yaml
-toets "bestand ontbreekt"          1 bestaat-niet.yaml
+toets "bestand ontbreekt"          1 bestaat-niet.yaml ja
+
+# Een trivy.yaml in de scanroot beperkt de scan buiten de suppressielijst om.
+cp "${werkmap}/pad.yaml" "${werkmap}/root.yaml"
+(
+  cd "${werkmap}" || exit 1
+  printf 'scan:\n  skip-dirs:\n    - "**"\n' > trivy.yaml
+  rc=0
+  "${validator}" root.yaml >/dev/null 2>&1 || rc=$?
+  rm -f trivy.yaml
+  [ "${rc}" -eq 1 ]
+) && { echo "ok   trivy.yaml in de scanroot"; geslaagd=$((geslaagd + 1)); } \
+  || { echo "FOUT trivy.yaml in de scanroot: werd niet geweigerd"; gefaald=$((gefaald + 1)); }
 
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]

@@ -30,8 +30,9 @@ if [ "${documenten}" != "1" ]; then
 fi
 
 # Elke regel bindt aan een pad of aan een purl, draagt een reden en verloopt.
-# `**` als eerste teken maakt de uitzondering weer projectbreed — correct
-# gespeld, dus onzichtbaar voor een sleutelcontrole — en een leeg of niet-tekst
+# Het eerste padsegment moet letterlijk zijn: een glob helemaal vooraan (`**`,
+# `*`, `*/**`, `/**`) maakt de uitzondering weer projectbreed, correct gespeld
+# en dus onzichtbaar voor een sleutelcontrole. Een leeg of niet-tekstueel
 # element levert stil een regel op die alles onderdrukt of niets doet.
 # Een lijst waaruit alle uitzonderingen zijn vervallen houdt alleen zijn kop
 # over; Trivy accepteert dat en deze controle dus ook.
@@ -45,15 +46,25 @@ if ! yq -e '
     and (has("paths") or has("purls"))
     and ([.paths, .purls] | all_c(
       . == null or (tag == "!!seq" and length > 0 and all_c(
-        tag == "!!str" and length > 0 and (test("^\*\*") | not)
+        tag == "!!str" and test("^[^*?\[{/]+(/|$)")
       ))
     ))
     and (.expired_at | to_string | test("^\d{4}-\d{2}-\d{2}$"))
   ))
 ' "${bestand}" >/dev/null; then
-  echo "Ongeldige ${bestand}: elke regel heeft een tekstueel id, een statement, minstens één pad of purl en expired_at (JJJJ-MM-DD) nodig; geen andere sleutels, geen leeg pad en geen pad dat met ** begint." >&2
+  echo "Ongeldige ${bestand}: elke regel heeft een tekstueel id, een statement, minstens één pad of purl en expired_at (JJJJ-MM-DD) nodig; geen andere sleutels, en elk pad begint met een letterlijk segment." >&2
   exit 1
 fi
+
+# Trivy leest een trivy.yaml uit de scanroot zonder vlag en zonder melding.
+# Die kan de scan verder terugbrengen dan welke suppressielijst ook, en staat
+# dan buiten deze controle.
+for configbestand in trivy.yaml trivy.yml; do
+  if [ -e "${configbestand}" ]; then
+    echo "Er staat een ${configbestand} in de scanroot; die kan de scan stil beperken buiten ${bestand} om." >&2
+    exit 1
+  fi
+done
 
 # De regex hierboven ziet de vorm, niet de kalender: 2027-13-45 komt er anders
 # doorheen en laat Trivy pas bij de scan struikelen.
