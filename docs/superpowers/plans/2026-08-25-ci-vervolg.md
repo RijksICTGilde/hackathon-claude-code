@@ -101,7 +101,7 @@ criteria.
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt, CI groen |
-| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | twee reviewrondes verwerkt; ronde 3 nog te doen |
+| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
@@ -110,6 +110,10 @@ criteria.
 | 136 | wekelijks voorstel dat niets te wijzigen heeft blijft onopgemerkt | open | — | — | — |
 | 137 | scriptcontrole draait niet op een gestapeld voorstel | open | — | — | — |
 | 138 | één gevendord installatiescript wordt bijna nooit gecontroleerd | open | — | — | — |
+| 141 | de wekelijkse scan draait ook als er niets te beslissen valt | open | — | — | uit ronde 3 van #126 |
+| 142 | een kwetsbaarheid die weken niet te verhelpen is blijft onder de radar | open | — | — | uit ronde 3 van #126 |
+| 143 | de fixtures van de wekelijkse jobs delen vaste paden | open | — | — | uit ronde 3 van #126 |
+| 144 | de basis-image van de controle wordt anoniem opgehaald | open | — | — | uit ronde 3 van #126 |
 | 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
@@ -127,5 +131,6 @@ zodra alles in de statustabel gemerged is.
 ## Waar het werk stond bij het onderbreken
 
 De stack is `main` ← #135 (#130) ← #139 (#126); #121, #132 en #134 zitten in `main`. #139 is
-draft en heeft twee reviewrondes gehad; de derde ronde is niet meer gedraaid. Daarna volgen
-#125, #127 en #128 in die volgorde.
+draft en heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
+volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
+zijn, dus de harde go/no-go van dat issue is uitvoerbaar.
