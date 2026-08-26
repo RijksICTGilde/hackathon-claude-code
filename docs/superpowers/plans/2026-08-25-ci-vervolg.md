@@ -95,7 +95,7 @@ criteria.
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt |
-| 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
+| 126 | beschikbaarheid fix vóór bump-PR | in uitvoering | `fix/bump-alleen-als-fix-beschikbaar` | — | branch aangemaakt |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
