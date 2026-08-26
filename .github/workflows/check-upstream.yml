@@ -532,6 +532,10 @@ jobs:
       # crondag, dan valt de vierde run precies op de drempel in plaats van
       # erover.
       MAX_EPOCH_AGE_DAYS: '28'
+      # Pakketten die de Dockerfile buiten apt om installeert en zelf pint. Ze
+      # staan wel in het scanrapport als apt-pakket, maar een verversing van de
+      # apt-laag zet ze terug op hun eigen pin.
+      BUITEN_APT_LAAG: '["git-delta"]'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -654,6 +658,11 @@ jobs:
                 exit 1 ;;
             esac
             arch_count=$(jq "$os | group_by(.VulnerabilityID) | length" "$report" || true)
+            case "$arch_count" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling van bevindingen in $report (waarde: '${arch_count}')" >&2
+                exit 1 ;;
+            esac
             echo "Gescand: ${arch} (${family}), ${os_targets} os-pkgs-target(s), ${arch_count} fixbare CRITICAL/HIGH."
             jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
             jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
@@ -719,14 +728,29 @@ jobs:
           if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
             echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
           fi
-          jq -s add /tmp/os-all.json > /tmp/os-samen.json
-          # De versievergelijking blijft bij amd64, want de container die de
-          # vraag beantwoordt is amd64. De pakketlijst die we voorleggen is wél
-          # de unie van beide architecturen: een pakket dat alleen op arm64 een
-          # bevinding heeft, zou anders geen kandidaat krijgen en dat leest als
-          # "de fix staat niet in de suite".
-          jq -s 'add | map(select(.arch == "amd64")) | unique_by([.pkg, .inst])' \
+          # Pakketten die niet uit de apt-laag komen, kan een epoch-bump niet
+          # bewegen: ze worden verderop in de Dockerfile op een eigen versie
+          # gepind en volgen hun eigen wekelijkse job. Een voorstel op grond van
+          # zo'n pakket verhelpt niets en bouwt drie keer voor niets.
+          jq -s --argjson buiten "$BUITEN_APT_LAAG" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not))' \
+            /tmp/os-all.json > /tmp/os-samen.json
+          for pkg in $(jq -r '.[]' <<<"$BUITEN_APT_LAAG"); do
+            gevonden=$(jq -s --arg p "$pkg" '[add[] | select(.pkg == $p)] | length' /tmp/os-all.json)
+            [ "$gevonden" -eq 0 ] || echo "Buiten de weging gelaten: ${gevonden} bevinding(en) op ${pkg}, dat buiten apt om wordt gepind."
+          done
+          # De kandidaat komt altijd uit een amd64-container, maar de
+          # geïnstalleerde versies van beide architecturen worden gewogen: bouwt
+          # arm64 op een ander moment, of heeft een pakket daar een eigen
+          # binNMU-revisie, dan zou een achterstand op die architectuur anders
+          # nooit een verversing uitlokken. Een binNMU is hoger dan het
+          # amd64-origineel, dus dat geeft geen vals alarm.
+          jq -s --argjson buiten "$BUITEN_APT_LAAG" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not)) | unique_by([.pkg, .inst])' \
             /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
+          # De pakketlijst die we voorleggen is de unie van beide architecturen:
+          # een pakket dat alleen op arm64 een bevinding heeft, zou anders geen
+          # kandidaat krijgen en dat leest als "de fix staat niet in de suite".
           jq -s '[add[].pkg] | unique' \
             /tmp/geinstalleerd.json /tmp/os-all.json > /tmp/te-vragen.json
           beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
@@ -744,26 +768,33 @@ jobs:
               echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
               exit 1
             fi
-            # De namen komen uit een scanrapport en gaan naar een container.
-            # Per naam toetsen: een regel-anker zou een naam met een newline
-            # erin doorlaten.
+            # De namen komen uit een scanrapport en gaan naar een container. Ze
+            # gaan als losse argumenten mee, niet als shell-string, dus deze
+            # controle gaat over de vraag of we het juiste vragen — niet over
+            # injectie. Een naam die een newline bevat is op dit punt al door
+            # `jq` en `mapfile` in tweeën geknipt; die twee helften passeren
+            # hier, en stranden verderop op de dekkingscontrole.
             if printf '%s\n' "${pakketten[@]}" | grep -qvxE '[a-z0-9][a-z0-9+.-]*'; then
               echo "FOUT: onverwachte pakketnaam in de scanuitvoer; niet doorgegeven aan de container" >&2
               exit 1
             fi
-            # Dezelfde basis-image als de Dockerfile, dus dezelfde suite. 28 MB
-            # in plaats van de 628 MB van de gepubliceerde image.
+            # Dezelfde basis-image als de Dockerfile, dus dezelfde suite, en een
+            # fractie van de gepubliceerde image om binnen te halen.
             basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2 || true)
             if [ -z "$basis" ]; then
               echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
               exit 1
             fi
             # `apt-get update` geeft exitcode 0 als een deel van de indexen
-            # niet op te halen is; valt juist trixie-security weg, dan ziet de
+            # niet op te halen is; valt juist de security-suite weg, dan ziet de
             # vraag geen enkele security-fix en leest dat als "niets te halen".
             rc=0
+            # `apt-get update` schrijft zijn voortgang naar stdout; dat hoort
+            # niet in het bestand dat straks geparsed wordt. De indextargets
+            # gaan mee als bewijs welke bronnen daadwerkelijk zijn gebruikt.
             docker run --rm "$basis" sh -c \
-              'apt-get update && apt-cache policy "$@"' _ "${pakketten[@]}" \
+              'apt-get update >&2 && apt-get indextargets --format "$(SITE) $(RELEASE)" \
+                 | sed "s/^/INDEX /" && apt-cache policy "$@"' _ "${pakketten[@]}" \
               > /tmp/policy.txt 2> /tmp/policy-fouten.txt || rc=$?
             if [ "$rc" -ne 0 ]; then
               echo "FOUT: de policy-container eindigde met exitcode ${rc}" >&2
@@ -782,10 +813,46 @@ jobs:
             # die alleen uit een bevinding komt kan ontbreken omdat de suite hem
             # niet kent, en dat is een antwoord, geen kapotte meting.
             jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/geinstalleerd-samen.json > /tmp/verwachte-koppen.txt
-            gedekt=$(grep -cxFf /tmp/verwachte-koppen.txt /tmp/policy.txt || true)
-            if [ "$gedekt" -lt "$aantal" ]; then
-              echo "FOUT: apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de beschikbaarheid is niet vastgesteld" >&2
+            # `|| true` zou ook exitcode 2 opvangen — een onleesbaar bestand of
+            # een ongeldig patroon — en dat levert een lege telling op waarmee
+            # de vergelijking hieronder zelf faalt. In een `if`-conditie grijpt
+            # `set -e` daar niet op in, dus de controle zou stil overgeslagen
+            # worden.
+            grep_rc=0
+            gedekt=$(grep -cxFf /tmp/verwachte-koppen.txt /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de dekkingscontrole kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            case "$gedekt" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare dekkingstelling uit de policy-uitvoer (waarde: '${gedekt}')" >&2
+                exit 1 ;;
+            esac
+            # Een enkel ontbrekend pakket is een antwoord: de suite kent het
+            # niet, en het script leest dat verderop als "geen kandidaat". Nul
+            # dekking is geen antwoord maar een kapotte meting — een ander
+            # uitvoerformaat, een andere taal, of een update die geen enkele
+            # index binnenhaalde.
+            if [ "$gedekt" -eq 0 ]; then
+              echo "FOUT: apt-cache policy noemt geen enkel van de ${aantal} geïnstalleerde pakketten; de policy-uitvoer is niet gelezen zoals verwacht" >&2
               head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            if [ "$gedekt" -lt "$aantal" ]; then
+              echo "::warning::apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de rest kent de suite niet (meest waarschijnlijk buiten apt om geïnstalleerd)"
+            fi
+            # Koppen zonder kandidaten is dezelfde kapotte meting, één laag
+            # dieper: de namen worden herkend maar de versietabel niet.
+            kandidaten=$(grep -c '^  Candidate:' /tmp/policy.txt) || kandidaten=0
+            if [ "$kandidaten" -eq 0 ]; then
+              echo "FOUT: geen enkele Candidate-regel in de policy-uitvoer; het formaat is niet wat de beoordeling verwacht" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            if ! grep -q '^INDEX .*-security' /tmp/policy.txt; then
+              echo "FOUT: geen security-index in de gebruikte apt-bronnen; een fix uit de security-suite zou onzichtbaar blijven" >&2
+              grep '^INDEX ' /tmp/policy.txt >&2 || true
               exit 1
             fi
             policy_opgehaald=1
@@ -803,15 +870,23 @@ jobs:
             esac
           }
 
-          # Een openstaand voorstel wordt niet elke week herschreven: het bevat
-          # dezelfde epoch-bump, ongeacht de aanleiding, en een force-push maakt
-          # de review-run die iemand daarop startte achterhaald.
+          # Een openstaand voorstel wordt niet elke week herschreven: een
+          # force-push zet er een nieuwe datum in en maakt de review-run die
+          # iemand daarop startte achterhaald.
           open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[0].number // ""') || {
             echo "FOUT: kon niet nagaan of er al een voorstel openstaat" >&2
             exit 1
           }
           if [ -n "$open_pr" ]; then
+            # Zolang het voorstel blijft liggen wordt de vraag niet eens
+            # gesteld. Staat de epoch dan al over de drempel, dan is dat geen
+            # routinematige overslag meer maar een verversing die niet landt.
             echo "Verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh (#${open_pr})."
+
+            if [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+              echo "::warning::voorstel #${open_pr} staat nog open terwijl APT_UPGRADE_EPOCH ${age} dagen oud is (drempel ${MAX_EPOCH_AGE_DAYS}); de verversing landt niet"
+            fi
+
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -837,7 +912,7 @@ jobs:
             if beschikbaar upgrade /tmp/geinstalleerd-samen.json; then
               reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
             else
-              echo "Periodieke verversing overgeslagen: geen pakket heeft een hogere kandidaat dan wat er in de image staat."
+              echo "::warning::periodieke verversing overgeslagen: de epoch is ${age} dagen oud, maar geen pakket heeft een hogere kandidaat dan wat er in de image staat"
             fi
           fi
           if [ -z "$reason" ]; then

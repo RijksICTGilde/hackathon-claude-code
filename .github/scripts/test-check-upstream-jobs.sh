@@ -325,10 +325,21 @@ epoch_rapport() { # map arch cve-json installed-json
   }' > "$1/tmp/trivy-$2.json"
 }
 
+# De job-env uit de workflow lezen in plaats van hem hier te herhalen: een
+# nieuwe of gewijzigde variabele zou anders in de fixtures een andere waarde
+# hebben dan in CI, en dat verschil valt pas op als het misgaat.
+mapfile -t job_env < <(yq -r \
+  '.jobs.apt-security-refresh.env | to_entries | .[] | .key + "=" + (.value | tostring)' \
+  "${workflow}")
+if [ "${#job_env[@]}" -eq 0 ]; then
+  echo "De job apt-security-refresh heeft geen env; de fixtures zouden op standaardwaarden draaien." >&2
+  exit 1
+fi
+
 epoch_draai() { # map [gh-uitvoer]
   ( cd "$1/ws/claude-sandbox" \
       && PATH="$1/bin:$PATH" GITHUB_WORKSPACE="$1/ws" GITHUB_OUTPUT="$1/uitvoer" \
-         MAX_EPOCH_AGE_DAYS=28 TMPDIR="$1/tmp" bash "${werkmap}/epoch.sh" ) 2>&1
+         TMPDIR="$1/tmp" env "${job_env[@]}" bash "${werkmap}/epoch.sh" ) 2>&1
 }
 
 # De job schrijft naar vaste /tmp-paden; die worden per geval leeggemaakt.
@@ -340,14 +351,22 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm6
   cp "$1/tmp/trivy-amd64.json" /tmp/trivy-amd64.json
   cp "$1/tmp/trivy-arm64.json" /tmp/trivy-arm64.json
   printf '%b' "$4" > "$1/policy.txt"
-  # Net als `apt-cache policy`: alleen blokken van de gevraagde pakketten, zodat
-  # de fixtures merken welke lijst er werkelijk is voorgelegd.
+  # De bronnen die de container zegt gebruikt te hebben. Standaard de drie van
+  # een echte trixie-image; een geval kan er een uitlaten.
+  printf '%b' "${EPOCH_INDEX:-INDEX https://deb.debian.org/debian trixie\nINDEX https://deb.debian.org/debian trixie-updates\nINDEX https://deb.debian.org/debian-security trixie-security\n}" \
+    > "$1/indextargets.txt"
+  # Net als de echte aanroep: eerst de gebruikte bronnen, dan alleen de blokken
+  # van de gevraagde pakketten, zodat de fixtures merken welke lijst er
+  # werkelijk is voorgelegd.
   stub "$1" docker "
+    cat '$1/indextargets.txt'
     for naam in \"\$@\"; do
-      case \"\$naam\" in --rm|sh|-c|_|*sha256:*|apt-get*) continue ;; esac
+      case \"\$naam\" in --rm|sh|-c|_|*sha256:*|apt-get*|-v|*ca.crt*) continue ;; esac
       awk -v p=\"\$naam\" '\$0 == p \":\" {toon=1; print; next} /^[^ ]/ {toon=0} toon' '$1/policy.txt'
     done"
-  stub "$1" gh "printf '%s' '${5:-}'"
+  # De stub schrijft zijn argumenten weg, zodat een geval kan toetsen dát er
+  # met de juiste branch gezocht is en niet alleen wát er terugkwam.
+  stub "$1" gh "printf '%s\n' \"\$@\" >> '$1/gh-argumenten.txt'; ${EPOCH_GH:-printf '%s' '${5:-}'}"
 
   # De periodieke tak slaat pas aan bij een oude epoch; zonder dit blijven die
   # gevallen in de CVE-tak steken en meten ze de poort niet.
@@ -419,6 +438,53 @@ d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_up
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: openstaand voorstel houdt ook de CVE-tak tegen" 0 "staat al een voorstel open" "$uit" "$rc"
 grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: CVE-tak herschrijft het voorstel niet" $?
+
+# Koppen zonder versietabel: de namen worden herkend, het formaat niet. Dat is
+# geen "niets te halen" maar een meting die niet gedaan is.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" \
+  'util-linux:\nbind9-dnsutils:\n'
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: policy zonder Candidate-regels wordt rood" 1 "geen enkele Candidate-regel" "$uit" "$rc"
+
+# Nul dekking is een kapotte meting; een enkel ontbrekend pakket is een antwoord.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" \
+  'iets-anders:\n  Installed: 1\n  Candidate: 2\n'
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: policy over andere pakketten wordt rood" 1 "geen enkel van de" "$uit" "$rc"
+
+# Zonder security-bron zou een fix uit die suite onzichtbaar blijven, terwijl
+# `apt-get update` netjes met 0 eindigt.
+d="$(epoch_map)"
+EPOCH_INDEX='INDEX https://deb.debian.org/debian trixie\n' \
+  epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: ontbrekende security-index wordt rood" 1 "geen security-index" "$uit" "$rc"
+
+# Een `gh` die faalt mag niet als "geen voorstel open" tellen.
+d="$(epoch_map)"
+EPOCH_GH='exit 1' epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: falende gh wordt rood" 1 "kon niet nagaan" "$uit" "$rc"
+
+# En hij moet op de eigen branch zoeken: zonder --head zou elk willekeurig open
+# voorstel de verversing voorgoed stilleggen.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+epoch_draai "$d" >/dev/null
+grep -qx 'deps/apt-security-refresh' "$d/gh-argumenten.txt"
+controle "epoch: het voorstel wordt op de eigen branch gezocht" $?
+
+# Een pakket dat buiten apt om gepind wordt, kan een epoch-bump niet bewegen.
+# Naast git-delta staat er een gewoon apt-pakket in, anders zou de meting al op
+# "geen geïnstalleerde pakketten" stranden en meet dit geval de uitsluiting niet.
+d="$(epoch_map)"
+epoch_geval "$d" \
+  '[{"VulnerabilityID":"CVE-D","Severity":"HIGH","PkgName":"git-delta","InstalledVersion":"0.19.2","FixedVersion":"0.18.2-4+b1"}]' \
+  '[{"ID":"git-delta@0.19.2","Name":"git-delta","Version":"0.19.2","Arch":"amd64"},{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Arch":"amd64"}]' \
+  'git-delta:\n  Installed: 0.19.2\n  Candidate: 0.18.2-4+b1\nutil-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n'
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: bevinding buiten de apt-laag opent geen voorstel" 0 "Buiten de weging gelaten" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"
+controle "epoch: een gepind pakket zet changed niet op true" $?
 
 # Een pakket zonder ID is niet te vergelijken en moet dat zeggen.
 d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"Name":"util-linux","Version":"2.41"}]' "$policy_met_update"
