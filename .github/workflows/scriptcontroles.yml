@@ -1,4 +1,4 @@
-name: suppressies
+name: scriptcontroles
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  suppressies:
-    name: Suppressielijst valideren
+  scripts:
+    name: Fixtures van de CI-scripts
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -21,9 +21,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # De fixtures eerst: een validatie die zelf stuk is, keurt alles goed.
-      - name: Fixtures van de validatie
+      # De fixtures eerst: een controle die zelf stuk is, keurt alles goed.
+      - name: Fixtures van de suppressie-validatie
         run: .github/scripts/test-valideer-trivyignore.sh
+
+      - name: Fixtures van de pin-vervanging
+        run: .github/scripts/test-vervang-pin.sh
 
       - name: Sleutels in .trivyignore.yaml afdwingen
         run: .github/scripts/valideer-trivyignore.sh
