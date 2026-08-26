@@ -75,8 +75,8 @@ toets "cve: onbruikbare invoer"                 2 cve kapot           gewoon "ge
 toets "cve: onvergelijkbare versie"            2 cve fix_onleesbaar   gewoon "niet te vergelijken"
 toets "cve: lege policy-uitvoer"                1 cve fix_beschikbaar leeg   "geen kandidaat"
 toets "cve: kandidaat is (none)"                1 cve fix_beschikbaar zonder_kandidaat "geen kandidaat"
-toets "upgrade: hogere kandidaat"               0 upgrade upgrade_kan     gewoon "dekt"
-toets "upgrade: kandidaat gelijk aan installed" 1 upgrade upgrade_kan_niet gewoon "nog niet"
+toets "upgrade: hogere kandidaat"               0 upgrade upgrade_kan     gewoon "is hoger dan het geïnstalleerde 2.41-5"
+toets "upgrade: kandidaat gelijk aan installed" 1 upgrade upgrade_kan_niet gewoon "is niet hoger dan het geïnstalleerde"
 toets "onbekende modus"                         2 cvee fix_beschikbaar gewoon "onbekende modus"
 
 rc=0

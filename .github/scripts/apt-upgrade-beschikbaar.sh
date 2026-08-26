@@ -93,11 +93,21 @@ while IFS=$'\t' read -r pkg doel id; do
   herkomst=""
   [ "${id}" = "-" ] || herkomst=" (${id})"
 
+  # De twee modi vergelijken met iets anders: `cve` met de gefixte versie,
+  # `upgrade` met wat er nu in de image zit. Eén formulering voor beide leest
+  # in de logs als onzin ("kandidaat 2.41-5 dekt 2.41-5 nog niet").
   if [ "${gehaald}" = ja ]; then
-    echo "  ${pkg}: kandidaat ${kand} dekt ${doel}${herkomst}"
+    if [ "${modus}" = cve ]; then
+      echo "  ${pkg}: kandidaat ${kand} dekt ${doel}${herkomst}"
+    else
+      echo "  ${pkg}: kandidaat ${kand} is hoger dan het geïnstalleerde ${doel}"
+    fi
+
     haalbaar=$((haalbaar + 1))
-  else
+  elif [ "${modus}" = cve ]; then
     echo "  ${pkg}: kandidaat ${kand} dekt ${doel} nog niet${herkomst}"
+  else
+    echo "  ${pkg}: kandidaat ${kand} is niet hoger dan het geïnstalleerde ${doel}"
   fi
 done < "${lijst}"
 
