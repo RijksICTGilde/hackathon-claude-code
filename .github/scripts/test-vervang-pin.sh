@@ -28,6 +28,9 @@ toets() { # naam verwachte_exitcode bestandsinhoud oud nieuw [aantal]
 
 toets "enkele treffer"            0 'VERSION=v1.0.0\n'                 v1.0.0 v1.1.0
 toets "twee treffers, twee verwacht" 0 'A=v1.0.0\nB=v1.0.0\n'          v1.0.0 v1.1.0 2
+toets "twee treffers op één regel"  0 'A=v1.0.0 B=v1.0.0\n'             v1.0.0 v1.1.0 2
+toets "nieuwe waarde bevat de oude" 0 'V=v1.0.1\n'                      v1.0.1 v1.0.10
+toets "nieuwe waarde bevat de oude, twee plekken" 0 'A=v1.0.1\nB=v1.0.1\n' v1.0.1 v1.0.10 2
 toets "nul treffers"              1 'VERSION=v9.9.9\n'                 v1.0.0 v1.1.0
 toets "meer treffers dan verwacht" 1 'A=v1.0.0\nB=v1.0.0\n'            v1.0.0 v1.1.0 1
 toets "minder treffers dan verwacht" 1 'A=v1.0.0\n'                    v1.0.0 v1.1.0 2

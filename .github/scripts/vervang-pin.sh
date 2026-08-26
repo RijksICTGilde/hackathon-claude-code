@@ -35,20 +35,34 @@ if [ "${oud}" = "${nieuw}" ]; then
   exit 1
 fi
 
-gevonden="$(grep -cF -- "${oud}" "${bestand}" || true)"
+# Voorkomens tellen en niet regels: twee pins op één regel horen als twee te
+# tellen, anders hangt de controle aan de regelindeling van het bestand.
+gevonden="$(grep -oF -- "${oud}" "${bestand}" | wc -l || true)"
 if [ "${gevonden}" != "${verwacht}" ]; then
   echo "FOUT: '${oud}' komt ${gevonden}× voor in ${bestand}, verwacht ${verwacht}×." >&2
   exit 1
 fi
 
-sed -i "s|${oud}|${nieuw}|g" "${bestand}"
+# In twee slagen via een tussentoken. Bevat de nieuwe waarde de oude — wat
+# gebeurt zodra een cijfer een positie langer wordt, v0.45.1 -> v0.45.10 — dan
+# is "staat de oude waarde er nog?" na een directe vervanging altijd waar, en
+# zou een geslaagde bump als mislukt eindigen.
+teken="__pin_vervanging_$$__"
+sed -i "s|${oud}|${teken}|g" "${bestand}"
 
 if grep -qF -- "${oud}" "${bestand}"; then
   echo "FOUT: '${oud}' staat nog in ${bestand} na de vervanging." >&2
   exit 1
 fi
 
-na="$(grep -cF -- "${nieuw}" "${bestand}" || true)"
+sed -i "s|${teken}|${nieuw}|g" "${bestand}"
+
+if grep -qF -- "${teken}" "${bestand}"; then
+  echo "FOUT: tussentoken staat nog in ${bestand}; de vervanging is half blijven staan." >&2
+  exit 1
+fi
+
+na="$(grep -oF -- "${nieuw}" "${bestand}" | wc -l || true)"
 if [ "${na}" != "${verwacht}" ]; then
   echo "FOUT: '${nieuw}' komt ${na}× voor in ${bestand} na de vervanging, verwacht ${verwacht}×." >&2
   exit 1

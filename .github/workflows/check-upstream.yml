@@ -59,7 +59,7 @@ jobs:
           FILE: ${{ matrix.file }}
         run: |
           set -euo pipefail
-          curl -fsSLS "$URL" -o /tmp/upstream.sh
+          curl -fsSL "$URL" -o /tmp/upstream.sh
           upstream_sha=$(sha256sum /tmp/upstream.sh | awk '{print $1}')
           if [ ! -f "$FILE" ]; then
             echo "FOUT: vendored bestand '$FILE' bestaat niet" >&2
@@ -114,7 +114,7 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          latest=$(curl -fsSLS https://nodejs.org/dist/index.json \
+          latest=$(curl -fsSL https://nodejs.org/dist/index.json \
             | jq -r '[.[] | select(.lts != false)] | first | .version' || true)
           if [ -z "$latest" ] || [ "$latest" = "null" ]; then
             echo "FOUT: kon laatste Node.js LTS-versie niet bepalen" >&2
@@ -122,7 +122,7 @@ jobs:
           fi
           # De versie komt van buiten en belandt in curl- en sed-argumenten;
           # een `case`-patroon zou hier alles achter een spatie doorlaten.
-          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$latest"; then
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FOUT: onverwachte Node.js-versie '$latest' (verwacht: vX.Y.Z)" >&2
             exit 1
           fi
@@ -140,7 +140,7 @@ jobs:
             exit 0
           fi
           # Nieuwe versie: haal beide SHAs uit de officiële SHASUMS256.txt.
-          shasums=$(curl -fsSLS "https://nodejs.org/dist/${latest}/SHASUMS256.txt" || true)
+          shasums=$(curl -fsSL "https://nodejs.org/dist/${latest}/SHASUMS256.txt" || true)
           sha_amd64=$(echo "$shasums" | awk -v f="node-${latest}-linux-x64.tar.xz"   '$2==f {print $1}')
           sha_arm64=$(echo "$shasums" | awk -v f="node-${latest}-linux-arm64.tar.xz" '$2==f {print $1}')
           if [ -z "$sha_amd64" ] || [ -z "$sha_arm64" ]; then
@@ -223,14 +223,10 @@ jobs:
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
             exit 1
           fi
-          if [ "$(grep -c 'NPM_VERSION=[0-9]' Dockerfile)" -ne 1 ]; then
-            echo "FOUT: meerdere NPM_VERSION-pins; de bump zou er maar één verzetten" >&2
-            exit 1
-          fi
           major=${current%%.*}
           # Alleen stabiele versies binnen dezelfde major; pre-releases (11.0.0-pre)
           # sorteren anders mee en leveren een onbruikbare pin op.
-          latest=$(curl -fsSLS https://registry.npmjs.org/npm \
+          latest=$(curl -fsSL https://registry.npmjs.org/npm \
             | jq -r --arg m "$major" '.versions | keys[] | select(test("^" + $m + "\\.[0-9]+\\.[0-9]+$"))' \
             | sort -V | tail -1 || true)
           if [ -z "$latest" ]; then
@@ -246,13 +242,7 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          sed -i "s|NPM_VERSION=${current}|NPM_VERSION=${latest}|" Dockerfile
-          # sed geeft ook exit 0 bij nul substituties; zonder deze controle zou
-          # create-pull-request een schone worktree vinden en stil niets doen.
-          if ! grep -qF "NPM_VERSION=${latest}" Dockerfile || grep -qF "NPM_VERSION=${current}" Dockerfile; then
-            echo "FOUT: bump van NPM_VERSION is niet volledig toegepast" >&2
-            exit 1
-          fi
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NPM_VERSION=$current" "NPM_VERSION=$latest" 1
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open auto-PR if npm changed
@@ -297,7 +287,7 @@ jobs:
           # De tag komt uit een repository van derden en belandt hieronder in
           # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
           # glob-`*` matcht ook een spatie en alles erachter.
-          if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$latest"; then
+          if ! [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FOUT: onverwachte delta-tag '$latest' (verwacht: X.Y.Z)" >&2
             exit 1
           fi
@@ -316,9 +306,9 @@ jobs:
           fi
           # Download beide assets en bereken SHAs zelf.
           tmpdir=$(mktemp -d)
-          curl -fsSLS -o "$tmpdir/amd64.deb" \
+          curl -fsSL -o "$tmpdir/amd64.deb" \
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_amd64.deb"
-          curl -fsSLS -o "$tmpdir/arm64.deb" \
+          curl -fsSL -o "$tmpdir/arm64.deb" \
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_arm64.deb"
           sha_amd64=$(sha256sum "$tmpdir/amd64.deb" | awk '{print $1}')
           sha_arm64=$(sha256sum "$tmpdir/arm64.deb" | awk '{print $1}')
@@ -387,8 +377,9 @@ jobs:
           # De tag komt uit een repository van derden en belandt hieronder in
           # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
           # glob-`*` matcht ook een spatie en alles erachter, dus 'v1.0.0; rm'
-          # zou erdoor komen.
-          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$latest"; then
+          # zou erdoor komen. `=~` toetst de hele waarde, waar een regexp per
+          # regel ook een tweede regel zou doorlaten.
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "FOUT: onverwachte rtk-tag '$latest' (verwacht: vX.Y.Z)" >&2
             exit 1
           fi
@@ -409,7 +400,7 @@ jobs:
           fi
           # Byte-identiek aan de upstream-tag houden, zodat de herkomst
           # controleerbaar blijft.
-          curl -fsSLS "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
+          curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
             -o vendor/install-scripts/rtk.sh
           # Twee plekken in de Dockerfile (de binary-pin en de herkomst-URL) en
           # één in de README. Slaagt er één niet, dan zou de PR een bump claimen
