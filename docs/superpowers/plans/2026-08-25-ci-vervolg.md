@@ -120,6 +120,6 @@ zodra alles in de statustabel gemerged is.
 
 ## Waar het werk stond bij het onderbreken
 
-De stack is `main` ← #121 ← #132 (#129) ← #134 (#124) ← #135 (#130) ← #139 (#126). Alle vier
-de PR's zijn draft en hun CI is groen. #139 heeft twee reviewrondes gehad; de derde ronde is
-niet meer gedraaid. Daarna volgen #125, #127 en #128 in die volgorde.
+De stack is `main` ← #134 (#124) ← #135 (#130) ← #139 (#126); #121 en #132 zitten in `main`.
+Alle drie de PR's zijn draft. #139 heeft twee reviewrondes gehad; de derde ronde is niet meer
+gedraaid. Daarna volgen #125, #127 en #128 in die volgorde.
