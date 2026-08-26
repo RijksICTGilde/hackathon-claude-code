@@ -90,7 +90,7 @@ criteria.
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | drie reviewrondes verwerkt, CI groen |
-| 124 | `.trivyignore.yaml` | in uitvoering | `chore/trivyignore-yaml` | — | branch aangemaakt |
+| 124 | `.trivyignore.yaml` | PR open | `chore/trivyignore-yaml` | #134 | PR geopend, review-loop gestart |
 | 130 | auto-PR-jobs verifiëren hun wijziging | open | — | — | — |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
