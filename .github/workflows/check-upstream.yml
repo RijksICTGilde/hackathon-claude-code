@@ -661,6 +661,11 @@ jobs:
             # überhaupt iets te upgraden valt. De volledige versie zit in `ID`
             # (naam@versie); `Version` bevat alleen het upstream-deel, zonder
             # epoch en revisie, en zou elke vergelijking laten kloppen.
+            zonder_id=$(jq '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]? | select(.ID == null)] | length' "$report")
+            if [ "$zonder_id" -ne 0 ]; then
+              echo "FOUT: ${zonder_id} pakket(ten) in $report zonder ID; de volledige versie is daar niet uit te lezen" >&2
+              exit 1
+            fi
             jq --arg arch "$arch" \
               '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]?
                 | {pkg: .Name, inst: (.ID | sub("^.*@"; "")), arch: $arch}]' \
@@ -714,16 +719,16 @@ jobs:
           if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
             echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
           fi
-          # Een fix die upstream kent maar die de suite nog niet uitlevert,
-          # levert een verversing op die niets verandert: dezelfde bevinding
-          # komt de week erna terug, na drie volledige bouwrondes. Daarom eerst
-          # vragen wat er werkelijk te halen is.
           jq -s add /tmp/os-all.json > /tmp/os-samen.json
-          # Alleen amd64: de policy-vraag wordt beantwoord door een amd64-
-          # container, dus een arm64-versie ernaast leggen zou een antwoord over
-          # de verkeerde architectuur opleveren.
+          # De versievergelijking blijft bij amd64, want de container die de
+          # vraag beantwoordt is amd64. De pakketlijst die we voorleggen is wél
+          # de unie van beide architecturen: een pakket dat alleen op arm64 een
+          # bevinding heeft, zou anders geen kandidaat krijgen en dat leest als
+          # "de fix staat niet in de suite".
           jq -s 'add | map(select(.arch == "amd64")) | unique_by([.pkg, .inst])' \
             /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
+          jq -s '[(.[0] + .[1])[].pkg] | unique' \
+            /tmp/geinstalleerd.json /tmp/os-all.json > /tmp/te-vragen.json
           beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
 
           # De policy-uitvoer wordt hoogstens één keer opgehaald, en alleen als
@@ -731,21 +736,22 @@ jobs:
           policy_opgehaald=0
           haal_policy() {
             [ "$policy_opgehaald" -eq 0 ] || return 0
-            local pakketten aantal gedekt
-            pakketten=$(jq -r '[.[].pkg] | unique | join(" ")' /tmp/geinstalleerd-samen.json)
-            if [ -z "$pakketten" ]; then
-              echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
+            local aantal gedekt basis rc
+            local -a pakketten
+            mapfile -t pakketten < <(jq -r '.[]' /tmp/te-vragen.json)
+            if [ "${#pakketten[@]}" -eq 0 ]; then
+              echo "FOUT: geen apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
               exit 1
             fi
-            # De namen komen uit een scanrapport en belanden in een shell-string
-            # die in de container wordt uitgevoerd.
-            if ! grep -qxE '[a-z0-9][a-z0-9+.-]*( [a-z0-9][a-z0-9+.-]*)*' <<<"$pakketten"; then
+            # De namen komen uit een scanrapport en gaan naar een container.
+            # Per naam toetsen: een regel-anker zou een naam met een newline
+            # erin doorlaten.
+            if printf '%s\n' "${pakketten[@]}" | grep -qvxE '[a-z0-9][a-z0-9+.-]*'; then
               echo "FOUT: onverwachte pakketnaam in de scanuitvoer; niet doorgegeven aan de container" >&2
               exit 1
             fi
             # Dezelfde basis-image als de Dockerfile, dus dezelfde suite. 28 MB
             # in plaats van de 628 MB van de gepubliceerde image.
-            local basis
             basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2)
             if [ -z "$basis" ]; then
               echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
@@ -754,8 +760,15 @@ jobs:
             # `apt-get update` geeft exitcode 0 als een deel van de indexen
             # niet op te halen is; valt juist trixie-security weg, dan ziet de
             # vraag geen enkele security-fix en leest dat als "niets te halen".
+            rc=0
             docker run --rm "$basis" sh -c \
-              "apt-get update && apt-cache policy $pakketten" > /tmp/policy.txt 2> /tmp/policy-fouten.txt
+              'apt-get update && apt-cache policy "$@"' _ "${pakketten[@]}" \
+              > /tmp/policy.txt 2> /tmp/policy-fouten.txt || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "FOUT: de policy-container eindigde met exitcode ${rc}" >&2
+              cat /tmp/policy-fouten.txt >&2
+              exit 1
+            fi
             if grep -qE 'Failed to fetch|Some index files failed' /tmp/policy-fouten.txt; then
               echo "FOUT: apt-get update kon niet alle indexen ophalen; de beschikbaarheid is niet vast te stellen" >&2
               cat /tmp/policy-fouten.txt >&2
@@ -764,7 +777,7 @@ jobs:
             # Niet-leeg zegt niets: elke afwijking in het uitvoerformaat zou
             # stil "geen kandidaat" opleveren voor álle pakketten en daarmee
             # elke verversing tegenhouden.
-            aantal=$(wc -w <<<"$pakketten")
+            aantal=${#pakketten[@]}
             gedekt=$(grep -cE '^[a-z0-9][a-z0-9+.-]*:$' /tmp/policy.txt || true)
             if [ "$gedekt" -lt "$aantal" ]; then
               echo "FOUT: apt-cache policy noemt ${gedekt} van de ${aantal} gevraagde pakketten; de beschikbaarheid is niet vastgesteld" >&2
@@ -786,6 +799,16 @@ jobs:
             esac
           }
 
+          # Een openstaand voorstel wordt niet elke week herschreven: het bevat
+          # dezelfde epoch-bump, ongeacht de aanleiding, en een force-push maakt
+          # de review-run die iemand daarop startte achterhaald.
+          open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[].number')
+          if [ -n "$open_pr" ]; then
+            echo "Verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh (#${open_pr})."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           reason=""
           if [ "$count" -gt 0 ]; then
             haal_policy
@@ -801,13 +824,6 @@ jobs:
           # blijft steken mag de routine niet maandenlang bevriezen, want die
           # haalt ook alle andere beschikbare updates op.
           if [ -z "$reason" ] && [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
-            # Een openstaand voorstel wordt niet elke week herschreven: de
-            # review-run die iemand daarop startte zou daarmee achterhaald raken.
-            if [ -n "$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[].number' || true)" ]; then
-              echo "Periodieke verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh."
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
             haal_policy
             echo "Pakketten met een hogere kandidaat:"
 
@@ -888,4 +904,7 @@ jobs:
             Verifieer lokaal met `docker compose build --no-cache` voor je merget. Deze PR is
             door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en heropen
             hem om de checks alsnog te laten draaien. Blijft er na de rebuild iets staan, dan is
-            er voor dat pakket geen Debian-update en hoort het met reden in `.trivyignore.yaml`.
+            er voor dat pakket nog geen Debian-update in de suite. Dat is niet
+            hetzelfde als "geen fix": kijk eerst of de suite hem later alsnog
+            uitlevert, en pas als dat aantoonbaar niet gebeurt hoort hij met
+            reden in `.trivyignore.yaml`.

@@ -332,15 +332,21 @@ epoch_draai() { # map [gh-uitvoer]
 }
 
 # De job schrijft naar vaste /tmp-paden; die worden per geval leeggemaakt.
-epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch]
+epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm64] [installed-arm64]
   rm -f /tmp/trivy-amd64.json /tmp/trivy-arm64.json /tmp/os-all.json \
         /tmp/rest-all.json /tmp/geinstalleerd.json /tmp/policy.txt
   epoch_rapport "$1" amd64 "$2" "$3"
-  epoch_rapport "$1" arm64 "$2" "$3"
+  epoch_rapport "$1" arm64 "${7:-$2}" "${8:-$3}"
   cp "$1/tmp/trivy-amd64.json" /tmp/trivy-amd64.json
   cp "$1/tmp/trivy-arm64.json" /tmp/trivy-arm64.json
   printf '%b' "$4" > "$1/policy.txt"
-  stub "$1" docker "cat '$1/policy.txt'"
+  # Net als `apt-cache policy`: alleen blokken van de gevraagde pakketten, zodat
+  # de fixtures merken welke lijst er werkelijk is voorgelegd.
+  stub "$1" docker "
+    for naam in \"\$@\"; do
+      case \"\$naam\" in --rm|sh|-c|_|*sha256:*|apt-get*) continue ;; esac
+      awk -v p=\"\$naam\" '\$0 == p \":\" {toon=1; print; next} /^[^ ]/ {toon=0} toon' '$1/policy.txt'
+    done"
   stub "$1" gh "printf '%s' '${5:-}'"
 
   # De periodieke tak slaat pas aan bij een oude epoch; zonder dit blijven die
@@ -396,6 +402,39 @@ d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_upd
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: vastzittende CVE blokkeert de periodieke verversing niet" 0 "hogere kandidaat" "$uit" "$rc"
 geopend "epoch: vastzittende CVE laat de periodieke verversing door" "$d"
+
+# Een bevinding die alleen op arm64 staat, moet net zo goed aan de suite
+# gevraagd worden; anders leest "niet gevraagd" als "niet in de suite".
+arm_cve='[{"VulnerabilityID":"CVE-ARM","Severity":"HIGH","PkgName":"libnuma1","InstalledVersion":"2.0.18-1","FixedVersion":"2.0.18-2"}]'
+arm_pakketten='[{"ID":"libnuma1@2.0.18-1","Name":"libnuma1","Version":"2.0.18","Release":"1","Arch":"arm64"}]'
+policy_arm='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\nlibnuma1:\n  Installed: 2.0.18-1\n  Candidate: 2.0.18-2\n'
+
+d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_arm" "" "" "$arm_cve" "$arm_pakketten"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: arm64-only bevinding wordt aan de suite gevraagd" 0 "libnuma1: kandidaat 2.0.18-2 dekt" "$uit" "$rc"
+geopend "epoch: arm64-only bevinding opent een voorstel" "$d"
+
+# Een openstaand voorstel geldt ook voor de CVE-tak.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update" "1234"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: openstaand voorstel houdt ook de CVE-tak tegen" 0 "staat al een voorstel open" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: CVE-tak herschrijft het voorstel niet" $?
+
+# Een pakket zonder ID is niet te vergelijken en moet dat zeggen.
+d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"Name":"util-linux","Version":"2.41"}]' "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: pakket zonder ID wordt rood" 1 "zonder ID" "$uit" "$rc"
+
+# Een onverwachte pakketnaam mag niet naar de container.
+d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"ID":"raar naam@1","Name":"raar naam","Arch":"amd64"}]' "$policy_met_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: onverwachte pakketnaam wordt rood" 1 "onverwachte pakketnaam" "$uit" "$rc"
+
+# Een falende container is geen antwoord.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+stub "$d" docker 'echo "Error: pull access denied" >&2; exit 125'
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: falende policy-container wordt rood" 1 "exitcode 125" "$uit" "$rc"
 
 # Een vraag die niet beantwoord kán worden mag niet als "nee" tellen.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"

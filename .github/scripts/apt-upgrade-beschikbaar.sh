@@ -36,7 +36,8 @@ case "${modus}" in
     exit 2 ;;
 esac
 
-lijst="${bevindingen}.lijst"
+lijst="$(mktemp)"
+trap 'rm -f "${lijst}"' EXIT
 jq -r "[.[] | select(.pkg != null) | ${sleutel}] | unique | .[]" "${bevindingen}" > "${lijst}" || {
   echo "FOUT: ${bevindingen} is geen bruikbare JSON-lijst." >&2
   exit 2
@@ -44,7 +45,6 @@ jq -r "[.[] | select(.pkg != null) | ${sleutel}] | unique | .[]" "${bevindingen}
 
 if [ ! -s "${lijst}" ]; then
   echo "Geen bevindingen om te wegen."
-  rm -f "${lijst}"
   exit 1
 fi
 
@@ -82,15 +82,16 @@ while IFS=$'\t' read -r pkg doel id; do
     fi
   done
 
+  herkomst=""
+  [ "${id}" = "-" ] || herkomst=" (${id})"
+
   if [ "${gehaald}" = ja ]; then
-    echo "  ${pkg}: kandidaat ${kand} dekt ${doel} (${id})"
+    echo "  ${pkg}: kandidaat ${kand} dekt ${doel}${herkomst}"
     haalbaar=$((haalbaar + 1))
   else
-    echo "  ${pkg}: kandidaat ${kand} dekt ${doel} nog niet (${id})"
+    echo "  ${pkg}: kandidaat ${kand} dekt ${doel} nog niet${herkomst}"
   fi
 done < "${lijst}"
-
-rm -f "${lijst}"
 
 if [ "${haalbaar}" -eq 0 ]; then
   echo "Niets installeerbaars gevonden."
