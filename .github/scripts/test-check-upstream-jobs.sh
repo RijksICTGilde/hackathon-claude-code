@@ -43,8 +43,11 @@ done
 
 for job in vendored-scripts rtk-version delta-version node-version npm-version; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
-  if [ ! -s "${werkmap}/${job}.sh" ]; then
-    echo "FOUT: geen run-blok gevonden voor ${job}"
+  # Precies één run-blok: `yq` plakt er anders meerdere achter elkaar en dan
+  # draait de fixture een script dat geen enkele stap zo uitvoert.
+  if [ ! -s "${werkmap}/${job}.sh" ] \
+     || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne 1 ]; then
+    echo "FOUT: verwacht precies één run-blok in ${job}"
     exit 1
   fi
 done
@@ -96,6 +99,17 @@ toets() { # naam verwachte_exitcode patroon uitvoer exitcode
   geslaagd=$((geslaagd + 1))
 }
 
+geopend() { # naam map -> de PR-stap zou draaien
+  grep -qx 'changed=true' "$2/uitvoer"
+  controle "$1" $?
+}
+
+vervangingen() { # naam uitvoer aantal
+  # Elke geslaagde aanroep van vervang-pin.sh meldt "<bestand>: oud -> nieuw (N×)".
+  [ "$(grep -c ' -> .*×)$' <<<"$2")" -eq "$3" ]
+  controle "$1" $?
+}
+
 controle() { # naam voorwaarde-exitcode
   if [ "$2" -eq 0 ]; then
     echo "ok   $1"
@@ -141,12 +155,17 @@ d="$(nieuwe_map)"; printf '#!/bin/sh\necho oud\n' > "$d/ws/claude-sandbox/vendor
 stub "$d" curl "$script_stub"
 uit="$(vendored "$d")"; rc=$?
 toets "vendored: geldige download wordt opgepakt" 0 "" "$uit" "$rc"
+geopend "vendored: wijziging zet changed=true" "$d"
+grep -q 'echo nieuw' "$d/ws/claude-sandbox/vendor/install-scripts/claude.sh"
+controle "vendored: het bestand is werkelijk vervangen" $?
 
 # ── rtk ──
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: bump verzet Dockerfile en README" 0 "README.md: ${rtk_nu} -> v0.99.0" "$uit" "$rc"
 grep -q 'echo nieuw' "$d/ws/claude-sandbox/vendor/install-scripts/rtk.sh"; controle "rtk: vendored script vervangen" $?
+geopend "rtk: bump zet changed=true" "$d"
+vervangingen "rtk: drie vervangingen" "$uit" 3
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo "v1.0.0; rm -rf /"'; stub "$d" curl 'true'
 uit="$(draai "$d" rtk-version)"; rc=$?
@@ -186,6 +205,8 @@ toets "rtk: tweede pin wordt rood" 1 "precies één RTK_VERSION-pin" "$uit" "$rc
 d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'; stub "$d" curl "$deb_stub"
 uit="$(draai "$d" delta-version)"; rc=$?
 toets "delta: bump verzet versie en beide SHAs" 0 "DELTA_VERSION=${delta_nu} -> DELTA_VERSION=0.99.9" "$uit" "$rc"
+geopend "delta: bump zet changed=true" "$d"
+vervangingen "delta: drie vervangingen" "$uit" 3
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo "0.99.9 && curl kwaad"'; stub "$d" curl 'true'
 uit="$(draai "$d" delta-version)"; rc=$?
@@ -210,6 +231,8 @@ toets "delta: tweede pin wordt rood" 1 "precies één DELTA_VERSION-pin" "$uit" 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: bump verzet versie en beide SHAs" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v99.0.0" "$uit" "$rc"
+geopend "node: bump zet changed=true" "$d"
+vervangingen "node: drie vervangingen" "$uit" 3
 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 sed -i 's|      amd64) NODE_ARCH=x64;   SHA=|      amd64) NODE_ARCH=x64; SHA=|' "$d/ws/claude-sandbox/Dockerfile"
@@ -259,6 +282,8 @@ toets "rtk: herkomst-URL op een andere tag wordt rood" 1 "komt 0× voor" "$uit" 
 d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: bump binnen dezelfde major" 0 "NPM_VERSION=${npm_nu} -> NPM_VERSION=${npm_major}.999.0" "$uit" "$rc"
+geopend "npm: bump zet changed=true" "$d"
+vervangingen "npm: één vervanging" "$uit" 1
 
 d="$(nieuwe_map)"; stub "$d" curl 'printf "{\"versions\":{}}\n"'
 uit="$(draai "$d" npm-version)"; rc=$?

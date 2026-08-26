@@ -79,6 +79,13 @@ jobs:
           if [ "$upstream_sha" != "$current_sha" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             cp /tmp/upstream.sh "$FILE"
+          # Teruglezen: een mislukte kopie zou een voorstel opleveren dat zegt
+          # het bestand te hebben bijgewerkt terwijl er niets is veranderd.
+          na_kopie=$(sha256sum "$FILE" | awk '{print $1}')
+          if [ "$na_kopie" != "$upstream_sha" ]; then
+            echo "FOUT: $FILE komt na de kopie niet overeen met de upstream-hash" >&2
+            exit 1
+          fi
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
@@ -306,6 +313,10 @@ jobs:
         run: |
           set -euo pipefail
           latest=$(gh api repos/dandavison/delta/releases/latest --jq .tag_name || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste delta-versie niet bepalen via de GitHub API" >&2
+            exit 1
+          fi
           # De tag komt uit een repository van derden en belandt hieronder in
           # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
           # glob-`*` matcht ook een spatie en alles erachter.
@@ -414,6 +425,10 @@ jobs:
         run: |
           set -euo pipefail
           latest=$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste rtk-versie niet bepalen via de GitHub API" >&2
+            exit 1
+          fi
           # De tag komt uit een repository van derden en belandt hieronder in
           # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
           # glob-`*` matcht ook een spatie en alles erachter, dus 'v1.0.0; rm'
