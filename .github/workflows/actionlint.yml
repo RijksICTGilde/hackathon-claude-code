@@ -18,9 +18,8 @@ jobs:
     env:
       # Vaste versie plus SHA-256 voor allebei: een linter die zichzelf
       # ongemerkt bijwerkt verschuift de lat waarop de build groen staat.
-      # shellcheck hoort daar net zo goed bij — het levert de bevindingen in de
-      # run-blokken, en de versie uit het runner-image meldt andere dingen dan
-      # de versie op een ontwikkelmachine.
+      # shellcheck hoort daar net zo goed bij: het levert de bevindingen in de
+      # run-blokken, dus zijn versie bepaalt mee wanneer de build groen is.
       # TODO(#131): upstream-tracking voor deze pins.
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -35,43 +34,45 @@ jobs:
       - name: Linters ophalen
         run: |
           set -euo pipefail
-          haal() {
+          fetch() {
             curl -fsSL --retry 3 --retry-all-errors -o "$2" "$1"
             echo "$3  $2" | sha256sum -c -
           }
-          haal "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
-               "${RUNNER_TEMP}/actionlint.tar.gz" "${ACTIONLINT_SHA256}"
+          fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+                "${RUNNER_TEMP}/actionlint.tar.gz" "${ACTIONLINT_SHA256}"
           tar -xzf "${RUNNER_TEMP}/actionlint.tar.gz" -C "${RUNNER_TEMP}" actionlint
-          haal "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" \
-               "${RUNNER_TEMP}/shellcheck.tar.gz" "${SHELLCHECK_SHA256}"
+          fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" \
+                "${RUNNER_TEMP}/shellcheck.tar.gz" "${SHELLCHECK_SHA256}"
           tar -xzf "${RUNNER_TEMP}/shellcheck.tar.gz" --strip-components=1 \
               -C "${RUNNER_TEMP}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           "${RUNNER_TEMP}/actionlint" --version
           "${RUNNER_TEMP}/shellcheck" --version | sed -n '2p'
 
       # actionlint slaat de shellcheck-koppeling stilzwijgend over zodra het
-      # opgegeven pad niet werkt, en meldt dan nul bevindingen. Groen zegt dus
-      # pas iets als een bewust fout run-blok eerst rood geeft.
+      # opgegeven pad niet werkt, en meldt dan geen enkele shellcheck-bevinding.
+      # Groen zegt dus pas iets als een bewust fout run-blok eerst rood geeft.
       - name: Controle ijken
         run: |
           set -euo pipefail
-          ijk="$(mktemp -d)"
-          mkdir -p "${ijk}/.github/workflows"
-          git -C "${ijk}" init -q .
-          cat > "${ijk}/.github/workflows/ijk.yml" <<'IJK'
-          name: ijk
+          canary="$(mktemp -d)"
+          mkdir -p "${canary}/.github/workflows"
+          # Eigen project-root, zodat de ijking niet meebeweegt met configuratie
+          # uit de repo zelf.
+          git -C "${canary}" init -q .
+          cat > "${canary}/.github/workflows/canary.yml" <<'CANARY'
+          name: canary
           on: push
           jobs:
             a:
               runs-on: ubuntu-latest
               steps:
                 - run: echo $ONGEQUOOT
-          IJK
-          uitvoer="$( cd "${ijk}" && "${RUNNER_TEMP}/actionlint" \
-            -shellcheck "${RUNNER_TEMP}/shellcheck" .github/workflows/ijk.yml 2>&1 || true )"
-          if ! grep -q SC2086 <<<"${uitvoer}"; then
+          CANARY
+          output="$( cd "${canary}" && "${RUNNER_TEMP}/actionlint" \
+            -shellcheck "${RUNNER_TEMP}/shellcheck" .github/workflows/canary.yml 2>&1 || true )"
+          if ! grep -q SC2086 <<<"${output}"; then
             echo "Een run-blok met een ongequote variabele blijft onopgemerkt; de shellcheck-koppeling werkt niet." >&2
-            echo "${uitvoer}" >&2
+            echo "${output}" >&2
             exit 1
           fi
 
@@ -79,26 +80,48 @@ jobs:
       # dat alleen losse shellscripts ziet. actionlint dekt ze, plus de
       # workflow-syntax en de expressies.
       #
-      # Niet gedekt: de inputs van gepinde actions (#133) en python-run-blokken,
-      # waarvoor pyflakes nodig is. Die laatste worden hier hard geweigerd in
-      # plaats van ongemerkt overgeslagen.
+      # shellcheck draait hier op zijn standaardniveau en dus strenger dan de
+      # `--severity=warning` op losse scripts: een quotingfout in een run-blok
+      # is alleen in CI te reproduceren en daarmee duurder om te debuggen.
+      #
+      # actionlint koppelt alleen bash en sh aan shellcheck, en python aan
+      # pyflakes. Andere shells gaan er ongecontroleerd langs; die worden
+      # hieronder geweigerd in plaats van stil doorgelaten.
+      # TODO(#133): de inputs van gepinde actions worden niet gecontroleerd.
       - name: actionlint draaien
         run: |
           set -euo pipefail
-          if git grep -qE '^[[:space:]]*shell:[[:space:]]*python' \
-               -- '.github/workflows/*.yml' '.github/workflows/*.yaml'; then
-            echo "Er staan python-run-blokken in de workflows; voeg pyflakes aan deze job toe, anders slaat actionlint ze over." >&2
+          # `git grep` geeft 1 bij geen match en ≥2 bij een fout; zonder dat
+          # onderscheid leest een kapotte aanroep als "niets gevonden".
+          uses_shell() {
+            local rc=0
+            git grep -qE "$1" -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || rc=$?
+            case "${rc}" in
+              0) return 0 ;;
+              1) return 1 ;;
+              *) echo "git grep faalde met exitcode ${rc}." >&2; exit "${rc}" ;;
+            esac
+          }
+          if uses_shell "shell:[[:space:]]*['\"]?(pwsh|powershell|cmd)"; then
+            echo "Een run-blok draait op pwsh, powershell of cmd; daar bestaat hier geen controle voor. Schrijf de stap in bash." >&2
             exit 1
           fi
-          # Via een bestand en niet via een pipe of procesvervanging: een
-          # falende `git` moet de stap beëindigen, en command substitution
-          # gooit de NUL-scheiding weg waardoor alle paden aan elkaar plakken.
+          if uses_shell "shell:[[:space:]]*['\"]?python"; then
+            command -v pyflakes >/dev/null || {
+              echo "Er staat een python-run-blok in de workflows; voeg pyflakes aan deze job toe, anders slaat actionlint het over." >&2
+              exit 1
+            }
+          fi
+          # Via een bestand: `mapfile` uit een pipe draait in een subshell en
+          # verliest de array, na procesvervanging blijft een falende `git`
+          # onopgemerkt, en command substitution gooit de NUL-scheiding weg
+          # waardoor alle paden aan elkaar plakken.
           git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml' \
-            > "${RUNNER_TEMP}/workflowlijst"
-          mapfile -d '' bestanden < "${RUNNER_TEMP}/workflowlijst"
-          if [ ${#bestanden[@]} -eq 0 ]; then
+            > "${RUNNER_TEMP}/workflowlist"
+          mapfile -d '' files < "${RUNNER_TEMP}/workflowlist"
+          if [ ${#files[@]} -eq 0 ]; then
             echo "Lege bestandslijst; actionlint zou terugvallen op zijn eigen zoektocht en een kapotte selectie zou onzichtbaar blijven." >&2
             exit 1
           fi
           "${RUNNER_TEMP}/actionlint" -color \
-            -shellcheck "${RUNNER_TEMP}/shellcheck" "${bestanden[@]}"
+            -shellcheck "${RUNNER_TEMP}/shellcheck" "${files[@]}"
