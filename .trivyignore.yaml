@@ -15,7 +15,7 @@
 # verlengen mag, maar dan met een nieuwe onderbouwing.
 #
 # De vorm wordt afgedwongen door .github/scripts/valideer-trivyignore.sh, dat
-# in elke scanjob draait en in de workflow suppressies: Trivy negeert een
+# in elke scanjob draait en in de workflow scriptcontroles: Trivy negeert een
 # onbekende sleutel zonder melding, en dat verbergt meer dan bedoeld in plaats
 # van minder.
 
