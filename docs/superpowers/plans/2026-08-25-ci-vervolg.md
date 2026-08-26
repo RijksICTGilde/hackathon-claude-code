@@ -17,7 +17,7 @@ zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd c
 #130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
 uit #125. De PR-beschrijving noemt welke PR de basis is.
 
-#121 en #132 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+#121, #132 en #134 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
 onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
 commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
 meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
@@ -93,7 +93,7 @@ criteria.
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
-| 124 | `.trivyignore.yaml` | PR open | `chore/trivyignore-yaml` | #134 | drie reviewrondes verwerkt, CI groen |
+| 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
