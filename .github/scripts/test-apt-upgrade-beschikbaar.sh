@@ -53,6 +53,7 @@ policy leeg ''
 bevindingen fix_beschikbaar '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
 bevindingen fix_te_nieuw    '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.42-1"}]'
 bevindingen fix_lijst       '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.42-1,2.41-5+deb13u1"}]'
+bevindingen fix_lijst_spatie '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.42-1, 2.41-5+deb13u1"}]'
 bevindingen fix_onbekend    '[{"id":"CVE-1","pkg":"bestaat-niet","inst":"1","fix":"2"}]'
 bevindingen fix_zonder_fix  '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5"}]'
 bevindingen twee_pakketten  '[{"id":"CVE-1","pkg":"zlib1g","inst":"1:1.3.dfsg+really1.3.1-1","fix":"1:1.4"},{"id":"CVE-2","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
@@ -64,6 +65,7 @@ bevindingen upgrade_kan_niet '[{"pkg":"zlib1g","inst":"1:1.3.dfsg+really1.3.1-1"
 toets "cve: fix staat in de suite"              0 cve fix_beschikbaar gewoon "dekt 2.41-5+deb13u1"
 toets "cve: fix nog niet uitgeleverd"           1 cve fix_te_nieuw    gewoon "nog niet"
 toets "cve: een van meerdere fixversies telt"   0 cve fix_lijst       gewoon "dekt"
+toets "cve: fixlijst met spatie na de komma"   0 cve fix_lijst_spatie gewoon "dekt"
 toets "cve: pakket niet in de suite"            1 cve fix_onbekend    gewoon "geen kandidaat"
 toets "cve: bevinding zonder fixversie"         1 cve fix_zonder_fix  gewoon "nog niet"
 toets "cve: een van twee pakketten is genoeg"   0 cve twee_pakketten  gewoon "1 pakket"

@@ -350,11 +350,13 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch]
   fi
 }
 
-policy_met_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n'
-policy_zonder_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n'
+policy_met_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n'
+policy_zonder_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n'
 cve_bevinding='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"2.41-5+deb13u1"}]'
 cve_te_nieuw='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"9.9-1"}]'
-pakketten='[{"Name":"util-linux","Version":"2.41-5"}]'
+# De vorm die Trivy werkelijk schrijft: `Version` mist de epoch en de revisie,
+# de volledige versie staat in `ID`.
+pakketten='[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Release":"5","Arch":"amd64"},{"ID":"bind9-dnsutils@1:9.20.26-1~deb13u1","Name":"bind9-dnsutils","Version":"9.20.26","Release":"1~deb13u1","Epoch":1,"Arch":"amd64"}]'
 
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
 uit="$(epoch_draai "$d")"; rc=$?
@@ -387,7 +389,25 @@ grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: openstaand voorstel word
 
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" ""
 uit="$(epoch_draai "$d")"; rc=$?
-toets "epoch: lege policy-uitvoer wordt rood" 1 "leverde niets op" "$uit" "$rc"
+toets "epoch: lege policy-uitvoer wordt rood" 1 "van de 2 gevraagde pakketten" "$uit" "$rc"
+
+# Een vastzittende CVE mag de periodieke verversing niet bevriezen.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: vastzittende CVE blokkeert de periodieke verversing niet" 0 "hogere kandidaat" "$uit" "$rc"
+geopend "epoch: vastzittende CVE laat de periodieke verversing door" "$d"
+
+# Een vraag die niet beantwoord kán worden mag niet als "nee" tellen.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$d/ws/.github/scripts/apt-upgrade-beschikbaar.sh"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: onbeantwoordbare beschikbaarheidsvraag wordt rood" 1 "kon niet beantwoord worden" "$uit" "$rc"
+
+# Een gedeeltelijk mislukte apt-get update leest anders als "niets te halen".
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+stub "$d" docker "cat '$d/policy.txt'; echo 'W: Some index files failed to download.' >&2"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: mislukte index-download wordt rood" 1 "niet alle indexen" "$uit" "$rc"
 
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" '[]' "$policy_met_update"
 uit="$(epoch_draai "$d")"; rc=$?

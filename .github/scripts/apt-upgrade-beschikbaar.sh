@@ -26,9 +26,11 @@ for bestand in "${bevindingen}" "${policy}"; do
   }
 done
 
+# Met tabs scheiden: Trivy geeft meerdere fixversies soms als "a, b", en een
+# spatie zou de lijst afkappen op de eerste versie.
 case "${modus}" in
-  cve)     sleutel='.pkg + " " + (.fix // "-") + " " + (.id // "?")' ;;
-  upgrade) sleutel='.pkg + " " + (.inst // "-") + " " + "-"' ;;
+  cve)     sleutel='[.pkg, (.fix // "-"), (.id // "?")] | @tsv' ;;
+  upgrade) sleutel='[.pkg, (.inst // "-"), "-"] | @tsv' ;;
   *)
     echo "FOUT: onbekende modus '${modus}' (verwacht: cve of upgrade)." >&2
     exit 2 ;;
@@ -58,7 +60,7 @@ kandidaat() {
 
 haalbaar=0
 
-while read -r pkg doel id; do
+while IFS=$'\t' read -r pkg doel id; do
   [ -n "${pkg}" ] || continue
   kand="$(kandidaat "${pkg}")"
 
