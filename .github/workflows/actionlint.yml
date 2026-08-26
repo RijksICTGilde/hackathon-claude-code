@@ -85,8 +85,10 @@ jobs:
       # is alleen in CI te reproduceren en daarmee duurder om te debuggen.
       #
       # actionlint koppelt alleen bash en sh aan shellcheck, en python aan
-      # pyflakes. Andere shells gaan er ongecontroleerd langs; die worden
-      # hieronder geweigerd in plaats van stil doorgelaten.
+      # pyflakes. Andere shells gaan er ongecontroleerd langs. Ook pyflakes
+      # zelf komt ongepind uit `PATH`, dus een python-blok zou zijn oordeel
+      # laten afhangen van wat het runner-image toevallig meebrengt. Beide
+      # worden hieronder geweigerd in plaats van stil doorgelaten.
       # TODO(#133): de inputs van gepinde actions worden niet gecontroleerd.
       - name: actionlint draaien
         run: |
@@ -95,7 +97,8 @@ jobs:
           # onderscheid leest een kapotte aanroep als "niets gevonden".
           uses_shell() {
             local rc=0
-            git grep -qE "$1" -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || rc=$?
+            git grep --untracked -qE "$1" \
+              -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || rc=$?
             case "${rc}" in
               0) return 0 ;;
               1) return 1 ;;
@@ -107,16 +110,18 @@ jobs:
             exit 1
           fi
           if uses_shell "shell:[[:space:]]*['\"]?python"; then
-            command -v pyflakes >/dev/null || {
-              echo "Er staat een python-run-blok in de workflows; voeg pyflakes aan deze job toe, anders slaat actionlint het over." >&2
-              exit 1
-            }
+            echo "Er staat een python-run-blok in de workflows; haal pyflakes er net zo gepind bij als de andere twee linters en geef hem mee met -pyflakes." >&2
+            exit 1
           fi
           # Via een bestand: `mapfile` uit een pipe draait in een subshell en
           # verliest de array, na procesvervanging blijft een falende `git`
           # onopgemerkt, en command substitution gooit de NUL-scheiding weg
           # waardoor alle paden aan elkaar plakken.
-          git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+          # Ook ongetrackte bestanden: in CI verandert dat niets, maar lokaal
+          # zou een net aangemaakt workflowbestand anders ongemerkt overgeslagen
+          # worden.
+          git ls-files -z --cached --others --exclude-standard \
+            '.github/workflows/*.yml' '.github/workflows/*.yaml' \
             > "${RUNNER_TEMP}/workflowlist"
           mapfile -d '' files < "${RUNNER_TEMP}/workflowlist"
           if [ ${#files[@]} -eq 0 ]; then
