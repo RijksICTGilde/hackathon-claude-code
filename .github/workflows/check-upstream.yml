@@ -131,6 +131,13 @@ jobs:
             echo "FOUT: kon huidige NODE_VERSION niet uit Dockerfile lezen" >&2
             exit 1
           fi
+          # Precies één pin verwachten: een tweede pin met een ander
+          # versienummer valt buiten de telling van de vervanging en zou stil
+          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
+          if [ "$(grep -oE 'NODE_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één NODE_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
           {
             echo "current=$current"
             echo "latest=$latest"
@@ -151,7 +158,7 @@ jobs:
           # NODE_ARCH en niet aan de kolomuitlijning: hertabelleren van dat blok
           # zou de job anders wekelijks zwijgend laten sterven.
           for arch in x64 arm64; do
-            if [ "$(grep -cP "NODE_ARCH=${arch};\\s*SHA=[a-f0-9]{64}" Dockerfile)" -ne 1 ]; then
+            if [ "$(grep -oP "NODE_ARCH=${arch};\\s*SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
               echo "FOUT: verwacht precies één ${arch}-SHA-pin voor Node in de Dockerfile" >&2
               exit 1
             fi
@@ -221,6 +228,13 @@ jobs:
           current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
           if [ -z "$current" ]; then
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten: een tweede pin met een ander
+          # versienummer valt buiten de telling van de vervanging en zou stil
+          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
+          if [ "$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één NPM_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
           major=${current%%.*}
@@ -296,6 +310,13 @@ jobs:
             echo "FOUT: kon huidige DELTA_VERSION niet uit Dockerfile lezen" >&2
             exit 1
           fi
+          # Precies één pin verwachten: een tweede pin met een ander
+          # versienummer valt buiten de telling van de vervanging en zou stil
+          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
+          if [ "$(grep -oE 'DELTA_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één DELTA_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
           {
             echo "current=$current"
             echo "latest=$latest"
@@ -317,7 +338,7 @@ jobs:
           # case-tak en niet aan de kolomuitlijning: hertabelleren van dat blok
           # zou de job anders wekelijks zwijgend laten sterven.
           for arch in amd64 arm64; do
-            if [ "$(grep -cP "${arch}\\)\\s*SHA=[a-f0-9]{64}" Dockerfile)" -ne 1 ]; then
+            if [ "$(grep -oP "${arch}\\)\\s*SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
               echo "FOUT: verwacht precies één ${arch}-SHA-pin voor delta in de Dockerfile" >&2
               exit 1
             fi
@@ -390,6 +411,13 @@ jobs:
             echo "FOUT: kon huidige RTK_VERSION niet uit Dockerfile lezen" >&2
             exit 1
           fi
+          # Precies één pin verwachten: een tweede pin met een ander
+          # versienummer valt buiten de telling van de vervanging en zou stil
+          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
+          if [ "$(grep -oE 'RTK_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één RTK_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
           {
             echo "current=$current"
             echo "latest=$latest"
@@ -399,9 +427,21 @@ jobs:
             exit 0
           fi
           # Byte-identiek aan de upstream-tag houden, zodat de herkomst
-          # controleerbaar blijft.
+          # controleerbaar blijft. Eerst naar een tijdelijk bestand: een lege
+          # of ontbrekende download zou anders stil in de vendor-map belanden
+          # onder een voorstel dat zegt het script te hebben bijgewerkt.
+          nieuw_script=$(mktemp)
           curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
-            -o vendor/install-scripts/rtk.sh
+            -o "$nieuw_script"
+          if [ ! -s "$nieuw_script" ]; then
+            echo "FOUT: het opgehaalde rtk-install-script is leeg" >&2
+            exit 1
+          fi
+          if ! head -1 "$nieuw_script" | grep -q '^#!'; then
+            echo "FOUT: het opgehaalde rtk-install-script begint niet met een shebang" >&2
+            exit 1
+          fi
+          mv "$nieuw_script" vendor/install-scripts/rtk.sh
           # Twee plekken in de Dockerfile (de binary-pin en de herkomst-URL) en
           # één in de README. Slaagt er één niet, dan zou de PR een bump claimen
           # die maar half is doorgevoerd; het script faalt dan zichtbaar.

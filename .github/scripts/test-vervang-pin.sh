@@ -38,6 +38,10 @@ toets "oud en nieuw gelijk"       1 'VERSION=v1.0.0\n'                 v1.0.0 v1
 toets "ampersand in nieuwe waarde" 1 'VERSION=v1.0.0\n'                v1.0.0 'v1&1.0'
 toets "sed-metateken in oude waarde" 1 'VERSION=v1.0.0\n'              'v1.0.*' v1.1.0
 toets "spatie in waarde"          1 'VERSION=v1.0.0\n'                 'v1.0.0 ' v1.1.0
+# Een punt is een wildcard in een sed-patroon; zonder escape raakt v1.0.0 ook
+# v1x0y0 en telt de controle achteraf twee vervangingen.
+toets "punt matcht geen willekeurig teken" 1 'A=v1.0.0\nB=v1x0y0\n'      v1.0.0 v1.1.0 2
+toets "alleen de letterlijke waarde"       0 'A=v1.0.0\nB=v1x0y0\n'      v1.0.0 v1.1.0 1
 
 # Bestaat het bestand niet, dan is er niets vervangen en niets te melden.
 rc=0

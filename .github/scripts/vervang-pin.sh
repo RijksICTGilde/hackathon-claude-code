@@ -48,7 +48,10 @@ fi
 # is "staat de oude waarde er nog?" na een directe vervanging altijd waar, en
 # zou een geslaagde bump als mislukt eindigen.
 teken="__pin_vervanging_$$__"
-sed -i "s|${oud}|${teken}|g" "${bestand}"
+# `.` is een wildcard in een sed-patroon: zonder escape zou v1.0.0 ook v1x0y0
+# raken. De tekenset hierboven laat verder geen metatekens toe.
+oud_patroon="${oud//./\\.}"
+sed -i "s|${oud_patroon}|${teken}|g" "${bestand}"
 
 if grep -qF -- "${oud}" "${bestand}"; then
   echo "FOUT: '${oud}' staat nog in ${bestand} na de vervanging." >&2
