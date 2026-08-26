@@ -126,6 +126,13 @@ jobs:
             exit 1
           fi
 
+      # De suppressielijst gaat mee de gate in; een schrijffout daarin zou
+      # meer verbergen dan de lijst laat zien. Deze workflow draait ook op een
+      # tag, waar trivy.yml niet komt.
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        if: github.event_name == 'pull_request'
+        run: .github/scripts/valideer-trivyignore.sh
+
       - name: Trivy image scan (CRITICAL/HIGH)
         if: github.event_name == 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

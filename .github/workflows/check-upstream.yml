@@ -469,6 +469,10 @@ jobs:
             exit 1
           fi
 
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/valideer-trivyignore.sh
+
       # Zelfde severity, ignore-unfixed en suppressies als de gate in
       # build-image.yml; een amd64-bevinding hier voorspelt daar dus een falende
       # gate. Voor arm64 bestaat die tegenhanger niet. Exit-code 0: deze job

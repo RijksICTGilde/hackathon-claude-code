@@ -12,44 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  suppressies:
-    name: Suppressielijst valideren
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Trivy negeert een onbekende sleutel in de suppressielijst zonder
-      # melding, en dat faalt open: `path` in plaats van `paths` maakt de
-      # uitzondering projectbreed, een vertypte `expired_at` haalt de
-      # houdbaarheid eruit, en een regel zonder `id` onderdrukt alles op dat
-      # pad. Een schrijffout mag dus niet stil meer verbergen dan bedoeld.
-      - name: Sleutels in .trivyignore.yaml afdwingen
-        run: |
-          set -euo pipefail
-          command -v yq >/dev/null || {
-            echo "yq ontbreekt; de suppressielijst kan niet gecontroleerd worden." >&2
-            exit 1
-          }
-          yq -e '
-            (keys - ["misconfigurations", "secrets", "vulnerabilities"] | length == 0)
-            and
-            ([.[] | .[]] | all_c(
-              (keys - ["expired_at", "id", "paths", "statement"] | length == 0)
-              and (.id // "" | length > 0)
-              and (.paths // [] | length > 0)
-              and (.expired_at // "" | to_string | test("^\d{4}-\d{2}-\d{2}"))
-            ))
-          ' .trivyignore.yaml > /dev/null 2>&1 || {
-            echo "Ongeldige .trivyignore.yaml: elke regel heeft id, paths en expired_at (JJJJ-MM-DD) nodig, en geen andere sleutels." >&2
-            exit 1
-          }
-
   scan:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
@@ -66,6 +28,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # In de job zelf en niet als aparte job: een overgeslagen required check
+      # telt bij branch protection als geslaagd, dus een rode validatie moet
+      # deze check rood maken.
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        run: .github/scripts/valideer-trivyignore.sh
 
       # Fail the workflow on CRITICAL/HIGH vulnerability findings so PRs
       # cannot land while ignoring them. De SARIF-run is alleen voor het
@@ -150,6 +118,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        run: .github/scripts/valideer-trivyignore.sh
 
       - name: Trivy fail-on-vuln (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
