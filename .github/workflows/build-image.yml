@@ -112,7 +112,7 @@ jobs:
       # voor heeft: Debian markeert veel bevindingen als deferred of no-DSA, en
       # daarop blokkeren zou betekenen dat er niets meer kan landen tot Debian
       # beweegt. Een groene stap betekent hier dus "geen fixbare CRITICAL/HIGH",
-      # niet "geen CRITICAL/HIGH". Uitzonderingen staan met reden in .trivyignore.
+      # niet "geen CRITICAL/HIGH". Uitzonderingen staan met reden in .trivyignore.yaml.
       # Symmetrisch met de sign-stap hieronder: een lege waarde uit de buildstap
       # mag geen stap opleveren die iets anders scant dan bedoeld.
       - name: Assert image ID present
@@ -136,7 +136,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Install cosign

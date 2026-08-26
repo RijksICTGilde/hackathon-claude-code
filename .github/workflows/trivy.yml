@@ -44,6 +44,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Misconfig en secret-detectie worden zonder severity-cap gegated:
@@ -57,6 +58,7 @@ jobs:
           scan-type: fs
           format: table
           scanners: misconfig,secret
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Trivy SARIF for code-scanning dashboard
@@ -69,6 +71,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           scanners: vuln,secret,misconfig
+          trivyignores: .trivyignore.yaml
 
       # Fail loudly if the scanner crashed and produced no SARIF; otherwise
       # the upload step would silently no-op and the dashboard would show
@@ -118,6 +121,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Zie comment in same-repo job: misconfig/secret zonder severity-cap
@@ -128,6 +132,7 @@ jobs:
           scan-type: fs
           format: table
           scanners: misconfig,secret
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Tweede run voor MEDIUM-context: zonder fork-toegang tot
@@ -145,6 +150,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           scanners: vuln,secret,misconfig
+          trivyignores: .trivyignore.yaml
           exit-code: '0'
 
       # Symmetrie met de same-repo job's "Verify SARIF output exists":

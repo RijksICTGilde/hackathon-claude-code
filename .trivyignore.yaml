@@ -1,0 +1,81 @@
+# Trivy-suppressions. Elke uitzondering geldt alleen voor het pad waarvoor hij
+# is opgeschreven en verloopt vanzelf, zodat de lijst niet stil veroudert.
+#
+# Gelezen door .github/workflows/trivy.yml, de image-scan in build-image.yml en
+# apt-security-refresh in check-upstream.yml. Misconfig- en secret-scans worden
+# ongefilterd gegated; bewuste uitzonderingen horen hier met reden te staan.
+#
+# Een verlopen regel maakt de scan rood. Dat is het moment om te kijken of de
+# uitzondering nog klopt: verlengen mag, maar dan met een nieuwe onderbouwing.
+
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - "claude-sandbox/Dockerfile"
+    expired_at: 2026-11-26
+    statement: |
+      Add HEALTHCHECK instruction in your Dockerfile (LOW).
+      claude-sandbox is een interactieve dev-sandbox; het entrypoint eindigt op
+      `exec sleep infinity`. Er is geen service om health van te checken — pid 1
+      healthy zegt niets over de bruikbaarheid van de sandbox.
+
+  - id: DS-0002
+    paths:
+      - "claude-sandbox/Dockerfile"
+    expired_at: 2026-11-26
+    statement: |
+      Last USER command in Dockerfile should not be 'root' (HIGH).
+      De container start als root omdat init-firewall.sh NET_ADMIN nodig heeft,
+      en dropt in entrypoint-root.sh onherroepelijk naar `claude` (setpriv) vóór
+      er iets draait dat de gebruiker aanstuurt. Er is geen weg terug: geen
+      sudo, geen sudoers-regel, en de setuid/setgid-bits zijn image-breed
+      gestript op de podman-helpers na.
+
+      De check gaat over de gedeclareerde image-gebruiker, niet over wie de
+      workload draait. De agent bereikt de root-fase nooit. De twee paden die er
+      wél naartoe leiden — `docker exec` zonder -u, en een eigen --entrypoint —
+      vereisen allebei toegang tot de Docker-CLI op de host; wie die heeft kan
+      ook `docker run --privileged` en is al host-root. Dat ligt buiten de grens
+      die deze sandbox bewaakt. Er is geen docker-socket in de container
+      gemount.
+
+      Het alternatief (firewall in een aparte init-service, hoofdcontainer
+      zonder root) is onderzocht en afgevallen: bij `restart: unless-stopped`
+      komt de container na een herstart terug zonder dat die service opnieuw
+      draait, wat een sandbox met open egress oplevert. Zie #98.
+
+vulnerabilities:
+  # De vier hieronder zitten in dependencies die npm bundelt. De Dockerfile pint
+  # npm op de nieuwste 11.x; voor deze vier bundelt geen enkele npm-release een
+  # gefixte versie. `apt-get upgrade` raakt ze niet: Node komt van nodejs.org,
+  # niet uit apt. Het zijn drie DoS-bevindingen in een sandbox die geen dienst
+  # aanbiedt, en een SSRF in npm's proxy-afhandeling die alleen speelt als npm
+  # een vijandige registry of proxyconfiguratie verwerkt.
+  #
+  # Het pad bindt elke regel aan de npm-bundel: dezelfde CVE in een systeem-
+  # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
+  # weg zodra npm de dependency bumpt; check-upstream.yml opent een PR bij een
+  # nieuwe npm-release, wat het moment is om dat na te lopen.
+  - id: CVE-2026-14257
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    expired_at: 2026-11-26
+    statement: brace-expansion — DoS via geheugenuitputting in expand(), fix in 5.0.8.
+
+  - id: CVE-2026-69152
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    expired_at: 2026-11-26
+    statement: brace-expansion — DoS via onbegrensde tussenarrays, fix in 5.0.9.
+
+  - id: CVE-2026-69192
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    expired_at: 2026-11-26
+    statement: ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1.
+
+  - id: CVE-2026-73566
+    paths:
+      - "usr/local/lib/node_modules/npm/**"
+    expired_at: 2026-11-26
+    statement: tar — DoS via een geprepareerd archief met lange paden, fix in tar 7.5.21.
