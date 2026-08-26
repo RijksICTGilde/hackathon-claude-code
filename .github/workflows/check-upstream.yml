@@ -198,9 +198,16 @@ jobs:
         id: compare
         run: |
           set -euo pipefail
-          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | head -1 | cut -d= -f2)
+          # Beide `|| true`'s: onder `set -e` met pipefail zou een niet-matchende
+          # grep of een gefaalde curl de stap beëindigen voor de foutmelding
+          # eronder wordt bereikt.
+          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
           if [ -z "$current" ]; then
             echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          if [ "$(grep -c 'NPM_VERSION=[0-9]' Dockerfile)" -ne 1 ]; then
+            echo "FOUT: meerdere NPM_VERSION-pins; de bump zou er maar één verzetten" >&2
             exit 1
           fi
           major=${current%%.*}
@@ -208,7 +215,7 @@ jobs:
           # sorteren anders mee en leveren een onbruikbare pin op.
           latest=$(curl -fsSL https://registry.npmjs.org/npm \
             | jq -r --arg m "$major" '.versions | keys[] | select(test("^" + $m + "\\.[0-9]+\\.[0-9]+$"))' \
-            | sort -V | tail -1)
+            | sort -V | tail -1 || true)
           if [ -z "$latest" ]; then
             echo "FOUT: kon laatste npm-versie binnen major $major niet bepalen" >&2
             exit 1
@@ -220,9 +227,16 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           if [ "$current" = "$latest" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          sed -i "s|NPM_VERSION=${current}|NPM_VERSION=${latest}|" Dockerfile
+          # sed geeft ook exit 0 bij nul substituties; zonder deze controle zou
+          # create-pull-request een schone worktree vinden en stil niets doen.
+          if ! grep -qF "NPM_VERSION=${latest}" Dockerfile || grep -qF "NPM_VERSION=${current}" Dockerfile; then
+            echo "FOUT: bump van NPM_VERSION is niet volledig toegepast" >&2
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open auto-PR if npm changed
         if: steps.compare.outputs.changed == 'true'
@@ -387,3 +401,271 @@ jobs:
             Bekijk de diff van `vendor/install-scripts/rtk.sh`: dat script draait tijdens
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
+
+  # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
+  # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
+  # Dockerfile.
+  #
+  # De image-scan in build-image.yml draait alleen op PR-builds en die zijn
+  # amd64-only, dus de gepubliceerde multi-arch image wordt daar niet gedekt.
+  # Deze job scant hem wekelijks op beide architecturen, elk op de digest uit de
+  # manifest list — `:latest` zou naar het platform van de runner resolven.
+  apt-security-refresh:
+    name: apt-security-refresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    env:
+      IMAGE_REPO: ghcr.io/rijksictgilde/claude-sandbox
+      # Drempel waarboven een verversings-PR opengaat, ook zonder bevindingen.
+      # Patchen is een cyclus, geen reactie op een scannerdrempel: de scan ziet
+      # alleen fixbare CRITICAL/HIGH, dus MEDIUM en LOW komen alleen binnen via
+      # een rebuild — deze verversing of een Dependabot-bump van de
+      # base-digest. 28 is vier keer de wekelijkse cron: staat de epoch op de
+      # crondag, dan valt de vierde run precies op de drempel in plaats van
+      # erover.
+      MAX_EPOCH_AGE_DAYS: '28'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Ook nodig wanneer het package publiek is: anonieme GHCR-pulls lopen
+      # tegen een lagere rate limit aan.
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # De digests komen uit het register en belanden hieronder in een image-ref:
+      # valideren op vorm voor ze verder gaan.
+      - name: Resolve per-architecture digests
+        id: digests
+        run: |
+          set -euo pipefail
+          manifest=$(docker buildx imagetools inspect "${IMAGE_REPO}:latest" --format '{{json .Manifest}}')
+          resolved=()
+          for arch in amd64 arm64; do
+            digest=$(jq -r --arg a "$arch" \
+              '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a) | .digest] | first // ""' \
+              <<<"$manifest")
+            if ! grep -qE '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
+              echo "FOUT: geen bruikbare linux/${arch}-digest in ${IMAGE_REPO}:latest (waarde: '${digest}')" >&2
+              jq -c '[.manifests[]?.platform]' <<<"$manifest" >&2
+              exit 1
+            fi
+            resolved+=("$digest")
+            echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
+          done
+          # De manifest list hoort twee verschillende digests te bevatten;
+          # gelijke digests wijzen op een kapotte publicatie.
+          if [ "${resolved[0]}" = "${resolved[1]}" ]; then
+            echo "FOUT: amd64 en arm64 verwijzen naar dezelfde digest (${resolved[0]})" >&2
+            exit 1
+          fi
+
+      # Zelfde severity, ignore-unfixed en suppressies als de gate in
+      # build-image.yml; een amd64-bevinding hier voorspelt daar dus een falende
+      # gate. Voor arm64 bestaat die tegenhanger niet. Exit-code 0: deze job
+      # opent een PR in plaats van te falen.
+      - name: Trivy scan of published image (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.amd64 }}
+          format: json
+          output: /tmp/trivy-amd64.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '0'
+
+      - name: Trivy scan of published image (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.arm64 }}
+          format: json
+          output: /tmp/trivy-arm64.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '0'
+          # De binary zit na de vorige stap in de tool-cache.
+          skip-setup-trivy: true
+
+      - name: Bump APT_UPGRADE_EPOCH if needed
+        id: compare
+        run: |
+          set -euo pipefail
+          # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel of in de
+          # gepinde binaries (Node, git-delta, rtk) lost een bump van deze laag
+          # niet op; die volgen hun eigen versiepin, met een eigen job hierboven.
+          os='[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]'
+          rest='[.Results[]? | select(.Class != null and .Class != "os-pkgs") | .Vulnerabilities[]?]'
+          fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
+          : > /tmp/os-all.json
+          : > /tmp/rest-all.json
+          for arch in amd64 arm64; do
+            report="/tmp/trivy-${arch}.json"
+            # Een crashende scan maakt de stap rood, maar een scan die netjes
+            # exit 0 geeft over het verkeerde ding niet: OS niet herkend, of een
+            # rapport over de andere architectuur. Assert daarom per
+            # architectuur dat er werkelijk een Debian-image van díe
+            # architectuur met apt-pakketten is gescand.
+            if [ ! -s "$report" ]; then
+              echo "FOUT: $report ontbreekt of is leeg; de scanstap heeft niets weggeschreven" >&2
+              exit 1
+            fi
+            family=$(jq -r '.Metadata.OS.Family // ""' "$report" || true)
+            if [ "$family" != "debian" ]; then
+              echo "FOUT: geen Debian-OS gedetecteerd in $report (family='${family}'); de apt-laag is niet gescand" >&2
+              exit 1
+            fi
+            scanned_arch=$(jq -r '.Metadata.ImageConfig.architecture // ""' "$report" || true)
+            if [ "$scanned_arch" != "$arch" ]; then
+              echo "FOUT: $report bevat een '${scanned_arch}'-image, verwacht ${arch}" >&2
+              exit 1
+            fi
+            os_targets=$(jq "[.Results[]? | select(.Class == \"os-pkgs\")] | length" "$report" || true)
+            case "$os_targets" in
+              ''|*[!0-9]*|0)
+                echo "FOUT: geen os-pkgs-target in $report; de apt-laag is niet gescand" >&2
+                exit 1 ;;
+            esac
+            arch_count=$(jq "$os | group_by(.VulnerabilityID) | length" "$report" || true)
+            echo "Gescand: ${arch} (${family}), ${os_targets} os-pkgs-target(s), ${arch_count} fixbare CRITICAL/HIGH."
+            jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
+            jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
+          done
+          # Tellen per CVE-ID over beide architecturen samen: één CVE die tien
+          # pakketten op twee architecturen raakt is één bevinding.
+          count=$(jq -s 'add | [.[].id] | unique | length' /tmp/os-all.json || true)
+          other=$(jq -s 'add | [.[].id] | unique | length' /tmp/rest-all.json || true)
+          for var in count other; do
+            case "${!var}" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling uit /tmp/os-all.json of /tmp/rest-all.json (${var}='${!var}')" >&2
+                head -c 500 /tmp/os-all.json >&2
+                exit 1 ;;
+            esac
+          done
+          if [ "$other" -gt 0 ]; then
+            echo "::warning::${other} fixbare CRITICAL/HIGH buiten de apt-pakketten; die volgen hun eigen versiepin, niet APT_UPGRADE_EPOCH"
+          fi
+          # `|| true`: zonder match zou grep onder pipefail de stap laten
+          # eindigen voor de foutmelding hieronder wordt bereikt.
+          current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon ARG APT_UPGRADE_EPOCH niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          if [ "$(grep -c '^ARG APT_UPGRADE_EPOCH=' Dockerfile)" -ne 1 ]; then
+            echo "FOUT: meerdere APT_UPGRADE_EPOCH-regels; de bump zou er maar één verversen" >&2
+            exit 1
+          fi
+          new=$(date -u +%F)
+          # De regex hierboven dekt de vorm, niet de semantiek: 2026-02-30 komt
+          # er doorheen en zou verderop op een rekenfout stranden.
+          current_seconds=$(date -u -d "$current" +%s) || {
+            echo "FOUT: APT_UPGRADE_EPOCH '${current}' is geen bestaande datum" >&2
+            exit 1
+          }
+          now_seconds=$(date -u +%s)
+          # Op seconden vergelijken: integer-deling kapt af richting nul, dus een
+          # epoch van morgen zou als leeftijd 0 langs deze guard glippen.
+          if [ "$current_seconds" -gt "$now_seconds" ]; then
+            echo "FOUT: APT_UPGRADE_EPOCH (${current}) ligt in de toekomst; de periodieke verversing slaat pas ${MAX_EPOCH_AGE_DAYS} dagen ná die datum aan" >&2
+            exit 1
+          fi
+          age=$(( ( now_seconds - current_seconds ) / 86400 ))
+          # Een leeftijd ver boven de drempel betekent dat eerdere verversingen
+          # niet zijn geland: meestal een PR die blijft liggen of een rebuild van
+          # :latest die nog moet komen, soms een schedule dat GitHub na
+          # langdurige repo-inactiviteit heeft uitgeschakeld.
+          if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
+            echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
+          fi
+          if [ "$count" -gt 0 ]; then
+            reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten"
+          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+            reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
+          else
+            echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten; epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current" = "$new" ]; then
+            # Al vandaag gebumpt: een tweede bump levert dezelfde inhoud op en
+            # dus een lege commit.
+            echo "::warning::${reason}, maar APT_UPGRADE_EPOCH staat al op ${new}; geen PR. De rebuild van :latest moet nog langskomen."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -i "s|^ARG APT_UPGRADE_EPOCH=${current}$|ARG APT_UPGRADE_EPOCH=${new}|" Dockerfile
+          grep -qx "ARG APT_UPGRADE_EPOCH=${new}" Dockerfile || {
+            echo "FOUT: bump van APT_UPGRADE_EPOCH is niet toegepast" >&2
+            exit 1
+          }
+          # Eén regel per unieke combinatie van CVE, pakket en versiepaar.
+          # Architecturen met hetzelfde versiepaar staan samen op één regel;
+          # verschillen de versies, dan krijgt elke architectuur een eigen
+          # regel. Het aantal regels kan daarom hoger liggen dan de telling, die
+          # per CVE-ID gaat.
+          #
+          # De delimiter-filter op de jq-uitvoer is een vangnet: de regels
+          # beginnen altijd met een streepje, dus scanuitvoer kan de
+          # GITHUB_OUTPUT-heredoc niet vroegtijdig afsluiten.
+          if [ "$count" -gt 0 ]; then
+            summary=$(jq -rs 'add
+                              | group_by([.id, .pkg, .inst, .fix])
+                              | .[]
+                              | "- `\(.[0].id)` (\(.[0].sev)) — \(.[0].pkg): `\(.[0].inst)` → `\(.[0].fix)` (\([.[].arch] | unique | join(", ")))"' \
+                       /tmp/os-all.json | { grep -vFx 'TRIVY_EOF' || true; })
+          else
+            summary="- Geen openstaande fixbare CRITICAL/HIGH; dit is de periodieke verversing."
+          fi
+          {
+            echo 'summary<<TRIVY_EOF'
+            printf '%s\n' "$summary"
+            echo 'TRIVY_EOF'
+            echo "current=$current"
+            echo "new=$new"
+            echo "reason=$reason"
+            echo "changed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if a bump is needed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/apt-security-refresh
+          delete-branch: true
+          commit-message: "chore(deps): bump APT_UPGRADE_EPOCH naar ${{ steps.compare.outputs.new }}"
+          title: "chore(deps): apt security-updates ophalen (APT_UPGRADE_EPOCH ${{ steps.compare.outputs.new }})"
+          labels: dependencies
+          body: |
+            Aanleiding: ${{ steps.compare.outputs.reason }}, gemeten op
+            `${{ env.IMAGE_REPO }}:latest` over linux/amd64 en linux/arm64.
+            `APT_UPGRADE_EPOCH` is gebumpt zodat de `apt-get upgrade`-laag opnieuw draait
+            in plaats van uit de layer cache te komen.
+
+            - **Oude waarde:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe waarde:** `${{ steps.compare.outputs.new }}`
+
+            Bevindingen (één regel per CVE, pakket en versiepaar; architecturen met
+            hetzelfde versiepaar staan samen op één regel):
+
+            ${{ steps.compare.outputs.summary }}
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget. Deze PR is
+            door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en heropen
+            hem om de checks alsnog te laten draaien. Blijft er na de rebuild iets staan, dan is
+            er voor dat pakket geen Debian-update en hoort het met reden in `.trivyignore`.
