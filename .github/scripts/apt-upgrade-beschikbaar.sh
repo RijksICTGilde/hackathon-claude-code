@@ -87,19 +87,22 @@ while IFS=$'\037' read -r pkg doel id; do
   # kent geen metatekens, dus dat is vandaag onschadelijk en morgen een val.
   read -r -a doelversies <<<"${doel//,/ }"
 
+  leesbaar=0
+
   for versie in "${doelversies[@]}"; do
     [ -n "${versie}" ] && [ "${versie}" != "-" ] || continue
 
     # dpkg geeft alleen 2 bij een versie die het echt niet kan ontleden. Bij
     # iets dat niet met een cijfer begint waarschuwt het naar stderr en
-    # vergelijkt alsnog — resultaat 1, wat hier "nee" zou betekenen. Een
-    # fixversie die geen versie is (vrije tekst, een suite-aanduiding) mag niet
-    # als "niets te halen" doorgaan.
+    # vergelijkt alsnog — resultaat 1, wat hier "nee" zou betekenen. Zo'n
+    # element overslaan, niet de hele regel laten vallen: Trivy geeft vaak een
+    # lijst, en één onleesbaar element mag een versie die er wél in staat niet
+    # ongeldig maken.
     case "${versie}" in
-      [0-9]*) ;;
+      [0-9]*) leesbaar=$((leesbaar + 1)) ;;
       *)
-        echo "FOUT: '${versie}' is voor ${pkg} geen leesbare Debian-versie; de vergelijking is niet gedaan." >&2
-        exit 2 ;;
+        echo "  ${pkg}: '${versie}' is geen leesbare Debian-versie en telt niet mee"
+        continue ;;
     esac
 
     vergelijking=ge
@@ -115,6 +118,13 @@ while IFS=$'\037' read -r pkg doel id; do
         exit 2 ;;
     esac
   done
+
+  # Stond er wel een doelversie maar was er geen enkele leesbaar, dan is de
+  # vraag voor dit pakket niet beantwoord; dat mag geen "nee" worden.
+  if [ "${leesbaar}" -eq 0 ] && [ "${doel}" != "-" ] && [ -n "${doel}" ]; then
+    echo "FOUT: geen enkele leesbare versie in '${doel}' voor ${pkg}; de vergelijking is niet gedaan." >&2
+    exit 2
+  fi
 
   herkomst=""
   [ "${id}" = "-" ] || herkomst=" (${id})"

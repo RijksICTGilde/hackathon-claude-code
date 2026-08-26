@@ -353,18 +353,53 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm6
   printf '%b' "$4" > "$1/policy.txt"
   # De bronnen die de container zegt gebruikt te hebben. Standaard de drie van
   # een echte trixie-image; een geval kan er een uitlaten.
-  printf '%b' "${EPOCH_INDEX:-INDEX https://deb.debian.org/debian trixie\nINDEX https://deb.debian.org/debian trixie-updates\nINDEX https://deb.debian.org/debian-security trixie-security\n}" \
-    > "$1/indextargets.txt"
+  printf '%b' "${EPOCH_INDEX:-https://deb.debian.org/debian trixie\nhttps://deb.debian.org/debian trixie-updates\nhttps://deb.debian.org/debian-security trixie-security\n}" \
+    > "$1/bronnen.txt"
   # Net als de echte aanroep: eerst de gebruikte bronnen, dan alleen de blokken
   # van de gevraagde pakketten, zodat de fixtures merken welke lijst er
   # werkelijk is voorgelegd.
+  # De stub voert de opdracht van de container echt uit in plaats van de
+  # pakketlijst uit de argumenten te raden. Alleen zo tellen de format-string,
+  # de pipeline en de `_`-placeholder mee: valt die placeholder weg, dan schuift
+  # het eerste pakket naar \$0 en verdwijnt het uit de vraag.
+  cat > "$1/bin/apt-get" <<APTGET
+#!/usr/bin/env bash
+if [ "\$1" = update ]; then exit 0; fi
+if [ "\$1" = indextargets ]; then
+  # Net als apt: de opgegeven velden invullen. Is de format-string leeg — omdat
+  # de shell hem als commando heeft uitgevoerd — dan komt er per bron een lege
+  # regel uit, precies zoals apt dat doet.
+  format=""
+  while [ \$# -gt 0 ]; do [ "\$1" = --format ] && { format="\$2"; shift; }; shift; done
+  while read -r site release; do
+    uit="\$format"
+    uit="\${uit//\\\$(SITE)/\$site}"
+    uit="\${uit//\\\$(RELEASE)/\$release}"
+    printf '%s\\n' "\$uit"
+  done < '$1/bronnen.txt'
+  exit 0
+fi
+exit 0
+APTGET
+  cat > "$1/bin/apt-cache" <<APTCACHE
+#!/usr/bin/env bash
+[ "\$1" = policy ] || exit 0
+shift
+for naam in "\$@"; do
+  awk -v p="\$naam" '\$0 == p ":" {toon=1; print; next} /^[^ ]/ {toon=0} toon' '$1/policy.txt'
+done
+APTCACHE
+  chmod +x "$1/bin/apt-get" "$1/bin/apt-cache"
   stub "$1" docker "
     printf '%s\n' \"\$@\" >> '$1/docker-argumenten.txt'
-    cat '$1/indextargets.txt'
-    for naam in \"\$@\"; do
-      case \"\$naam\" in --rm|sh|-c|_|*sha256:*|apt-get*|-v|*ca.crt*) continue ;; esac
-      awk -v p=\"\$naam\" '\$0 == p \":\" {toon=1; print; next} /^[^ ]/ {toon=0} toon' '$1/policy.txt'
-    done"
+    while [ \$# -gt 0 ]; do
+      case \"\$1\" in
+        sh) shift; [ \"\$1\" = -c ] && shift; break ;;
+        *) shift ;;
+      esac
+    done
+    opdracht=\"\$1\"; shift
+    sh -c \"\$opdracht\" \"\$@\""
   # De stub schrijft zijn argumenten weg, zodat een geval kan toetsen dát er
   # met de juiste branch gezocht is en niet alleen wát er terugkwam.
   stub "$1" gh "printf '%s\n' \"\$@\" >> '$1/gh-argumenten.txt'; ${EPOCH_GH:-printf '%s' '${5:-}'}"
@@ -376,8 +411,15 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm6
   fi
 }
 
-policy_met_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n'
-policy_zonder_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n'
+# De herkomstregel hoort erbij: apt drukt onder elke kandidaat af waar die
+# vandaan komt, en de stap gebruikt dat om een terugval op de pakketstatus van
+# de image te herkennen.
+herkomst='     500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
+policy_met_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
+policy_zonder_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
+# Wat apt teruggeeft als er geen enkele index is: kandidaten uit de status van
+# de image zelf, met priority 100 en zonder archief.
+policy_zonder_index='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n        100 /var/lib/dpkg/status\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n        100 /var/lib/dpkg/status\n'
 cve_bevinding='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"2.41-5+deb13u1"}]'
 cve_te_nieuw='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"9.9-1"}]'
 # De vorm die Trivy werkelijk schrijft: `Version` mist de epoch en de revisie,
@@ -427,7 +469,7 @@ geopend "epoch: vastzittende CVE laat de periodieke verversing door" "$d"
 # gevraagd worden; anders leest "niet gevraagd" als "niet in de suite".
 arm_cve='[{"VulnerabilityID":"CVE-ARM","Severity":"HIGH","PkgName":"libnuma1","InstalledVersion":"2.0.18-1","FixedVersion":"2.0.18-2"}]'
 arm_pakketten='[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Release":"5","Arch":"arm64"}]'
-policy_arm='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\nlibnuma1:\n  Installed: 2.0.18-1\n  Candidate: 2.0.18-2\n'
+policy_arm="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}libnuma1:\n  Installed: 2.0.18-1\n  Candidate: 2.0.18-2\n${herkomst}"
 
 d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_arm" "" "" "$arm_cve" "$arm_pakketten"
 uit="$(epoch_draai "$d")"; rc=$?
@@ -449,6 +491,28 @@ epoch_draai "$d" >/dev/null
 grep -qF '$(SITE)' "$d/docker-argumenten.txt"
 controle "epoch: de format-string bereikt apt onuitgevoerd" $?
 
+# Zonder index geeft apt gewoon kandidaten terug — die van de image zelf. Dat
+# leest als "niets te halen" terwijl er niets geraadpleegd is.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_zonder_index"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: kandidaten uit de pakketstatus wordt rood" 1 "geen enkele kandidaat komt uit een archief" "$uit" "$rc"
+
+# Loopt de basis-image ver uit de pas met de gepubliceerde image, dan is een
+# groot deel van de namen onbekend en wordt er meer geraden dan gemeten.
+d="$(epoch_map)"; epoch_geval "$d" '[]' \
+  '[{"ID":"a@1","Name":"a","Arch":"amd64"},{"ID":"b@1","Name":"b","Arch":"amd64"},{"ID":"c@1","Name":"c","Arch":"amd64"},{"ID":"d@1","Name":"d","Arch":"amd64"},{"ID":"e@1","Name":"e","Arch":"amd64"},{"ID":"f@1","Name":"f","Arch":"amd64"},{"ID":"g@1","Name":"g","Arch":"amd64"},{"ID":"h@1","Name":"h","Arch":"amd64"},{"ID":"i@1","Name":"i","Arch":"amd64"},{"ID":"j@1","Name":"j","Arch":"amd64"}]' \
+  "a:\n  Installed: 1\n  Candidate: 1\n${herkomst}" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: te lage dekking wordt rood" 1 "te veel om de uitkomst een meting te noemen" "$uit" "$rc"
+
+# De uitsluitingslijst moet spiegelen wat de Dockerfile buiten apt om installeert.
+d="$(epoch_map)"
+sed -i 's|^    dpkg -i /tmp/git-delta.deb|    dpkg -i /tmp/iets-anders.deb \&\& dpkg -i /tmp/git-delta.deb|' \
+  "$d/ws/claude-sandbox/Dockerfile"
+epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: een tweede dpkg-installatie zonder uitsluiting wordt rood" 1 "buiten apt om, BUITEN_APT_LAAG noemt er" "$uit" "$rc"
+
 # Koppen zonder versietabel: de namen worden herkend, het formaat niet. Dat is
 # geen "niets te halen" maar een meting die niet gedaan is.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" \
@@ -465,7 +529,7 @@ toets "epoch: policy over andere pakketten wordt rood" 1 "geen enkel van de" "$u
 # Zonder security-bron zou een fix uit die suite onzichtbaar blijven, terwijl
 # `apt-get update` netjes met 0 eindigt.
 d="$(epoch_map)"
-EPOCH_INDEX='INDEX https://deb.debian.org/debian trixie\n' \
+EPOCH_INDEX='https://deb.debian.org/debian trixie\n' \
   epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: ontbrekende security-index wordt rood" 1 "geen security-index" "$uit" "$rc"
@@ -482,6 +546,17 @@ d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_up
 epoch_draai "$d" >/dev/null
 grep -qx 'deps/apt-security-refresh' "$d/gh-argumenten.txt"
 controle "epoch: het voorstel wordt op de eigen branch gezocht" $?
+
+# Loopt arm64 achter op amd64, dan moet de periodieke tak dat zien: de
+# geïnstalleerde versies van beide architecturen wegen mee.
+d="$(epoch_map)"
+epoch_geval "$d" '[]' \
+  '[{"ID":"util-linux@2.41-5+deb13u1","Name":"util-linux","Version":"2.41","Arch":"amd64"}]' \
+  "util-linux:\n  Installed: 2.41-5+deb13u1\n  Candidate: 2.41-5+deb13u1\n${herkomst}" \
+  "" 2020-01-01 '[]' \
+  '[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Arch":"arm64"}]'
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: een achterlopende arm64 lokt een verversing uit" 0 "is hoger dan het geïnstalleerde 2.41-5" "$uit" "$rc"
 
 # Een pakket dat buiten apt om gepind wordt, kan een epoch-bump niet bewegen.
 # Naast git-delta staat er een gewoon apt-pakket in, anders zou de meting al op

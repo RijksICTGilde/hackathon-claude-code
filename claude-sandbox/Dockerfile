@@ -108,6 +108,8 @@ RUN DELTA_VERSION=0.19.2 && \
     esac && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
     echo "$SHA  /tmp/git-delta.deb" | sha256sum -c - && \
+    # Buiten apt om: staat daarom in BUITEN_APT_LAAG in check-upstream.yml,
+    # zodat de wekelijkse verversing er geen voorstel op baseert.
     dpkg -i /tmp/git-delta.deb && \
     rm /tmp/git-delta.deb
 

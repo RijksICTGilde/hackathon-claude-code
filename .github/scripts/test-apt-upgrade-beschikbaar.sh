@@ -49,6 +49,9 @@ toets() { # naam verwachte_exitcode modus bevindingen policy [patroon]
 policy gewoon 'util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n  Version table:\n     2.41-5+deb13u1 500\nzlib1g:\n  Installed: 1:1.3.dfsg+really1.3.1-1\n  Candidate: 1:1.3.dfsg+really1.3.1-1\n'
 policy zonder_kandidaat 'util-linux:\n  Installed: 2.41-5\n  Candidate: (none)\n'
 policy leeg ''
+# Een kop zonder Candidate-regel, gevolgd door een blok dat er wél een heeft:
+# zonder blokgrens zou het eerste pakket de kandidaat van het tweede pakken.
+policy zonder_candidate 'util-linux:\n  Installed: 2.41-5\nzlib1g:\n  Installed: 1:1.3-1\n  Candidate: 1:9.99-1\n'
 
 bevindingen fix_beschikbaar '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
 bevindingen fix_te_nieuw    '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.42-1"}]'
@@ -78,6 +81,7 @@ toets "cve: fixversie die geen versie is"        2 cve fix_geen_versie gewoon "g
 toets "cve: leeg fixveld schuift geen kolom op" 1 cve fix_leeg        gewoon "dekt - nog niet (CVE-1)"
 toets "cve: onvergelijkbare versie"            2 cve fix_onleesbaar   gewoon "niet te vergelijken"
 toets "cve: lege policy-uitvoer"                1 cve fix_beschikbaar leeg   "geen kandidaat"
+toets "cve: blok zonder kandidaat leent niet"    1 cve fix_beschikbaar zonder_candidate "geen kandidaat"
 toets "cve: kandidaat is (none)"                1 cve fix_beschikbaar zonder_kandidaat "geen kandidaat"
 toets "upgrade: hogere kandidaat"               0 upgrade upgrade_kan     gewoon "is hoger dan het geïnstalleerde 2.41-5"
 toets "upgrade: kandidaat gelijk aan installed" 1 upgrade upgrade_kan_niet gewoon "is niet hoger dan het geïnstalleerde"
