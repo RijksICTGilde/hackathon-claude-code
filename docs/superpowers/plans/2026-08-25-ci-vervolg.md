@@ -94,13 +94,16 @@ criteria.
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | PR open | `chore/trivyignore-yaml` | #134 | drie reviewrondes verwerkt, CI groen |
-| 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | PR geopend, review-loop gestart |
+| 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
 | 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | — |
+| 136 | wekelijks voorstel dat niets te wijzigen heeft blijft onopgemerkt | open | — | — | — |
+| 137 | scriptcontrole draait niet op een gestapeld voorstel | open | — | — | — |
+| 138 | één gevendord installatiescript wordt bijna nooit gecontroleerd | open | — | — | — |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
 stap begint en direct nadat je hem afrondt — niet aan het eind van een sessie, want een
