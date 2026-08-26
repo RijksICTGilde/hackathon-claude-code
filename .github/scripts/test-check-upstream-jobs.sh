@@ -21,7 +21,27 @@ command -v yq >/dev/null || {
 geslaagd=0
 gefaald=0
 
-for job in rtk-version delta-version node-version npm-version; do
+# De huidige pins uit de Dockerfile lezen in plaats van ze hier te herhalen:
+# anders breekt elke bump die deze jobs zelf voorstellen de fixtures.
+lees_pin() { # variabelenaam
+  grep -oE "$1=[v]?[0-9]+\.[0-9]+\.[0-9]+" "${wortel}/claude-sandbox/Dockerfile" \
+    | head -1 | cut -d= -f2
+}
+
+rtk_nu="$(lees_pin RTK_VERSION)"
+delta_nu="$(lees_pin DELTA_VERSION)"
+node_nu="$(lees_pin NODE_VERSION)"
+npm_nu="$(lees_pin NPM_VERSION)"
+npm_major="${npm_nu%%.*}"
+
+for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}"; do
+  if [ -z "${waarde}" ]; then
+    echo "FOUT: kon niet alle pins uit de Dockerfile lezen"
+    exit 1
+  fi
+done
+
+for job in vendored-scripts rtk-version delta-version node-version npm-version; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
   if [ ! -s "${werkmap}/${job}.sh" ]; then
     echo "FOUT: geen run-blok gevonden voor ${job}"
@@ -95,12 +115,37 @@ node_stub='for arg in "$@"; do case "$arg" in
   *SHASUMS256.txt) printf "%s  node-v99.0.0-linux-x64.tar.xz\n%s  node-v99.0.0-linux-arm64.tar.xz\n" \
       "$(printf "a%.0s" $(seq 64))" "$(printf "b%.0s" $(seq 64))"; exit 0;;
 esac; done'
-npm_stub='printf "{\"versions\":{\"11.19.0\":{},\"11.20.0\":{},\"12.0.0\":{}}}\n"'
+npm_stub="printf '{\"versions\":{\"${npm_nu}\":{},\"${npm_major}.999.0\":{},\"999.0.0\":{}}}\\n'"
+
+# ── vendored scripts (claude, sdkman) ──
+# Deze job draait in een matrix; de stap leest NAAM/URL/FILE uit de omgeving.
+vendored() { # map -> uitvoer
+  ( cd "$1/ws/claude-sandbox" \
+      && PATH="$1/bin:$PATH" NAAM=claude \
+         URL=https://voorbeeld.test/install.sh \
+         FILE=vendor/install-scripts/claude.sh \
+         GITHUB_OUTPUT="$1/uitvoer" bash "${werkmap}/vendored-scripts.sh" ) 2>&1
+}
+
+d="$(nieuwe_map)"; printf '#!/bin/sh\necho oud\n' > "$d/ws/claude-sandbox/vendor/install-scripts/claude.sh"
+stub "$d" curl 'exit 0'
+uit="$(vendored "$d")"; rc=$?
+toets "vendored: lege download geweigerd" 1 "leeg of begint niet met een shebang" "$uit" "$rc"
+
+d="$(nieuwe_map)"; printf '#!/bin/sh\necho oud\n' > "$d/ws/claude-sandbox/vendor/install-scripts/claude.sh"
+stub "$d" curl 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { shift; printf "<html>404</html>\n" > "$1"; }; shift; done'
+uit="$(vendored "$d")"; rc=$?
+toets "vendored: download zonder shebang geweigerd" 1 "shebang" "$uit" "$rc"
+
+d="$(nieuwe_map)"; printf '#!/bin/sh\necho oud\n' > "$d/ws/claude-sandbox/vendor/install-scripts/claude.sh"
+stub "$d" curl "$script_stub"
+uit="$(vendored "$d")"; rc=$?
+toets "vendored: geldige download wordt opgepakt" 0 "" "$uit" "$rc"
 
 # ── rtk ──
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
 uit="$(draai "$d" rtk-version)"; rc=$?
-toets "rtk: bump verzet Dockerfile en README" 0 "README.md: v0.45.0 -> v0.99.0" "$uit" "$rc"
+toets "rtk: bump verzet Dockerfile en README" 0 "README.md: ${rtk_nu} -> v0.99.0" "$uit" "$rc"
 grep -q 'echo nieuw' "$d/ws/claude-sandbox/vendor/install-scripts/rtk.sh"; controle "rtk: vendored script vervangen" $?
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo "v1.0.0; rm -rf /"'; stub "$d" curl 'true'
@@ -118,29 +163,29 @@ uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: download zonder shebang geweigerd" 1 "shebang" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
-sed -i 's|rtk-ai/rtk/v0.45.0/install.sh|rtk-ai/rtk/vOUD/install.sh|' "$d/ws/claude-sandbox/Dockerfile"
+sed -i "s|rtk-ai/rtk/${rtk_nu}/install.sh|rtk-ai/rtk/vOUD/install.sh|" "$d/ws/claude-sandbox/Dockerfile"
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: herkomst-URL achtergebleven wordt rood" 1 "komt 0× voor" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
-sed -i 's|`rtk` v0.45.0|`rtk` vOUD|' "$d/ws/claude-sandbox/README.md"
+sed -i "s|\`rtk\` ${rtk_nu}|\`rtk\` vOUD|" "$d/ws/claude-sandbox/README.md"
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: README-vermelding achtergebleven wordt rood" 1 "komt 0× voor" "$uit" "$rc"
 
-d="$(nieuwe_map)"; stub "$d" gh 'echo v0.45.0'; stub "$d" curl 'true'
+d="$(nieuwe_map)"; stub "$d" gh "echo ${rtk_nu}"; stub "$d" curl 'true'
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: gelijke versie opent niets" 0 "" "$uit" "$rc"
 grep -q 'changed=false' "$d/uitvoer"; controle "rtk: changed=false bij gelijke versie" $?
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
-dubbele_pin "$d" 'RUN case "$INSTALL_RTK" in' '      oud) RTK_VERSION=v0.44.0 sh /tmp/rtk-install.sh ;; \\'
+dubbele_pin "$d" 'RUN case "$INSTALL_RTK" in' '      oud) RTK_VERSION=v0.0.1 sh /tmp/rtk-install.sh ;; \\'
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: tweede pin wordt rood" 1 "precies één RTK_VERSION-pin" "$uit" "$rc"
 
 # ── delta ──
 d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'; stub "$d" curl "$deb_stub"
 uit="$(draai "$d" delta-version)"; rc=$?
-toets "delta: bump verzet versie en beide SHAs" 0 "DELTA_VERSION=0.19.2 -> DELTA_VERSION=0.99.9" "$uit" "$rc"
+toets "delta: bump verzet versie en beide SHAs" 0 "DELTA_VERSION=${delta_nu} -> DELTA_VERSION=0.99.9" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo "0.99.9 && curl kwaad"'; stub "$d" curl 'true'
 uit="$(draai "$d" delta-version)"; rc=$?
@@ -157,14 +202,14 @@ uit="$(draai "$d" delta-version)"; rc=$?
 toets "delta: ontbrekende arm64-pin wordt rood" 1 "precies één arm64-SHA-pin" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'; stub "$d" curl "$deb_stub"
-dubbele_pin "$d" 'RUN DELTA_VERSION=0.19.2' 'RUN DELTA_VERSION=0.18.2 \'
+dubbele_pin "$d" 'RUN DELTA_VERSION=' 'RUN DELTA_VERSION=0.0.1 \\'
 uit="$(draai "$d" delta-version)"; rc=$?
 toets "delta: tweede pin wordt rood" 1 "precies één DELTA_VERSION-pin" "$uit" "$rc"
 
 # ── node ──
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 uit="$(draai "$d" node-version)"; rc=$?
-toets "node: bump verzet versie en beide SHAs" 0 "NODE_VERSION=v24.19.0 -> NODE_VERSION=v99.0.0" "$uit" "$rc"
+toets "node: bump verzet versie en beide SHAs" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v99.0.0" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 sed -i 's|      amd64) NODE_ARCH=x64;   SHA=|      amd64) NODE_ARCH=x64; SHA=|' "$d/ws/claude-sandbox/Dockerfile"
@@ -184,7 +229,7 @@ uit="$(draai "$d" node-version)"; rc=$?
 toets "node: checksum die geen sha256 is wordt rood" 1 "geen sha256" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
-dubbele_pin "$d" 'RUN NODE_VERSION=v24.19.0' 'RUN NODE_VERSION=v22.11.0 \'
+dubbele_pin "$d" 'RUN NODE_VERSION=' 'RUN NODE_VERSION=v0.0.1 \\'
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: tweede pin wordt rood" 1 "precies één NODE_VERSION-pin" "$uit" "$rc"
 
@@ -206,21 +251,21 @@ uit="$(draai "$d" delta-version)"; rc=$?
 toets "delta: download die geen .deb is wordt rood" 1 "geen .deb-archief" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo v0.99.0'; stub "$d" curl "$script_stub"
-sed -i 's|# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.45.0/install.sh|# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.44.0/install.sh|' "$d/ws/claude-sandbox/Dockerfile"
+sed -i "s|rtk/${rtk_nu}/install.sh)|rtk/v0.0.1/install.sh)|" "$d/ws/claude-sandbox/Dockerfile"
 uit="$(draai "$d" rtk-version)"; rc=$?
 toets "rtk: herkomst-URL op een andere tag wordt rood" 1 "komt 0× voor" "$uit" "$rc"
 
 # ── npm ──
 d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
 uit="$(draai "$d" npm-version)"; rc=$?
-toets "npm: bump binnen dezelfde major" 0 "NPM_VERSION=11.19.0 -> NPM_VERSION=11.20.0" "$uit" "$rc"
+toets "npm: bump binnen dezelfde major" 0 "NPM_VERSION=${npm_nu} -> NPM_VERSION=${npm_major}.999.0" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl 'printf "{\"versions\":{}}\n"'
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: geen versie binnen major wordt rood" 1 "kon laatste npm-versie" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
-dubbele_pin "$d" 'RUN NPM_VERSION=11.19.0' 'RUN NPM_VERSION=10.9.4 \'
+dubbele_pin "$d" 'RUN NPM_VERSION=' 'RUN NPM_VERSION=0.0.1 \\'
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: tweede pin wordt rood" 1 "precies één NPM_VERSION-pin" "$uit" "$rc"
 
