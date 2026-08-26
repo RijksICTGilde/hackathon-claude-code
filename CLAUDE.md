@@ -22,7 +22,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
 | `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
-| `.github/workflows/` | build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
+| `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
 
 ## Commando's
 
@@ -35,6 +35,13 @@ docker compose up --build --detach             # bouwen en starten
 docker compose build --no-cache                # volledige rebuild (verifieert install-scripts echt)
 docker exec -tiu claude claude-sandbox bash    # de container in
 shellcheck --severity=warning <script>         # zoals CI (vendor/** uitgesloten)
+```
+
+Vanuit de repo-wortel, voor workflowwijzigingen:
+
+```bash
+# shellcheck expliciet meegeven: zonder dat pad slaat actionlint de run-blokken stil over
+actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.

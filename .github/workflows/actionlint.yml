@@ -1,0 +1,131 @@
+name: actionlint
+
+on:
+  push:
+    branches: [ "main" ]
+  # Geen basisbranch-filter: ook een gestapelde pull request kan een workflow
+  # breken.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Vaste versie plus SHA-256 voor allebei: een linter die zichzelf
+      # ongemerkt bijwerkt verschuift de lat waarop de build groen staat.
+      # shellcheck hoort daar net zo goed bij: het levert de bevindingen in de
+      # run-blokken, dus zijn versie bepaalt mee wanneer de build groen is.
+      # TODO(#131): upstream-tracking voor deze pins.
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      SHELLCHECK_VERSION: 0.11.0
+      SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Linters ophalen
+        run: |
+          set -euo pipefail
+          fetch() {
+            curl -fsSL --retry 3 --retry-all-errors -o "$2" "$1"
+            echo "$3  $2" | sha256sum -c -
+          }
+          fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+                "${RUNNER_TEMP}/actionlint.tar.gz" "${ACTIONLINT_SHA256}"
+          tar -xzf "${RUNNER_TEMP}/actionlint.tar.gz" -C "${RUNNER_TEMP}" actionlint
+          fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" \
+                "${RUNNER_TEMP}/shellcheck.tar.gz" "${SHELLCHECK_SHA256}"
+          tar -xzf "${RUNNER_TEMP}/shellcheck.tar.gz" --strip-components=1 \
+              -C "${RUNNER_TEMP}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          "${RUNNER_TEMP}/actionlint" --version
+          "${RUNNER_TEMP}/shellcheck" --version | sed -n '2p'
+
+      # actionlint slaat de shellcheck-koppeling stilzwijgend over zodra het
+      # opgegeven pad niet werkt, en een `paths:`-ignore in een
+      # actionlint-configuratie dempt bevindingen net zo geruisloos. Groen zegt
+      # dus pas iets als een bewust fout run-blok eerst rood geeft — en dan
+      # onder dezelfde project-root en configuratie als de echte scan.
+      - name: Controle ijken
+        run: |
+          set -euo pipefail
+          canary=.github/workflows/zz-canary.yml
+          trap 'rm -f "${canary}"' EXIT
+          cat > "${canary}" <<'CANARY'
+          name: canary
+          on: push
+          jobs:
+            a:
+              runs-on: ubuntu-latest
+              steps:
+                - run: echo $ONGEQUOOT
+          CANARY
+          output="$( "${RUNNER_TEMP}/actionlint" \
+            -shellcheck "${RUNNER_TEMP}/shellcheck" "${canary}" 2>&1 || true )"
+          if ! grep -q SC2086 <<<"${output}"; then
+            echo "Een run-blok met een ongequote variabele blijft onopgemerkt; de shellcheck-koppeling werkt niet of de bevinding wordt gedempt." >&2
+            echo "${output}" >&2
+            exit 1
+          fi
+
+      # Alleen bash en sh koppelt actionlint aan shellcheck. Elke andere
+      # shell blijft ongecontroleerd — ook python, want `-pyflakes` komt
+      # ongepind uit PATH — net als een job op een Windows-runner, waar pwsh
+      # de standaard is en er geen `shell:` in het bestand staat om op te
+      # zien. Die gevallen worden geweigerd in plaats van stil doorgelaten.
+      # Een shell in flow-stijl achter een andere sleutel, of een Windows-
+      # runner uit een matrix-expressie, ziet deze controle niet.
+      # TODO(#133): de inputs van gepinde actions worden niet gecontroleerd.
+      - name: actionlint draaien
+        run: |
+          set -euo pipefail
+          # `git grep` geeft 1 bij geen match en ≥2 bij een fout; zonder dat
+          # onderscheid leest een kapotte aanroep als "niets gevonden".
+          grep_workflows() {
+            local rc=0
+            git grep --untracked -nE "$1" \
+              -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+              > "${RUNNER_TEMP}/matches" || rc=$?
+            case "${rc}" in
+              0|1) return "${rc}" ;;
+              *) echo "git grep faalde met exitcode ${rc}." >&2; exit "${rc}" ;;
+            esac
+          }
+          if grep_workflows '^[[:space:]]*(-[[:space:]]*)?(\{[[:space:]]*)?shell:'; then
+            unchecked="$(grep -vE "shell:[[:space:]]*['\"]?(bash|sh)([[:space:]'\"},]|$)" \
+              "${RUNNER_TEMP}/matches")" || true
+            if [ -n "${unchecked}" ]; then
+              echo "Alleen bash en sh worden hier gecontroleerd. Voor python kan dat met een gepinde pyflakes en '-pyflakes'; voor de rest bestaat hier geen controle. Deze stappen draaien op iets anders:" >&2
+              echo "${unchecked}" >&2
+              exit 1
+            fi
+          fi
+          if grep_workflows '^[[:space:]]*runs-on:.*windows'; then
+            echo "Een job draait op een Windows-runner, waar pwsh de standaardshell is en er dus niets gecontroleerd wordt. Zet de stappen op 'shell: bash' en breid deze controle uit:" >&2
+            cat "${RUNNER_TEMP}/matches" >&2
+            exit 1
+          fi
+          # Via een bestand: `mapfile` uit een pipe draait in een subshell en
+          # verliest de array, na procesvervanging blijft een falende `git`
+          # onopgemerkt, en command substitution gooit de NUL-scheiding weg
+          # waardoor alle paden aan elkaar plakken.
+          # Ook ongetrackte bestanden: in CI verandert dat niets, maar lokaal
+          # zou een net aangemaakt workflowbestand anders ongemerkt overgeslagen
+          # worden.
+          git ls-files -z --cached --others --exclude-standard \
+            '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+            > "${RUNNER_TEMP}/workflowlist"
+          mapfile -d '' files < "${RUNNER_TEMP}/workflowlist"
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Lege bestandslijst; actionlint zou terugvallen op zijn eigen zoektocht en een kapotte selectie zou onzichtbaar blijven." >&2
+            exit 1
+          fi
+          "${RUNNER_TEMP}/actionlint" -color \
+            -shellcheck "${RUNNER_TEMP}/shellcheck" "${files[@]}"
