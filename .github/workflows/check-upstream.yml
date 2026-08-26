@@ -727,7 +727,7 @@ jobs:
           # "de fix staat niet in de suite".
           jq -s 'add | map(select(.arch == "amd64")) | unique_by([.pkg, .inst])' \
             /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
-          jq -s '[(.[0] + .[1])[].pkg] | unique' \
+          jq -s '[add[].pkg] | unique' \
             /tmp/geinstalleerd.json /tmp/os-all.json > /tmp/te-vragen.json
           beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
 
@@ -739,8 +739,9 @@ jobs:
             local aantal gedekt basis rc
             local -a pakketten
             mapfile -t pakketten < <(jq -r '.[]' /tmp/te-vragen.json)
-            if [ "${#pakketten[@]}" -eq 0 ]; then
-              echo "FOUT: geen apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
+            aantal=$(jq -r '[.[].pkg] | unique | length' /tmp/geinstalleerd-samen.json)
+            if [ "${#pakketten[@]}" -eq 0 ] || [ "$aantal" -eq 0 ]; then
+              echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
               exit 1
             fi
             # De namen komen uit een scanrapport en gaan naar een container.
@@ -752,7 +753,7 @@ jobs:
             fi
             # Dezelfde basis-image als de Dockerfile, dus dezelfde suite. 28 MB
             # in plaats van de 628 MB van de gepubliceerde image.
-            basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2)
+            basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2 || true)
             if [ -z "$basis" ]; then
               echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
               exit 1
@@ -777,10 +778,13 @@ jobs:
             # Niet-leeg zegt niets: elke afwijking in het uitvoerformaat zou
             # stil "geen kandidaat" opleveren voor álle pakketten en daarmee
             # elke verversing tegenhouden.
-            aantal=${#pakketten[@]}
-            gedekt=$(grep -cE '^[a-z0-9][a-z0-9+.-]*:$' /tmp/policy.txt || true)
+            # Alleen de geïnstalleerde pakketten moeten gedekt zijn: een naam
+            # die alleen uit een bevinding komt kan ontbreken omdat de suite hem
+            # niet kent, en dat is een antwoord, geen kapotte meting.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/geinstalleerd-samen.json > /tmp/verwachte-koppen.txt
+            gedekt=$(grep -cxFf /tmp/verwachte-koppen.txt /tmp/policy.txt || true)
             if [ "$gedekt" -lt "$aantal" ]; then
-              echo "FOUT: apt-cache policy noemt ${gedekt} van de ${aantal} gevraagde pakketten; de beschikbaarheid is niet vastgesteld" >&2
+              echo "FOUT: apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de beschikbaarheid is niet vastgesteld" >&2
               head -c 500 /tmp/policy.txt >&2
               exit 1
             fi
@@ -802,7 +806,10 @@ jobs:
           # Een openstaand voorstel wordt niet elke week herschreven: het bevat
           # dezelfde epoch-bump, ongeacht de aanleiding, en een force-push maakt
           # de review-run die iemand daarop startte achterhaald.
-          open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[].number')
+          open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[0].number // ""') || {
+            echo "FOUT: kon niet nagaan of er al een voorstel openstaat" >&2
+            exit 1
+          }
           if [ -n "$open_pr" ]; then
             echo "Verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh (#${open_pr})."
             echo "changed=false" >> "$GITHUB_OUTPUT"

@@ -75,11 +75,19 @@ while IFS=$'\t' read -r pkg doel id; do
   for versie in ${doel//,/ }; do
     [ -n "${versie}" ] && [ "${versie}" != "-" ] || continue
 
-    if [ "${modus}" = cve ]; then
-      dpkg --compare-versions "${kand}" ge "${versie}" && gehaald=ja
-    else
-      dpkg --compare-versions "${kand}" gt "${versie}" && gehaald=ja
-    fi
+    # dpkg geeft 2 bij een versie die het niet kan lezen; dat is geen "nee".
+    vergelijking=ge
+    [ "${modus}" = cve ] || vergelijking=gt
+    rc=0
+    dpkg --compare-versions "${kand}" "${vergelijking}" "${versie}" || rc=$?
+
+    case "${rc}" in
+      0) gehaald=ja ;;
+      1) ;;
+      *)
+        echo "FOUT: '${kand}' en '${versie}' zijn niet te vergelijken." >&2
+        exit 2 ;;
+    esac
   done
 
   herkomst=""

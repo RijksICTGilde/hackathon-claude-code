@@ -395,7 +395,7 @@ grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: openstaand voorstel word
 
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" ""
 uit="$(epoch_draai "$d")"; rc=$?
-toets "epoch: lege policy-uitvoer wordt rood" 1 "van de 2 gevraagde pakketten" "$uit" "$rc"
+toets "epoch: lege policy-uitvoer wordt rood" 1 "geïnstalleerde pakketten" "$uit" "$rc"
 
 # Een vastzittende CVE mag de periodieke verversing niet bevriezen.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_update" "" 2020-01-01
@@ -406,7 +406,7 @@ geopend "epoch: vastzittende CVE laat de periodieke verversing door" "$d"
 # Een bevinding die alleen op arm64 staat, moet net zo goed aan de suite
 # gevraagd worden; anders leest "niet gevraagd" als "niet in de suite".
 arm_cve='[{"VulnerabilityID":"CVE-ARM","Severity":"HIGH","PkgName":"libnuma1","InstalledVersion":"2.0.18-1","FixedVersion":"2.0.18-2"}]'
-arm_pakketten='[{"ID":"libnuma1@2.0.18-1","Name":"libnuma1","Version":"2.0.18","Release":"1","Arch":"arm64"}]'
+arm_pakketten='[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Release":"5","Arch":"arm64"}]'
 policy_arm='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\nbind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\nlibnuma1:\n  Installed: 2.0.18-1\n  Candidate: 2.0.18-2\n'
 
 d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_arm" "" "" "$arm_cve" "$arm_pakketten"
