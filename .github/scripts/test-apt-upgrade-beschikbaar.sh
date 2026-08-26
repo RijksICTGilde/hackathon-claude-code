@@ -46,12 +46,19 @@ toets() { # naam verwachte_exitcode modus bevindingen policy [patroon]
   geslaagd=$((geslaagd + 1))
 }
 
-policy gewoon 'util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n  Version table:\n     2.41-5+deb13u1 500\nzlib1g:\n  Installed: 1:1.3.dfsg+really1.3.1-1\n  Candidate: 1:1.3.dfsg+really1.3.1-1\n'
+# De herkomstregel hoort er in echte uitvoer bij: apt noemt onder elke versie
+# waar die vandaan komt. Een kandidaat zonder archiefregel komt uit de status
+# van de image zelf en telt niet als meting.
+herkomst='        500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
+policy gewoon "util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n  Version table:\n     2.41-5+deb13u1 500\n${herkomst}zlib1g:\n  Installed: 1:1.3.dfsg+really1.3.1-1\n  Candidate: 1:1.3.dfsg+really1.3.1-1\n${herkomst}"
 policy zonder_kandidaat 'util-linux:\n  Installed: 2.41-5\n  Candidate: (none)\n'
 policy leeg ''
+# Eén pakket met een archiefregel, één zonder: de herkomst moet per pakket
+# wegen, anders dekt het eerste blok het tweede af.
+policy gemengde_herkomst "dummypkg:\n  Installed: (none)\n  Candidate: 9.9-1\n${herkomst}util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n        100 /var/lib/dpkg/status\n"
 # Een kop zonder Candidate-regel, gevolgd door een blok dat er wél een heeft:
 # zonder blokgrens zou het eerste pakket de kandidaat van het tweede pakken.
-policy zonder_candidate 'util-linux:\n  Installed: 2.41-5\nzlib1g:\n  Installed: 1:1.3-1\n  Candidate: 1:9.99-1\n'
+policy zonder_candidate "util-linux:\n  Installed: 2.41-5\nzlib1g:\n  Installed: 1:1.3-1\n  Candidate: 1:9.99-1\n${herkomst}"
 
 bevindingen fix_beschikbaar '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
 bevindingen fix_te_nieuw    '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.42-1"}]'
@@ -61,6 +68,8 @@ bevindingen fix_onbekend    '[{"id":"CVE-1","pkg":"bestaat-niet","inst":"1","fix
 bevindingen fix_zonder_fix  '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5"}]'
 bevindingen twee_pakketten  '[{"id":"CVE-1","pkg":"zlib1g","inst":"1:1.3.dfsg+really1.3.1-1","fix":"1:1.4"},{"id":"CVE-2","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
 bevindingen fix_onleesbaar  '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.0:a:b"}]'
+bevindingen fix_lijst_deels_stuk    '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"unfixed, 2.41-5+deb13u1"}]'
+bevindingen fix_lijst_stuk_te_nieuw '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"unfixed, 9.9-1"}]'
 bevindingen fix_geen_versie '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"unfixed"}]'
 bevindingen fix_leeg        '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":""}]'
 bevindingen geen            '[]'
@@ -81,6 +90,10 @@ toets "cve: fixversie die geen versie is"        2 cve fix_geen_versie gewoon "g
 toets "cve: leeg fixveld schuift geen kolom op" 1 cve fix_leeg        gewoon "dekt - nog niet (CVE-1)"
 toets "cve: onvergelijkbare versie"            2 cve fix_onleesbaar   gewoon "niet te vergelijken"
 toets "cve: lege policy-uitvoer"                1 cve fix_beschikbaar leeg   "geen kandidaat"
+toets "cve: kandidaat uit de status telt niet als nee" 2 cve fix_beschikbaar gemengde_herkomst "niet uit een suite"
+# Een fixlijst waarin één element geen versie is: de leesbare telt gewoon mee.
+toets "cve: onleesbaar element naast een geldige (haalbaar)"  0 cve fix_lijst_deels_stuk gewoon "dekt"
+toets "cve: onleesbaar element naast een geldige (te nieuw)"  1 cve fix_lijst_stuk_te_nieuw gewoon "nog niet"
 toets "cve: blok zonder kandidaat leent niet"    1 cve fix_beschikbaar zonder_candidate "geen kandidaat"
 toets "cve: kandidaat is (none)"                1 cve fix_beschikbaar zonder_kandidaat "geen kandidaat"
 toets "upgrade: hogere kandidaat"               0 upgrade upgrade_kan     gewoon "is hoger dan het geïnstalleerde 2.41-5"

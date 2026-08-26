@@ -364,7 +364,12 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm6
   # het eerste pakket naar \$0 en verdwijnt het uit de vraag.
   cat > "$1/bin/apt-get" <<APTGET
 #!/usr/bin/env bash
-if [ "\$1" = update ]; then exit 0; fi
+if [ "\$1" = update ]; then
+  # Net als apt: voortgang op stdout. Belandt die in het bestand dat geparsed
+  # wordt, dan is de omleiding in de workflow weggevallen.
+  echo "Get:1 https://deb.debian.org/debian trixie InRelease"
+  exit 0
+fi
 if [ "\$1" = indextargets ]; then
   # Net als apt: de opgegeven velden invullen. Is de format-string leeg — omdat
   # de shell hem als commando heeft uitgevoerd — dan komt er per bron een lege
@@ -415,6 +420,10 @@ APTCACHE
 # vandaan komt, en de stap gebruikt dat om een terugval op de pakketstatus van
 # de image te herkennen.
 herkomst='     500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
+# Gevallen die niets met de leeftijd van de epoch te maken hebben, krijgen een
+# verse datum mee: anders hangt hun uitkomst af van de datum die toevallig in
+# de Dockerfile staat, en kantelen ze zodra die over de drempel komt.
+vandaag="$(date -u +%F)"
 policy_met_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
 policy_zonder_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
 # Wat apt teruggeeft als er geen enkele index is: kandidaten uit de status van
@@ -433,7 +442,7 @@ geopend "epoch: fix beschikbaar zet changed=true" "$d"
 grep -q 'reason=.*nu op te halen' "$d/uitvoer"
 controle "epoch: de aanleiding noemt de beschikbare fix" $?
 
-d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_update"
+d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_update" "" "$vandaag"
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: fix nog niet in de suite opent niets" 0 "geen enkele fix staat in de suite" "$uit" "$rc"
 grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: fix nog niet in de suite zet changed=false" $?
@@ -488,8 +497,16 @@ grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: CVE-tak herschrijft het 
 # op — waarna de controle op de security-index altijd faalt.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
 epoch_draai "$d" >/dev/null
-grep -qF '$(SITE)' "$d/docker-argumenten.txt"
+grep -qF '\$(SITE)' "$d/docker-argumenten.txt"
 controle "epoch: de format-string bereikt apt onuitgevoerd" $?
+
+# Een pakket waar een fixbare bevinding op zit maar dat apt niet noemt: dan is
+# de vraag of die fix bestaat niet gesteld, en dat mag geen "nee" worden.
+d="$(epoch_map)"; epoch_geval "$d" \
+  '[{"VulnerabilityID":"CVE-Z","Severity":"HIGH","PkgName":"zoekgeraakt","InstalledVersion":"1","FixedVersion":"2"}]' \
+  "$pakketten" "$policy_met_update" "" "$vandaag"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: bevinding op een pakket dat apt niet noemt wordt rood" 1 "voor de rest is de vraag niet gesteld" "$uit" "$rc"
 
 # Zonder index geeft apt gewoon kandidaten terug — die van de image zelf. Dat
 # leest als "niets te halen" terwijl er niets geraadpleegd is.
@@ -505,13 +522,23 @@ d="$(epoch_map)"; epoch_geval "$d" '[]' \
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: te lage dekking wordt rood" 1 "te veel om de uitkomst een meting te noemen" "$uit" "$rc"
 
-# De uitsluitingslijst moet spiegelen wat de Dockerfile buiten apt om installeert.
+# Een tweede pakket dat buiten apt om binnenkomt, valt automatisch buiten de
+# weging: de lijst wordt uit de Dockerfile afgeleid, dus er kan geen drift
+# ontstaan tussen wat er staat en wat er gewogen wordt.
 d="$(epoch_map)"
 sed -i 's|^    dpkg -i /tmp/git-delta.deb|    dpkg -i /tmp/iets-anders.deb \&\& dpkg -i /tmp/git-delta.deb|' \
   "$d/ws/claude-sandbox/Dockerfile"
 epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
 uit="$(epoch_draai "$d")"; rc=$?
-toets "epoch: een tweede dpkg-installatie zonder uitsluiting wordt rood" 1 "buiten apt om, BUITEN_APT_LAAG noemt er" "$uit" "$rc"
+toets "epoch: een tweede dpkg-pakket valt vanzelf buiten de weging" 0 '"git-delta","iets-anders"' "$uit" "$rc"
+
+# Een dpkg-regel waar geen pakketnaam uit te halen is, mag niet stil als "niets
+# uit te sluiten" gelden.
+d="$(epoch_map)"
+sed -i 's|^    dpkg -i /tmp/git-delta.deb|    dpkg -i $SOMEVAR|' "$d/ws/claude-sandbox/Dockerfile"
+epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: onherkenbare dpkg-vorm wordt rood" 1 "de vorm is niet herkend" "$uit" "$rc"
 
 # Koppen zonder versietabel: de namen worden herkend, het formaat niet. Dat is
 # geen "niets te halen" maar een meting die niet gedaan is.
@@ -565,7 +592,8 @@ d="$(epoch_map)"
 epoch_geval "$d" \
   '[{"VulnerabilityID":"CVE-D","Severity":"HIGH","PkgName":"git-delta","InstalledVersion":"0.19.2","FixedVersion":"0.18.2-4+b1"}]' \
   '[{"ID":"git-delta@0.19.2","Name":"git-delta","Version":"0.19.2","Arch":"amd64"},{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Arch":"amd64"}]' \
-  'git-delta:\n  Installed: 0.19.2\n  Candidate: 0.18.2-4+b1\nutil-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n'
+  "git-delta:\n  Installed: 0.19.2\n  Candidate: 0.18.2-4+b1\n${herkomst}util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}" \
+  "" "$vandaag"
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: bevinding buiten de apt-laag opent geen voorstel" 0 "Buiten de weging gelaten" "$uit" "$rc"
 grep -qx 'changed=false' "$d/uitvoer"
@@ -580,6 +608,13 @@ toets "epoch: pakket zonder ID wordt rood" 1 "zonder ID" "$uit" "$rc"
 d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"ID":"raar naam@1","Name":"raar naam","Arch":"amd64"}]' "$policy_met_update" "" 2020-01-01
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: onverwachte pakketnaam wordt rood" 1 "onverwachte pakketnaam" "$uit" "$rc"
+
+# Een naam die alleen toegestane tekens gebruikt maar met een streepje begint,
+# zou als optie bij apt-cache policy terechtkomen.
+d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"ID":"-force@1","Name":"-force","Arch":"amd64"}]' \
+  "$policy_met_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: pakketnaam die met een streepje begint wordt rood" 1 "onverwachte pakketnaam" "$uit" "$rc"
 
 # Een naam met een newline erin is door jq en mapfile al in tweeën geknipt; een
 # regelgewijze toets zou beide helften doorlaten en het echte pakket zou nooit
