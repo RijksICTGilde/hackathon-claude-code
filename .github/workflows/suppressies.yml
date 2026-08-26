@@ -1,0 +1,29 @@
+name: suppressies
+
+on:
+  push:
+    branches: [ "main" ]
+  # Geen basisbranch-filter: de suppressielijst wijzigt juist in een gestapelde
+  # pull request, en de scanworkflows draaien daar niet.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  suppressies:
+    name: Suppressielijst valideren
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # De fixtures eerst: een validatie die zelf stuk is, keurt alles goed.
+      - name: Fixtures van de validatie
+        run: .github/scripts/test-valideer-trivyignore.sh
+
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        run: .github/scripts/valideer-trivyignore.sh

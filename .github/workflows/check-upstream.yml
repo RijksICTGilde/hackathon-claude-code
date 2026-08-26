@@ -254,7 +254,7 @@ jobs:
             - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
 
             npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
-            `ip-address`). Loop bij het reviewen `.trivyignore` na: staat er een
+            `ip-address`). Loop bij het reviewen `.trivyignore.yaml` na: staat er een
             suppressie voor een module die deze release bumpt, haal die dan weg.
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
@@ -469,6 +469,10 @@ jobs:
             exit 1
           fi
 
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/valideer-trivyignore.sh
+
       # Zelfde severity, ignore-unfixed en suppressies als de gate in
       # build-image.yml; een amd64-bevinding hier voorspelt daar dus een falende
       # gate. Voor arm64 bestaat die tegenhanger niet. Exit-code 0: deze job
@@ -483,7 +487,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore.yaml
           exit-code: '0'
 
       - name: Trivy scan of published image (arm64)
@@ -496,7 +500,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore.yaml
           exit-code: '0'
           # De binary zit na de vorige stap in de tool-cache.
           skip-setup-trivy: true
@@ -668,4 +672,4 @@ jobs:
             Verifieer lokaal met `docker compose build --no-cache` voor je merget. Deze PR is
             door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en heropen
             hem om de checks alsnog te laten draaien. Blijft er na de rebuild iets staan, dan is
-            er voor dat pakket geen Debian-update en hoort het met reden in `.trivyignore`.
+            er voor dat pakket geen Debian-update en hoort het met reden in `.trivyignore.yaml`.

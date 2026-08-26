@@ -29,6 +29,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # In de job zelf en niet als aparte job: een overgeslagen required check
+      # telt bij branch protection als geslaagd, dus een rode validatie moet
+      # deze check rood maken.
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        id: suppressies
+        run: .github/scripts/valideer-trivyignore.sh
+
       # Fail the workflow on CRITICAL/HIGH vulnerability findings so PRs
       # cannot land while ignoring them. De SARIF-run is alleen voor het
       # code-scanning dashboard; merge-blocking gebeurt via deze stap
@@ -44,6 +51,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Misconfig en secret-detectie worden zonder severity-cap gegated:
@@ -57,10 +65,11 @@ jobs:
           scan-type: fs
           format: table
           scanners: misconfig,secret
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Trivy SARIF for code-scanning dashboard
-        if: always()
+        if: always() && steps.suppressies.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -69,6 +78,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           scanners: vuln,secret,misconfig
+          trivyignores: .trivyignore.yaml
 
       # Fail loudly if the scanner crashed and produced no SARIF; otherwise
       # the upload step would silently no-op and the dashboard would show
@@ -110,6 +120,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        id: suppressies
+        run: .github/scripts/valideer-trivyignore.sh
+
       - name: Trivy fail-on-vuln (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -118,6 +132,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Zie comment in same-repo job: misconfig/secret zonder severity-cap
@@ -128,6 +143,7 @@ jobs:
           scan-type: fs
           format: table
           scanners: misconfig,secret
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       # Tweede run voor MEDIUM-context: zonder fork-toegang tot
@@ -136,7 +152,7 @@ jobs:
       # zonder door log-output te ploegen. exit-code: '0' zodat deze stap
       # geen fail toevoegt — de gating zit in de stap erboven.
       - name: Trivy JSON for artifact (informational)
-        if: always()
+        if: always() && steps.suppressies.outcome == 'success'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -145,6 +161,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
           scanners: vuln,secret,misconfig
+          trivyignores: .trivyignore.yaml
           exit-code: '0'
 
       # Symmetrie met de same-repo job's "Verify SARIF output exists":

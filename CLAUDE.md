@@ -22,7 +22,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
 | `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
-| `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
+| `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, shellcheck, suppressies, trivy |
 
 ## Commando's
 
@@ -42,6 +42,7 @@ Vanuit de repo-wortel, voor workflowwijzigingen:
 ```bash
 # shellcheck expliciet meegeven: zonder dat pad slaat actionlint de run-blokken stil over
 actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
+.github/scripts/test-valideer-trivyignore.sh  # fixtures van de suppressie-validatie (vereist yq)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
