@@ -768,16 +768,20 @@ jobs:
               echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
               exit 1
             fi
-            # De namen komen uit een scanrapport en gaan naar een container. Ze
-            # gaan als losse argumenten mee, niet als shell-string, dus deze
-            # controle gaat over de vraag of we het juiste vragen — niet over
-            # injectie. Een naam die een newline bevat is op dit punt al door
-            # `jq` en `mapfile` in tweeën geknipt; die twee helften passeren
-            # hier, en stranden verderop op de dekkingscontrole.
-            if printf '%s\n' "${pakketten[@]}" | grep -qvxE '[a-z0-9][a-z0-9+.-]*'; then
-              echo "FOUT: onverwachte pakketnaam in de scanuitvoer; niet doorgegeven aan de container" >&2
-              exit 1
-            fi
+            # De namen komen uit een scanrapport en gaan als losse argumenten naar
+            # een container, niet als shell-string; deze controle gaat dus over
+            # de vraag of we het juiste vragen, niet over injectie. Per naam
+            # toetsen en niet per regel: een naam waar een newline in zit, is
+            # door `jq` en `mapfile` al in tweeën geknipt, en beide helften
+            # zouden een regelgewijze toets passeren. Het echte pakket wordt dan
+            # nooit gevraagd en krijgt "geen kandidaat" — een stille nee.
+            for naam in "${pakketten[@]}"; do
+              case "$naam" in
+                ''|*[!a-z0-9+.-]*|[!a-z0-9]*)
+                  echo "FOUT: onverwachte pakketnaam in de scanuitvoer; niet doorgegeven aan de container" >&2
+                  exit 1 ;;
+              esac
+            done
             # Dezelfde basis-image als de Dockerfile, dus dezelfde suite, en een
             # fractie van de gepubliceerde image om binnen te halen.
             basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2 || true)
@@ -793,7 +797,7 @@ jobs:
             # niet in het bestand dat straks geparsed wordt. De indextargets
             # gaan mee als bewijs welke bronnen daadwerkelijk zijn gebruikt.
             docker run --rm "$basis" sh -c \
-              'apt-get update >&2 && apt-get indextargets --format "$(SITE) $(RELEASE)" \
+              'apt-get update >&2 && apt-get indextargets --format "\$(SITE) \$(RELEASE)" \
                  | sed "s/^/INDEX /" && apt-cache policy "$@"' _ "${pakketten[@]}" \
               > /tmp/policy.txt 2> /tmp/policy-fouten.txt || rc=$?
             if [ "$rc" -ne 0 ]; then

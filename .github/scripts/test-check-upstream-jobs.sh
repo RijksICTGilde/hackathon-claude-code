@@ -359,6 +359,7 @@ epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch] [cve-arm6
   # van de gevraagde pakketten, zodat de fixtures merken welke lijst er
   # werkelijk is voorgelegd.
   stub "$1" docker "
+    printf '%s\n' \"\$@\" >> '$1/docker-argumenten.txt'
     cat '$1/indextargets.txt'
     for naam in \"\$@\"; do
       case \"\$naam\" in --rm|sh|-c|_|*sha256:*|apt-get*|-v|*ca.crt*) continue ;; esac
@@ -439,6 +440,15 @@ uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: openstaand voorstel houdt ook de CVE-tak tegen" 0 "staat al een voorstel open" "$uit" "$rc"
 grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: CVE-tak herschrijft het voorstel niet" $?
 
+# De format-string voor apt moet de container letterlijk bereiken. Staat hij
+# tussen dubbele quotes in de `sh -c`-body, dan voert `sh` hem uit als
+# command-substitution, krijgt apt een lege format en levert elke regel niets
+# op — waarna de controle op de security-index altijd faalt.
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+epoch_draai "$d" >/dev/null
+grep -qF '$(SITE)' "$d/docker-argumenten.txt"
+controle "epoch: de format-string bereikt apt onuitgevoerd" $?
+
 # Koppen zonder versietabel: de namen worden herkend, het formaat niet. Dat is
 # geen "niets te halen" maar een meting die niet gedaan is.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" \
@@ -495,6 +505,13 @@ toets "epoch: pakket zonder ID wordt rood" 1 "zonder ID" "$uit" "$rc"
 d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"ID":"raar naam@1","Name":"raar naam","Arch":"amd64"}]' "$policy_met_update" "" 2020-01-01
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: onverwachte pakketnaam wordt rood" 1 "onverwachte pakketnaam" "$uit" "$rc"
+
+# Een naam met een newline erin is door jq en mapfile al in tweeën geknipt; een
+# regelgewijze toets zou beide helften doorlaten en het echte pakket zou nooit
+# gevraagd worden.
+d="$(epoch_map)"; epoch_geval "$d" '[]' '[{"ID":"foo\nbar@1","Name":"foo\nbar","Arch":"amd64"}]' "$policy_met_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: pakketnaam met een newline wordt rood" 1 "onverwachte pakketnaam" "$uit" "$rc"
 
 # Een falende container is geen antwoord.
 d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
