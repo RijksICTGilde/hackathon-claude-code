@@ -532,10 +532,6 @@ jobs:
       # crondag, dan valt de vierde run precies op de drempel in plaats van
       # erover.
       MAX_EPOCH_AGE_DAYS: '28'
-      # Pakketten die de Dockerfile buiten apt om installeert en zelf pint. Ze
-      # staan wel in het scanrapport als apt-pakket, maar een verversing van de
-      # apt-laag zet ze terug op hun eigen pin.
-      BUITEN_APT_LAAG: '["git-delta"]'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -730,27 +726,41 @@ jobs:
           if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
             echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
           fi
-          # De lijst hierboven moet spiegelen wat de Dockerfile buiten apt om
-          # installeert. Zonder controle zou een tweede `dpkg -i` stil gaan
-          # meewegen, en dat levert week na week een voorstel op dat het pakket
-          # meteen weer op zijn eigen pin terugzet.
+          # De uitsluitingslijst wordt uit de Dockerfile afgeleid in plaats van
+          # apart bijgehouden: een tweede `dpkg -i` zou anders stil gaan
+          # meewegen (week na week een voorstel dat het pakket meteen weer op
+          # zijn eigen pin terugzet), en een naam die er blijft staan terwijl
+          # het pakket inmiddels uit apt komt, zou zijn bevindingen voorgoed
+          # wegfilteren. De bestandsnaam van de `.deb` is de pakketnaam; klopt
+          # die aanname niet, dan valt dat op omdat het pakket niet in de scan
+          # voorkomt.
           # `|| true`: zonder match zou grep onder pipefail de stap laten eindigen
           # nog voor de melding hieronder wordt bereikt.
-          dpkg_installaties=$({ grep -oE 'dpkg -i ' Dockerfile || true; } | wc -l)
-          uitgesloten=$(jq 'length' <<<"$BUITEN_APT_LAAG")
-          if [ "$dpkg_installaties" -ne "$uitgesloten" ]; then
-            echo "FOUT: de Dockerfile installeert ${dpkg_installaties} pakket(ten) buiten apt om, BUITEN_APT_LAAG noemt er ${uitgesloten}" >&2
-            grep -nE 'dpkg -i ' Dockerfile >&2 || true
+          # Commentregels eruit: die noemen `dpkg -i` juist om uit te leggen wat
+          # hier gebeurt, en zouden anders als installatie meetellen.
+          grep -vE '^[[:space:]]*#' Dockerfile > "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments"
+          buiten_apt=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)[[:space:]]+[^[:space:]]+\.deb' \
+              "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } \
+            | sed -E 's|.*/||; s|\.deb$||' | sort -u | jq -R . | jq -sc .)
+          # Voorkomens tellen, geen regels: twee installaties op één regel zijn
+          # ook twee installaties.
+          dpkg_regels=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)' \
+            "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } | wc -l)
+          afgeleid=$(jq 'length' <<<"$buiten_apt")
+          if [ "$dpkg_regels" -ne "$afgeleid" ]; then
+            echo "FOUT: ${dpkg_regels} dpkg-installatie(s) in de Dockerfile, maar ${afgeleid} pakketnaam/-namen af te leiden; de vorm is niet herkend" >&2
+            grep -nE 'dpkg[[:space:]]+(-i|--install)' "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" >&2 || true
             exit 1
           fi
+          echo "Buiten de apt-laag geïnstalleerd volgens de Dockerfile: ${buiten_apt}"
           # Pakketten die niet uit de apt-laag komen, kan een epoch-bump niet
           # bewegen: ze worden verderop in de Dockerfile op een eigen versie
           # gepind en volgen hun eigen wekelijkse job. Een voorstel op grond van
           # zo'n pakket verhelpt niets en bouwt drie keer voor niets.
-          jq -s --argjson buiten "$BUITEN_APT_LAAG" \
+          jq -s --argjson buiten "$buiten_apt" \
             'add | map(select(.pkg as $p | $buiten | index($p) | not))' \
             /tmp/os-all.json > /tmp/os-samen.json
-          for pkg in $(jq -r '.[]' <<<"$BUITEN_APT_LAAG"); do
+          for pkg in $(jq -r '.[]' <<<"$buiten_apt"); do
             gevonden=$(jq -s --arg p "$pkg" '[add[] | select(.pkg == $p)] | length' /tmp/os-all.json)
             [ "$gevonden" -eq 0 ] || echo "Buiten de weging gelaten: ${gevonden} bevinding(en) op ${pkg}, dat buiten apt om wordt gepind."
           done
@@ -760,7 +770,7 @@ jobs:
           # binNMU-revisie, dan zou een achterstand op die architectuur anders
           # nooit een verversing uitlokken. Een binNMU is hoger dan het
           # amd64-origineel, dus dat geeft geen vals alarm.
-          jq -s --argjson buiten "$BUITEN_APT_LAAG" \
+          jq -s --argjson buiten "$buiten_apt" \
             'add | map(select(.pkg as $p | $buiten | index($p) | not)) | unique_by([.pkg, .inst])' \
             /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
           # De pakketlijst die we voorleggen is de unie van beide architecturen:
@@ -800,6 +810,11 @@ jobs:
             # dan geldig uitzien. Het echte pakket wordt nooit gevraagd en
             # krijgt "geen kandidaat" — een stille nee.
             afwijkend=$(jq -r '[.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not))] | length' /tmp/te-vragen.json)
+            case "$afwijkend" in
+              ''|*[!0-9]*)
+                echo "FOUT: de naamcontrole gaf geen bruikbare telling (waarde: '${afwijkend}')" >&2
+                exit 1 ;;
+            esac
             if [ "$afwijkend" -ne 0 ]; then
               echo "FOUT: ${afwijkend} onverwachte pakketnaam/-namen in de scanuitvoer; niet doorgegeven aan de container" >&2
               jq -r '.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not)) | @json' /tmp/te-vragen.json >&2
@@ -835,7 +850,13 @@ jobs:
               echo "Meldingen uit de policy-container:"
               head -c 2000 /tmp/policy-fouten.txt
             fi
-            if grep -qE 'Failed to fetch|Some index files failed' /tmp/policy-fouten.txt; then
+            fetch_rc=0
+            grep -qE 'Failed to fetch|Some index files failed' /tmp/policy-fouten.txt || fetch_rc=$?
+            if [ "$fetch_rc" -gt 1 ]; then
+              echo "FOUT: de controle op indexfouten kon niet draaien (grep exitcode ${fetch_rc})" >&2
+              exit 1
+            fi
+            if [ "$fetch_rc" -eq 0 ]; then
               echo "FOUT: apt-get update kon niet alle indexen ophalen; de beschikbaarheid is niet vast te stellen" >&2
               cat /tmp/policy-fouten.txt >&2
               exit 1
@@ -881,6 +902,24 @@ jobs:
               echo "FOUT: apt-cache policy noemt maar ${gedekt} van de ${aantal} geïnstalleerde pakketten; te veel om de uitkomst een meting te noemen" >&2
               exit 1
             fi
+            # De pakketten die de bevindingen dragen moeten er állemaal in staan.
+            # Voor een geïnstalleerd pakket is "de suite kent het niet" nog een
+            # antwoord; voor een pakket waar een fixbare CVE op zit is het dat
+            # niet — dan is de vraag of die fix er is simpelweg niet gesteld.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/os-samen.json > /tmp/cve-koppen.txt
+            if [ -s /tmp/cve-koppen.txt ]; then
+              cve_rc=0
+              cve_gedekt=$(grep -cxFf /tmp/cve-koppen.txt /tmp/policy.txt) || cve_rc=$?
+              if [ "$cve_rc" -gt 1 ]; then
+                echo "FOUT: de dekkingscontrole op bevindingen kon niet draaien (grep exitcode ${cve_rc})" >&2
+                exit 1
+              fi
+              cve_verwacht=$(wc -l < /tmp/cve-koppen.txt)
+              if [ "$cve_gedekt" -lt "$cve_verwacht" ]; then
+                echo "FOUT: van de ${cve_verwacht} pakketten met een fixbare bevinding noemt apt-cache policy er ${cve_gedekt}; voor de rest is de vraag niet gesteld" >&2
+                exit 1
+              fi
+            fi
             if [ "$gedekt" -lt "$aantal" ]; then
               echo "::warning::apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de rest kent deze suite niet — buiten apt om geïnstalleerd, of alleen aanwezig in de index van de andere architectuur"
             fi
@@ -905,7 +944,7 @@ jobs:
             # archief is te herkennen aan de herkomstregel in de versietabel.
             uit_archief=0
             grep_rc=0
-            uit_archief=$(grep -cE '^ +[0-9]+ https?://' /tmp/policy.txt) || grep_rc=$?
+            uit_archief=$(grep -cE '^ +[0-9]+ [^/]' /tmp/policy.txt) || grep_rc=$?
             if [ "$grep_rc" -gt 1 ]; then
               echo "FOUT: de controle op de herkomst van de kandidaten kon niet draaien (grep exitcode ${grep_rc})" >&2
               exit 1

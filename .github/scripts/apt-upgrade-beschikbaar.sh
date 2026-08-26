@@ -58,21 +58,45 @@ fi
 
 # `apt-cache policy` schrijft per pakket een kop en een Candidate-regel. Een
 # pakket dat de suite niet kent, krijgt "(none)" — dat is geen versie.
+# Geeft de kandidaat, maar alleen als die uit een archief komt. Zonder index
+# vult apt de kandidaat met de versie die al geïnstalleerd is, herkenbaar aan
+# een versietabel die alleen naar /var/lib/dpkg/status verwijst. Die versie
+# beantwoordt de vraag niet: hij zegt wat er ís, niet wat er te halen valt.
+# De herkomst per pakket toetsen en niet over het hele bestand: één pakket met
+# een archiefregel zou anders alle andere afdekken.
 kandidaat() {
   awk -v pkg="$1" '
     $0 == pkg ":" { in_pkg = 1; next }
-    /^[^ ]/       { in_pkg = 0 }
-    in_pkg && $1 == "Candidate:" { print $2; exit }
+    /^[^ ]/       { if (kand != "") exit; in_pkg = 0 }
+    in_pkg && $1 == "Candidate:" { kand = $2; next }
+    # Een herkomstregel is "<prioriteit> <bron>"; de status van de image zelf
+    # is het pad /var/lib/dpkg/status, elk archief heeft een schema ervoor.
+    in_pkg && kand != "" && $1 ~ /^[0-9]+$/ && $2 !~ /^\// { uit_archief = 1 }
+    # Onderscheid bewaren: geen kandidaat is een antwoord ("de suite kent dit
+    # pakket niet"), een kandidaat zonder archief is een niet-gestelde vraag.
+    END {
+      if (kand == "") exit
+      # "(none)" heeft geen versietabel en dus geen herkomst; dat is een
+      # antwoord van apt, geen ontbrekende meting.
+      print (uit_archief || kand == "(none)" ? kand : "@status")
+    }
   ' "${policy}"
 }
 
 haalbaar=0
+ongemeten=0
 haalbare_pakketten="$(mktemp)"
 trap 'rm -f "${lijst}" "${haalbare_pakketten}"' EXIT
 
 while IFS=$'\037' read -r pkg doel id; do
   [ -n "${pkg}" ] || continue
   kand="$(kandidaat "${pkg}")"
+
+  if [ "${kand}" = "@status" ]; then
+    echo "  ${pkg}: de kandidaat komt uit de pakketstatus van de image, niet uit een suite" >&2
+    ongemeten=$((ongemeten + 1))
+    continue
+  fi
 
   if [ -z "${kand}" ] || [ "${kand}" = "(none)" ]; then
     echo "  ${pkg}: geen kandidaat in de suite"
@@ -83,8 +107,8 @@ while IFS=$'\037' read -r pkg doel id; do
   # haalbare genoeg; in `upgrade`-modus staat er altijd precies één versie.
   gehaald=nee
 
-  # Ongequote expansie splitst op spaties, maar zou ook globben; versiesyntax
-  # kent geen metatekens, dus dat is vandaag onschadelijk en morgen een val.
+  # `read -a` splitst op spaties zonder pathname-expansie; een fixversie met
+  # een glob-teken erin blijft daardoor de tekst die Trivy gaf.
   read -r -a doelversies <<<"${doel//,/ }"
 
   leesbaar=0
@@ -146,6 +170,13 @@ while IFS=$'\037' read -r pkg doel id; do
     echo "  ${pkg}: kandidaat ${kand} is niet hoger dan het geïnstalleerde ${doel}"
   fi
 done < "${lijst}"
+
+# Een pakket waarvoor de vraag niet gesteld is, mag niet als "nee" meetellen:
+# dan zou een ontbrekende index als "niets te halen" lezen.
+if [ "${ongemeten}" -gt 0 ]; then
+  echo "FOUT: voor ${ongemeten} pakket(ten) kwam de kandidaat niet uit een suite; de vergelijking is daar niet gedaan." >&2
+  exit 2
+fi
 
 if [ "${haalbaar}" -eq 0 ]; then
   echo "Niets installeerbaars gevonden."
