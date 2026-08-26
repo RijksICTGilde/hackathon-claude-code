@@ -95,7 +95,7 @@ criteria.
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt, CI groen |
-| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | PR geopend, review-loop gestart |
+| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | twee reviewrondes verwerkt; ronde 3 nog te doen |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
@@ -104,6 +104,7 @@ criteria.
 | 136 | wekelijks voorstel dat niets te wijzigen heeft blijft onopgemerkt | open | — | — | — |
 | 137 | scriptcontrole draait niet op een gestapeld voorstel | open | — | — | — |
 | 138 | één gevendord installatiescript wordt bijna nooit gecontroleerd | open | — | — | — |
+| 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
 stap begint en direct nadat je hem afrondt — niet aan het eind van een sessie, want een
@@ -111,7 +112,14 @@ afbreking komt midden in een stap.
 
 ## Doorgaan na een gebruikslimiet
 
-Een gebruikslimiet breekt de lopende beurt af zonder kans om nog iets in te plannen. Daarom
-draait er een terugkerende taak die dit bestand leest en verdergaat met het eerstvolgende
-issue dat niet op "gemerged" staat. Ruim die taak op zodra alles in de statustabel gemerged
-is.
+Een gebruikslimiet breekt de lopende beurt af zonder kans om nog iets in te plannen. Daarvoor
+stond een terugkerende taak klaar die dit bestand leest en verdergaat met het eerstvolgende
+issue dat niet op "gemerged" staat. **Die taak staat sinds 26-08-2026 uitgeschakeld** op
+verzoek van de opdrachtgever; zet hem weer aan wanneer het werk hervat wordt, of ruim hem op
+zodra alles in de statustabel gemerged is.
+
+## Waar het werk stond bij het onderbreken
+
+De stack is `main` ← #121 ← #132 (#129) ← #134 (#124) ← #135 (#130) ← #139 (#126). Alle vier
+de PR's zijn draft en hun CI is groen. #139 heeft twee reviewrondes gehad; de derde ronde is
+niet meer gedraaid. Daarna volgen #125, #127 en #128 in die volgorde.
