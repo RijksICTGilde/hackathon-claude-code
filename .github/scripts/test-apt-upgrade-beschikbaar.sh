@@ -58,6 +58,8 @@ bevindingen fix_onbekend    '[{"id":"CVE-1","pkg":"bestaat-niet","inst":"1","fix
 bevindingen fix_zonder_fix  '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5"}]'
 bevindingen twee_pakketten  '[{"id":"CVE-1","pkg":"zlib1g","inst":"1:1.3.dfsg+really1.3.1-1","fix":"1:1.4"},{"id":"CVE-2","pkg":"util-linux","inst":"2.41-5","fix":"2.41-5+deb13u1"}]'
 bevindingen fix_onleesbaar  '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"2.0:a:b"}]'
+bevindingen fix_geen_versie '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":"unfixed"}]'
+bevindingen fix_leeg        '[{"id":"CVE-1","pkg":"util-linux","inst":"2.41-5","fix":""}]'
 bevindingen geen            '[]'
 bevindingen kapot           '{"geen":"lijst"}'
 bevindingen upgrade_kan     '[{"pkg":"util-linux","inst":"2.41-5"}]'
@@ -72,6 +74,8 @@ toets "cve: bevinding zonder fixversie"         1 cve fix_zonder_fix  gewoon "no
 toets "cve: een van twee pakketten is genoeg"   0 cve twee_pakketten  gewoon "1 pakket"
 toets "cve: geen bevindingen"                   1 cve geen            gewoon "Geen bevindingen"
 toets "cve: onbruikbare invoer"                 2 cve kapot           gewoon "geen bruikbare JSON"
+toets "cve: fixversie die geen versie is"        2 cve fix_geen_versie gewoon "geen leesbare Debian-versie"
+toets "cve: leeg fixveld schuift geen kolom op" 1 cve fix_leeg        gewoon "dekt - nog niet (CVE-1)"
 toets "cve: onvergelijkbare versie"            2 cve fix_onleesbaar   gewoon "niet te vergelijken"
 toets "cve: lege policy-uitvoer"                1 cve fix_beschikbaar leeg   "geen kandidaat"
 toets "cve: kandidaat is (none)"                1 cve fix_beschikbaar zonder_kandidaat "geen kandidaat"

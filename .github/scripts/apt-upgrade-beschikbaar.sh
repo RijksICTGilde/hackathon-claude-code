@@ -12,7 +12,11 @@
 #
 # `cve` leest objecten met `pkg` en `fix` en slaagt zodra een fix installeerbaar
 # is; `upgrade` leest objecten met `pkg` en `inst` en slaagt zodra een pakket
-# een hogere kandidaat heeft. Exitcode 1 betekent: niets te halen, geen PR.
+# een hogere kandidaat heeft.
+#
+# Exitcodes: 0 = er valt iets te halen, 1 = niets te halen (een antwoord, geen
+# PR), 2 = de vraag is niet beantwoord. Die derde mag nergens als "nee" gelden;
+# een aanroeper die 2 met 1 op één hoop gooit, slaat security-updates over.
 set -euo pipefail
 
 modus="${1:?modus ontbreekt (cve of upgrade)}"
@@ -26,11 +30,15 @@ for bestand in "${bevindingen}" "${policy}"; do
   }
 done
 
-# Met tabs scheiden: Trivy geeft meerdere fixversies soms als "a, b", en een
-# spatie zou de lijst afkappen op de eerste versie.
+# Scheiden op US (0x1f), niet op tab: Trivy geeft meerdere fixversies soms als
+# "a, b", dus een spatie kapt de lijst af, en tab is voor `read` whitespace —
+# twee opeenvolgende tabs klappen samen en schuiven het CVE-ID de versiekolom
+# in. `//` valt alleen terug bij null, dus een leeg veld wordt hier apart
+# afgevangen; anders komt het als lege kolom door.
+leeg='(. // "") | if . == "" then "-" else . end'
 case "${modus}" in
-  cve)     sleutel='[.pkg, (.fix // "-"), (.id // "?")] | @tsv' ;;
-  upgrade) sleutel='[.pkg, (.inst // "-"), "-"] | @tsv' ;;
+  cve)     sleutel="[(.pkg | ${leeg}), (.fix | ${leeg}), (.id | ${leeg})] | join(\"\\u001f\")" ;;
+  upgrade) sleutel="[(.pkg | ${leeg}), (.inst | ${leeg}), \"-\"] | join(\"\\u001f\")" ;;
   *)
     echo "FOUT: onbekende modus '${modus}' (verwacht: cve of upgrade)." >&2
     exit 2 ;;
@@ -59,8 +67,10 @@ kandidaat() {
 }
 
 haalbaar=0
+haalbare_pakketten="$(mktemp)"
+trap 'rm -f "${lijst}" "${haalbare_pakketten}"' EXIT
 
-while IFS=$'\t' read -r pkg doel id; do
+while IFS=$'\037' read -r pkg doel id; do
   [ -n "${pkg}" ] || continue
   kand="$(kandidaat "${pkg}")"
 
@@ -69,13 +79,29 @@ while IFS=$'\t' read -r pkg doel id; do
     continue
   fi
 
-  # Trivy noemt soms meerdere gefixte versies; een haalbare is genoeg.
+  # In `cve`-modus kan `doel` meerdere gefixte versies bevatten en is één
+  # haalbare genoeg; in `upgrade`-modus staat er altijd precies één versie.
   gehaald=nee
 
-  for versie in ${doel//,/ }; do
+  # Ongequote expansie splitst op spaties, maar zou ook globben; versiesyntax
+  # kent geen metatekens, dus dat is vandaag onschadelijk en morgen een val.
+  read -r -a doelversies <<<"${doel//,/ }"
+
+  for versie in "${doelversies[@]}"; do
     [ -n "${versie}" ] && [ "${versie}" != "-" ] || continue
 
-    # dpkg geeft 2 bij een versie die het niet kan lezen; dat is geen "nee".
+    # dpkg geeft alleen 2 bij een versie die het echt niet kan ontleden. Bij
+    # iets dat niet met een cijfer begint waarschuwt het naar stderr en
+    # vergelijkt alsnog — resultaat 1, wat hier "nee" zou betekenen. Een
+    # fixversie die geen versie is (vrije tekst, een suite-aanduiding) mag niet
+    # als "niets te halen" doorgaan.
+    case "${versie}" in
+      [0-9]*) ;;
+      *)
+        echo "FOUT: '${versie}' is voor ${pkg} geen leesbare Debian-versie; de vergelijking is niet gedaan." >&2
+        exit 2 ;;
+    esac
+
     vergelijking=ge
     [ "${modus}" = cve ] || vergelijking=gt
     rc=0
@@ -93,9 +119,8 @@ while IFS=$'\t' read -r pkg doel id; do
   herkomst=""
   [ "${id}" = "-" ] || herkomst=" (${id})"
 
-  # De twee modi vergelijken met iets anders: `cve` met de gefixte versie,
-  # `upgrade` met wat er nu in de image zit. Eén formulering voor beide leest
-  # in de logs als onzin ("kandidaat 2.41-5 dekt 2.41-5 nog niet").
+  # Eén formulering voor beide modi leest in de logs als onzin
+  # ("kandidaat 2.41-5 dekt 2.41-5 nog niet").
   if [ "${gehaald}" = ja ]; then
     if [ "${modus}" = cve ]; then
       echo "  ${pkg}: kandidaat ${kand} dekt ${doel}${herkomst}"
@@ -104,6 +129,7 @@ while IFS=$'\t' read -r pkg doel id; do
     fi
 
     haalbaar=$((haalbaar + 1))
+    echo "${pkg}" >> "${haalbare_pakketten}"
   elif [ "${modus}" = cve ]; then
     echo "  ${pkg}: kandidaat ${kand} dekt ${doel} nog niet${herkomst}"
   else
@@ -116,4 +142,4 @@ if [ "${haalbaar}" -eq 0 ]; then
   exit 1
 fi
 
-echo "${haalbaar} pakket(ten) met iets te halen."
+echo "$(sort -u "${haalbare_pakketten}" | wc -l) pakket(ten) met iets te halen."
