@@ -12,8 +12,9 @@ sessie op dezelfde plek verder kan.
 
 ## Basis-branch
 
-PR #121 is nog niet gemerged. Zolang dat zo is, vertrekt elke nieuwe branch vanaf
-`fix/apt-cache-bust-security-updates` en niet vanaf `main`: #130 raakt dezelfde workflow,
+PR #121 is nog niet gemerged. Zolang dat zo is, vertrekt elke nieuwe branch vanaf de branch
+van de vorige PR in de reeks — de eerste vanaf `fix/apt-cache-bust-security-updates`, de
+volgende vanaf `chore/actionlint-in-ci`, enzovoort, zodat dit voortgangsbestand meereist en niet vanaf `main`: #130 raakt dezelfde workflow,
 #124 hetzelfde `.trivyignore` en #127 bouwt voort op de scanroute uit #125. Vanaf `main`
 beginnen geeft gegarandeerd conflicten. De PR-beschrijving noemt welke PR de basis is; zodra
 #121 landt wordt de hele stack gerebased. Is #121 wél gemerged, dan begint elke branch vanaf
@@ -89,7 +90,7 @@ criteria.
 | # | Onderwerp | Status | Branch | PR | Laatste afgeronde stap |
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | PR open | `chore/actionlint-in-ci` | #132 | drie reviewrondes verwerkt, CI groen |
-| 124 | `.trivyignore.yaml` | open | — | — | — |
+| 124 | `.trivyignore.yaml` | in uitvoering | `chore/trivyignore-yaml` | — | branch aangemaakt |
 | 130 | auto-PR-jobs verifiëren hun wijziging | open | — | — | — |
 | 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
