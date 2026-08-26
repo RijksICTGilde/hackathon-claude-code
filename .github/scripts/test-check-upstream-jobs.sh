@@ -41,21 +41,35 @@ for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}"; do
   fi
 done
 
-for job in vendored-scripts rtk-version delta-version node-version npm-version; do
+for job in vendored-scripts rtk-version delta-version node-version npm-version apt-security-refresh; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
   # Precies één run-blok: `yq` plakt er anders meerdere achter elkaar en dan
   # draait de fixture een script dat geen enkele stap zo uitvoert.
+  # apt-security-refresh heeft meerdere run-stappen; daarvan wordt alleen de
+  # beslisstap los getoetst.
+  verwacht_blokken=1
+  [ "${job}" = apt-security-refresh ] && verwacht_blokken=3
+
   if [ ! -s "${werkmap}/${job}.sh" ] \
-     || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne 1 ]; then
-    echo "FOUT: verwacht precies één run-blok in ${job}"
+     || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne "${verwacht_blokken}" ]; then
+    echo "FOUT: verwacht precies ${verwacht_blokken} run-blok(ken) in ${job}"
     exit 1
   fi
 done
 
+# De beslisstap apart, want de job heeft er meer dan één.
+yq '.jobs."apt-security-refresh".steps[] | select(.id == "compare") | .run' "${workflow}" \
+  > "${werkmap}/epoch.sh"
+if [ ! -s "${werkmap}/epoch.sh" ]; then
+  echo "FOUT: geen compare-stap gevonden in apt-security-refresh"
+  exit 1
+fi
+
 nieuwe_map() { # -> map met een kopie van claude-sandbox en een stub-PATH
   local d; d="$(mktemp -d "${werkmap}/geval-XXXXXX")"
   mkdir -p "${d}/ws/.github/scripts" "${d}/ws/claude-sandbox/vendor/install-scripts" "${d}/bin"
-  cp "${wortel}/.github/scripts/vervang-pin.sh" "${d}/ws/.github/scripts/"
+  cp "${wortel}/.github/scripts/vervang-pin.sh" \
+     "${wortel}/.github/scripts/apt-upgrade-beschikbaar.sh" "${d}/ws/.github/scripts/"
   cp "${wortel}/claude-sandbox/Dockerfile" "${wortel}/claude-sandbox/README.md" "${d}/ws/claude-sandbox/"
   printf '#!/bin/sh\necho origineel\n' > "${d}/ws/claude-sandbox/vendor/install-scripts/rtk.sh"
   echo "${d}"
@@ -293,6 +307,94 @@ d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
 dubbele_pin "$d" 'RUN NPM_VERSION=' 'RUN NPM_VERSION=0.0.1 \\'
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: tweede pin wordt rood" 1 "precies één NPM_VERSION-pin" "$uit" "$rc"
+
+
+# ── apt-security-refresh: de beslissing om wel of niet te verversen ──
+# De scanrapporten en de apt-suite zijn hier gestubd; wat getoetst wordt is de
+# beslislogica eromheen.
+epoch_map() { # -> map met rapporten, stubs en een kopie van claude-sandbox
+  local d; d="$(nieuwe_map)"
+  mkdir -p "$d/tmp"
+  echo "$d"
+}
+
+epoch_rapport() { # map arch cve-json installed-json
+  jq -n --argjson v "$3" --argjson p "$4" --arg a "$2" '{
+    Metadata: {OS: {Family: "debian"}, ImageConfig: {architecture: $a}},
+    Results: [{Class: "os-pkgs", Vulnerabilities: $v, Packages: $p}]
+  }' > "$1/tmp/trivy-$2.json"
+}
+
+epoch_draai() { # map [gh-uitvoer]
+  ( cd "$1/ws/claude-sandbox" \
+      && PATH="$1/bin:$PATH" GITHUB_WORKSPACE="$1/ws" GITHUB_OUTPUT="$1/uitvoer" \
+         MAX_EPOCH_AGE_DAYS=28 TMPDIR="$1/tmp" bash "${werkmap}/epoch.sh" ) 2>&1
+}
+
+# De job schrijft naar vaste /tmp-paden; die worden per geval leeggemaakt.
+epoch_geval() { # map cve-json installed-json policy [open-pr] [epoch]
+  rm -f /tmp/trivy-amd64.json /tmp/trivy-arm64.json /tmp/os-all.json \
+        /tmp/rest-all.json /tmp/geinstalleerd.json /tmp/policy.txt
+  epoch_rapport "$1" amd64 "$2" "$3"
+  epoch_rapport "$1" arm64 "$2" "$3"
+  cp "$1/tmp/trivy-amd64.json" /tmp/trivy-amd64.json
+  cp "$1/tmp/trivy-arm64.json" /tmp/trivy-arm64.json
+  printf '%b' "$4" > "$1/policy.txt"
+  stub "$1" docker "cat '$1/policy.txt'"
+  stub "$1" gh "printf '%s' '${5:-}'"
+
+  # De periodieke tak slaat pas aan bij een oude epoch; zonder dit blijven die
+  # gevallen in de CVE-tak steken en meten ze de poort niet.
+  if [ -n "${6:-}" ]; then
+    sed -i "s|^ARG APT_UPGRADE_EPOCH=.*|ARG APT_UPGRADE_EPOCH=$6|" "$1/ws/claude-sandbox/Dockerfile"
+  fi
+}
+
+policy_met_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n'
+policy_zonder_update='util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n'
+cve_bevinding='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"2.41-5+deb13u1"}]'
+cve_te_nieuw='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linux","InstalledVersion":"2.41-5","FixedVersion":"9.9-1"}]'
+pakketten='[{"Name":"util-linux","Version":"2.41-5"}]'
+
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: fix beschikbaar levert een verversing" 0 "kandidaat 2.41-5+deb13u1 dekt" "$uit" "$rc"
+geopend "epoch: fix beschikbaar zet changed=true" "$d"
+grep -q 'reason=.*nu op te halen' "$d/uitvoer"
+controle "epoch: de aanleiding noemt de beschikbare fix" $?
+
+d="$(epoch_map)"; epoch_geval "$d" "$cve_te_nieuw" "$pakketten" "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: fix nog niet in de suite opent niets" 0 "geen enkele fix staat in de suite" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: fix nog niet in de suite zet changed=false" $?
+
+d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_zonder_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: niets te upgraden slaat de periodieke verversing over" 0 "geen pakket heeft een hogere kandidaat" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: niets te upgraden opent niets" $?
+
+d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_met_update" "" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: periodieke verversing met iets te halen" 0 "hogere kandidaat" "$uit" "$rc"
+grep -q 'reason=periodieke verversing' "$d/uitvoer"
+controle "epoch: de aanleiding noemt de periodieke verversing" $?
+geopend "epoch: periodieke verversing zet changed=true" "$d"
+
+d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_met_update" "1234" 2020-01-01
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: openstaand voorstel wordt met rust gelaten" 0 "staat al een voorstel open" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "epoch: openstaand voorstel wordt niet herschreven" $?
+
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" ""
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: lege policy-uitvoer wordt rood" 1 "leverde niets op" "$uit" "$rc"
+
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" '[]' "$policy_met_update"
+uit="$(epoch_draai "$d")"; rc=$?
+toets "epoch: geen geïnstalleerde pakketten wordt rood" 1 "niet te stellen" "$uit" "$rc"
+
+rm -f /tmp/trivy-amd64.json /tmp/trivy-arm64.json /tmp/os-all.json \
+      /tmp/rest-all.json /tmp/geinstalleerd.json /tmp/policy.txt
 
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]

@@ -592,6 +592,7 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
           trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
           exit-code: '0'
 
       - name: Trivy scan of published image (arm64)
@@ -605,12 +606,15 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
           trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
           exit-code: '0'
           # De binary zit na de vorige stap in de tool-cache.
           skip-setup-trivy: true
 
       - name: Bump APT_UPGRADE_EPOCH if needed
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel of in de
@@ -621,6 +625,7 @@ jobs:
           fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
           : > /tmp/os-all.json
           : > /tmp/rest-all.json
+          : > /tmp/geinstalleerd.json
           for arch in amd64 arm64; do
             report="/tmp/trivy-${arch}.json"
             # Een crashende scan maakt de stap rood, maar een scan die netjes
@@ -652,6 +657,10 @@ jobs:
             echo "Gescand: ${arch} (${family}), ${os_targets} os-pkgs-target(s), ${arch_count} fixbare CRITICAL/HIGH."
             jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
             jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
+            # Geïnstalleerde apt-pakketten: de invoer voor de vraag of er
+            # überhaupt iets te upgraden valt.
+            jq '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]? | {pkg: .Name, inst: .Version}]' \
+              "$report" >> /tmp/geinstalleerd.json
           done
           # Tellen per CVE-ID over beide architecturen samen: één CVE die tien
           # pakketten op twee architecturen raakt is één bevinding.
@@ -701,10 +710,63 @@ jobs:
           if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
             echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
           fi
+          # Een fix die upstream kent maar die de suite nog niet uitlevert,
+          # levert een verversing op die niets verandert: dezelfde bevinding
+          # komt de week erna terug, na drie volledige bouwrondes. Daarom eerst
+          # vragen wat er werkelijk te halen is.
+          jq -s add /tmp/os-all.json > /tmp/os-samen.json
+          jq -s 'add | unique_by(.pkg)' /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
+          pakketten=$(jq -r '[.[].pkg] | unique | join(" ")' /tmp/geinstalleerd-samen.json)
+          if [ -z "$pakketten" ]; then
+            echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
+            exit 1
+          fi
+          # Dezelfde basis-image als de Dockerfile, dus dezelfde suite. 28 MB in
+          # plaats van de 628 MB van de gepubliceerde image.
+          basis=$(grep -oE '^FROM debian:[0-9]+\.[0-9]+-slim@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2)
+          if [ -z "$basis" ]; then
+            echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          # shellcheck disable=SC2086 # de pakketnamen zijn losse argumenten
+          docker run --rm "$basis" sh -c \
+            "apt-get update -qq >/dev/null 2>&1 && apt-cache policy $pakketten" > /tmp/policy.txt
+          if [ ! -s /tmp/policy.txt ]; then
+            echo "FOUT: apt-cache policy leverde niets op; de beschikbaarheid is niet vastgesteld" >&2
+            exit 1
+          fi
+          # Een openstaand voorstel wordt niet elke week herschreven: de
+          # review-run die iemand daarop startte zou daarmee achterhaald raken.
+          # Een CVE-bevinding gaat wél voor — dan is er iets nieuws te melden.
+          open_pr=0
+          if [ -n "$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[].number' || true)" ]; then
+            open_pr=1
+          fi
+          beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
+          cve_haalbaar=0
           if [ "$count" -gt 0 ]; then
-            reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten"
-          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+            echo "Fixes die de suite nu uitlevert:"
+            "$beoordeel" cve /tmp/os-samen.json /tmp/policy.txt && cve_haalbaar=1
+          fi
+          upgrade_haalbaar=0
+          echo "Pakketten met een hogere kandidaat:"
+          "$beoordeel" upgrade /tmp/geinstalleerd-samen.json /tmp/policy.txt && upgrade_haalbaar=1
+          if [ "$count" -gt 0 ] && [ "$cve_haalbaar" -eq 1 ]; then
+            reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten, waarvan minstens één nu op te halen"
+          elif [ "$count" -gt 0 ]; then
+            echo "::warning::${count} fixbare CRITICAL/HIGH-CVE('s), maar geen enkele fix staat in de suite; geen verversing"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ] && [ "$open_pr" -eq 1 ]; then
+            echo "Periodieke verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ] && [ "$upgrade_haalbaar" -eq 1 ]; then
             reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
+          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+            echo "Periodieke verversing overgeslagen: geen pakket heeft een hogere kandidaat dan wat er in de image staat."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           else
             echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten; epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
             echo "changed=false" >> "$GITHUB_OUTPUT"
