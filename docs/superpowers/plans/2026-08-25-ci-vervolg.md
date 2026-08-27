@@ -78,7 +78,11 @@ nodig heeft daar zijn vorm krijgt.
   OS-package nog steeds 134 van de 239, doordat Trivy de `upstream=`-qualifier in de purl niet
   gebruikt en advisories op bronpakket-niveau daardoor niet matchen. Let op dat de diff zoals
   het issue hem formuleert vals-positief uitpakt zolang de image nul fixbare CRITICAL/HIGH
-  heeft: beide sets zijn dan leeg. Draai de vergelijking zonder severity-filter.
+  heeft: beide sets zijn dan leeg. Draai de vergelijking zonder severity-filter. De vervolgroute — de build
+  laat Trivy zelf de SBOM maken via een eigen BuildKit-generator — is doorgemeten en levert
+  wél een gelijkwaardige uitkomst (239 tegenover 239), maar vereist een eigen image die
+  onderhouden moet worden. Afgewezen op 27-08-2026: die kosten wegen niet op tegen ~2,3 GB
+  bandbreedte per maand. **Niet opnieuw voorstellen**; de meting staat op het issue.
 - #128 heeft een harde go/no-go: de handtekening op de samengestelde index moet
   verifieerbaar zijn en provenance en SBOM moeten per architectuur meekomen.
 
@@ -108,7 +112,7 @@ criteria.
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
 | 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
-| 125 | scan op gepubliceerde SBOM | geblokkeerd | — | — | go/no-go gemeten: no-go, uitkomst op het issue |
+| 125 | scan op gepubliceerde SBOM | verworpen | — | — | no-go gemeten; vervolgroute afgewezen door de opdrachtgever |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
