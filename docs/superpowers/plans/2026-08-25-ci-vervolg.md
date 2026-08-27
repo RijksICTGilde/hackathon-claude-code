@@ -72,7 +72,13 @@ nodig heeft daar zijn vorm krijgt.
   dat mislukken de indexen stil, want `apt-get update` geeft dan nog steeds exitcode 0.
 - Wachten op groene CI voor de PR als klaar gepresenteerd wordt.
 - #125 heeft een harde go/no-go: beide scanroutes in één run draaien en de CVE-ID-sets van
-  `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg.
+  `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg. **Gemeten op
+  27-08-2026: no-go.** De gepubliceerde SBOM levert 0 van de 239 os-CVE's, want BuildKit laat
+  syft de laag als directory scannen en dan komt er geen OS-package uit; met een geïnjecteerd
+  OS-package nog steeds 134 van de 239, doordat Trivy de `upstream=`-qualifier in de purl niet
+  gebruikt en advisories op bronpakket-niveau daardoor niet matchen. Let op dat de diff zoals
+  het issue hem formuleert vals-positief uitpakt zolang de image nul fixbare CRITICAL/HIGH
+  heeft: beide sets zijn dan leeg. Draai de vergelijking zonder severity-filter.
 - #128 heeft een harde go/no-go: de handtekening op de samengestelde index moet
   verifieerbaar zijn en provenance en SBOM moeten per architectuur meekomen.
 
@@ -102,7 +108,7 @@ criteria.
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
 | 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
-| 125 | scan op gepubliceerde SBOM | in uitvoering | `chore/scan-op-sbom` | — | branch aangemaakt; go/no-go nog te meten |
+| 125 | scan op gepubliceerde SBOM | geblokkeerd | — | — | go/no-go gemeten: no-go, uitkomst op het issue |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
