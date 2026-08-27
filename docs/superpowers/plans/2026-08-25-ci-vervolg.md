@@ -17,7 +17,7 @@ zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd c
 #130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
 uit #125. De PR-beschrijving noemt welke PR de basis is.
 
-#121, #132 en #134 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+#121, #132, #134 en #135 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
 onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
 commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
 meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
@@ -64,6 +64,12 @@ nodig heeft daar zijn vorm krijgt.
   goede pad getest is, telt niet als getest.
 - Bij wijzigingen aan de image: `docker compose build --no-cache`, met het resultaat in de
   PR. Kun je niet bouwen, zeg dat expliciet in de PR in plaats van het weg te laten.
+- Containers draaien met podman (`docker` in PATH is een shim). Twee valkuilen in deze
+  omgeving: een verweesde `pause.pid` in `$XDG_RUNTIME_DIR/libpod/tmp/` uit een vorige sessie
+  geeft "cannot re-exec process to join the existing user namespace" — verwijderen wanneer het
+  pid niet meer leeft. En poort 80 is dicht, dus `apt-get update` in een container heeft
+  https-sources plus `-o Acquire::https::CaInfo=` naar de CA-bundel van de host nodig; zonder
+  dat mislukken de indexen stil, want `apt-get update` geeft dan nog steeds exitcode 0.
 - Wachten op groene CI voor de PR als klaar gepresenteerd wordt.
 - #125 heeft een harde go/no-go: beide scanroutes in één run draaien en de CVE-ID-sets van
   `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg.
@@ -94,8 +100,8 @@ criteria.
 |---|---|---|---|---|---|
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
-| 130 | auto-PR-jobs verifiëren hun wijziging | PR open | `fix/auto-pr-verifieert-wijziging` | #135 | drie reviewrondes verwerkt |
-| 126 | beschikbaarheid fix vóór bump-PR | open | — | — | — |
+| 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
+| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
 | 125 | scan op gepubliceerde SBOM | open | — | — | — |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
@@ -104,6 +110,11 @@ criteria.
 | 136 | wekelijks voorstel dat niets te wijzigen heeft blijft onopgemerkt | open | — | — | — |
 | 137 | scriptcontrole draait niet op een gestapeld voorstel | open | — | — | — |
 | 138 | één gevendord installatiescript wordt bijna nooit gecontroleerd | open | — | — | — |
+| 141 | de wekelijkse scan draait ook als er niets te beslissen valt | open | — | — | uit ronde 3 van #126 |
+| 142 | een kwetsbaarheid die weken niet te verhelpen is blijft onder de radar | open | — | — | uit ronde 3 van #126 |
+| 143 | de fixtures van de wekelijkse jobs delen vaste paden | open | — | — | uit ronde 3 van #126 |
+| 144 | de basis-image van de controle wordt anoniem opgehaald | open | — | — | uit ronde 3 van #126 |
+| 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
 stap begint en direct nadat je hem afrondt — niet aan het eind van een sessie, want een
@@ -111,7 +122,15 @@ afbreking komt midden in een stap.
 
 ## Doorgaan na een gebruikslimiet
 
-Een gebruikslimiet breekt de lopende beurt af zonder kans om nog iets in te plannen. Daarom
-draait er een terugkerende taak die dit bestand leest en verdergaat met het eerstvolgende
-issue dat niet op "gemerged" staat. Ruim die taak op zodra alles in de statustabel gemerged
-is.
+Een gebruikslimiet breekt de lopende beurt af zonder kans om nog iets in te plannen. Daarvoor
+stond een terugkerende taak klaar die dit bestand leest en verdergaat met het eerstvolgende
+issue dat niet op "gemerged" staat. **Die taak staat sinds 26-08-2026 uitgeschakeld** op
+verzoek van de opdrachtgever; zet hem weer aan wanneer het werk hervat wordt, of ruim hem op
+zodra alles in de statustabel gemerged is.
+
+## Waar het werk stond bij het onderbreken
+
+De stack is `main` ← #139 (#126); #121, #132, #134 en #135 zitten in `main`. #139 is draft en
+heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
+volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
+zijn, dus de harde go/no-go van dat issue is uitvoerbaar.

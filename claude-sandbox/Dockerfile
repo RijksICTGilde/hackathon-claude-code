@@ -99,6 +99,8 @@ RUN NPM_VERSION=11.19.0 && \
 # git-delta installeren (amd64 + arm64); SHAs uit de upstream release pinnen voor supply-chain integriteit
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere release op dandavison/delta is).
+# Dit pakket komt met `dpkg -i` binnen, niet uit apt: de wekelijkse verversing
+# van de apt-laag kan het dus niet bewegen en laat het buiten de weging.
 RUN DELTA_VERSION=0.19.2 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \

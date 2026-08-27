@@ -44,6 +44,7 @@ Vanuit de repo-wortel, voor workflowwijzigingen:
 actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
 .github/scripts/test-valideer-trivyignore.sh  # fixtures van de suppressie-validatie (vereist yq)
 .github/scripts/test-vervang-pin.sh            # fixtures van de pin-vervanging
+.github/scripts/test-apt-upgrade-beschikbaar.sh # fixtures van de beschikbaarheidsvraag
 .github/scripts/test-check-upstream-jobs.sh    # fixtures van de wekelijkse versiejobs (vereist yq)
 ```
 

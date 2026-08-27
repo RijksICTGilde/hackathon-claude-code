@@ -28,6 +28,9 @@ jobs:
       - name: Fixtures van de pin-vervanging
         run: .github/scripts/test-vervang-pin.sh
 
+      - name: Fixtures van de beschikbaarheidsvraag
+        run: .github/scripts/test-apt-upgrade-beschikbaar.sh
+
       - name: Fixtures van de wekelijkse versiejobs
         run: .github/scripts/test-check-upstream-jobs.sh
 

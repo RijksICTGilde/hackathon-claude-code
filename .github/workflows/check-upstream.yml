@@ -592,6 +592,7 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
           trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
           exit-code: '0'
 
       - name: Trivy scan of published image (arm64)
@@ -605,12 +606,15 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
           trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
           exit-code: '0'
           # De binary zit na de vorige stap in de tool-cache.
           skip-setup-trivy: true
 
       - name: Bump APT_UPGRADE_EPOCH if needed
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel of in de
@@ -621,6 +625,7 @@ jobs:
           fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
           : > /tmp/os-all.json
           : > /tmp/rest-all.json
+          : > /tmp/geinstalleerd.json
           for arch in amd64 arm64; do
             report="/tmp/trivy-${arch}.json"
             # Een crashende scan maakt de stap rood, maar een scan die netjes
@@ -649,15 +654,35 @@ jobs:
                 exit 1 ;;
             esac
             arch_count=$(jq "$os | group_by(.VulnerabilityID) | length" "$report" || true)
+            case "$arch_count" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling van bevindingen in $report (waarde: '${arch_count}')" >&2
+                exit 1 ;;
+            esac
             echo "Gescand: ${arch} (${family}), ${os_targets} os-pkgs-target(s), ${arch_count} fixbare CRITICAL/HIGH."
             jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
             jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
+            # Geïnstalleerde apt-pakketten: de invoer voor de vraag of er
+            # überhaupt iets te upgraden valt. De volledige versie zit in `ID`
+            # (naam@versie); `Version` bevat alleen het upstream-deel, zonder
+            # epoch en revisie, en zou elke vergelijking laten kloppen.
+            zonder_id=$(jq '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]? | select(.ID == null)] | length' "$report")
+            if [ "$zonder_id" -ne 0 ]; then
+              echo "FOUT: ${zonder_id} pakket(ten) in $report zonder ID; de volledige versie is daar niet uit te lezen" >&2
+              exit 1
+            fi
+            jq --arg arch "$arch" \
+              '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]?
+                | {pkg: .Name, inst: (.ID | sub("^.*@"; "")), arch: $arch}]' \
+              "$report" >> /tmp/geinstalleerd.json
           done
           # Tellen per CVE-ID over beide architecturen samen: één CVE die tien
-          # pakketten op twee architecturen raakt is één bevinding.
-          count=$(jq -s 'add | [.[].id] | unique | length' /tmp/os-all.json || true)
+          # pakketten op twee architecturen raakt is één bevinding. `ruw` is
+          # alles wat de scan meldde; `count` telt alleen wat een verversing
+          # werkelijk kan raken en is daarmee de telling waarop besloten wordt.
+          ruw=$(jq -s 'add | [.[].id] | unique | length' /tmp/os-all.json || true)
           other=$(jq -s 'add | [.[].id] | unique | length' /tmp/rest-all.json || true)
-          for var in count other; do
+          for var in ruw other; do
             case "${!var}" in
               ''|*[!0-9]*)
                 echo "FOUT: geen bruikbare telling uit /tmp/os-all.json of /tmp/rest-all.json (${var}='${!var}')" >&2
@@ -701,12 +726,301 @@ jobs:
           if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
             echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
           fi
+          # De uitsluitingslijst wordt uit de Dockerfile afgeleid in plaats van
+          # apart bijgehouden: een tweede `dpkg -i` zou anders stil gaan
+          # meewegen (week na week een voorstel dat het pakket meteen weer op
+          # zijn eigen pin terugzet), en een naam die er blijft staan terwijl
+          # het pakket inmiddels uit apt komt, zou zijn bevindingen voorgoed
+          # wegfilteren. De bestandsnaam van de `.deb` is de pakketnaam; klopt
+          # die aanname niet, dan valt dat op omdat het pakket niet in de scan
+          # voorkomt.
+          # `|| true`: zonder match zou grep onder pipefail de stap laten eindigen
+          # nog voor de melding hieronder wordt bereikt.
+          # Commentregels eruit: die noemen `dpkg -i` juist om uit te leggen wat
+          # hier gebeurt, en zouden anders als installatie meetellen.
+          grep -vE '^[[:space:]]*#' Dockerfile > "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments"
+          buiten_apt=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)[[:space:]]+[^[:space:]]+\.deb' \
+              "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } \
+            | sed -E 's|.*/||; s|\.deb$||' | sort -u | jq -R . | jq -sc .)
+          # Voorkomens tellen, geen regels: twee installaties op één regel zijn
+          # ook twee installaties.
+          dpkg_regels=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)' \
+            "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } | wc -l)
+          afgeleid=$(jq 'length' <<<"$buiten_apt")
+          if [ "$dpkg_regels" -ne "$afgeleid" ]; then
+            echo "FOUT: ${dpkg_regels} dpkg-installatie(s) in de Dockerfile, maar ${afgeleid} pakketnaam/-namen af te leiden; de vorm is niet herkend" >&2
+            grep -nE 'dpkg[[:space:]]+(-i|--install)' "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" >&2 || true
+            exit 1
+          fi
+          echo "Buiten de apt-laag geïnstalleerd volgens de Dockerfile: ${buiten_apt}"
+          # Pakketten die niet uit de apt-laag komen, kan een epoch-bump niet
+          # bewegen: ze worden verderop in de Dockerfile op een eigen versie
+          # gepind en volgen hun eigen wekelijkse job. Een voorstel op grond van
+          # zo'n pakket verhelpt niets en bouwt drie keer voor niets.
+          jq -s --argjson buiten "$buiten_apt" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not))' \
+            /tmp/os-all.json > /tmp/os-samen.json
+          for pkg in $(jq -r '.[]' <<<"$buiten_apt"); do
+            gevonden=$(jq -s --arg p "$pkg" '[add[] | select(.pkg == $p)] | length' /tmp/os-all.json)
+            [ "$gevonden" -eq 0 ] || echo "Buiten de weging gelaten: ${gevonden} bevinding(en) op ${pkg}, dat buiten apt om wordt gepind."
+          done
+          # De kandidaat komt altijd uit een amd64-container, maar de
+          # geïnstalleerde versies van beide architecturen worden gewogen: bouwt
+          # arm64 op een ander moment, of heeft een pakket daar een eigen
+          # binNMU-revisie, dan zou een achterstand op die architectuur anders
+          # nooit een verversing uitlokken. Een binNMU is hoger dan het
+          # amd64-origineel, dus dat geeft geen vals alarm.
+          jq -s --argjson buiten "$buiten_apt" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not)) | unique_by([.pkg, .inst])' \
+            /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
+          # De pakketlijst die we voorleggen is de unie van beide architecturen:
+          # een pakket dat alleen op arm64 een bevinding heeft, zou anders geen
+          # kandidaat krijgen en dat leest als "de fix staat niet in de suite".
+          jq -s '[add[].pkg] | unique' \
+            /tmp/geinstalleerd.json /tmp/os-all.json > /tmp/te-vragen.json
+          count=$(jq '[.[].id] | unique | length' /tmp/os-samen.json)
+          case "$count" in
+            ''|*[!0-9]*)
+              echo "FOUT: geen bruikbare telling uit /tmp/os-samen.json (waarde: '${count}')" >&2
+              exit 1 ;;
+          esac
+          if [ "$count" -ne "$ruw" ]; then
+            echo "Van de ${ruw} fixbare CRITICAL/HIGH raken er ${count} de apt-laag; de rest zit op een pakket dat buiten apt om gepind is."
+          fi
+          beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
+
+          # De policy-uitvoer wordt hoogstens één keer opgehaald, en alleen als
+          # er iets te beslissen valt.
+          policy_opgehaald=0
+          haal_policy() {
+            [ "$policy_opgehaald" -eq 0 ] || return 0
+            local aantal gedekt basis rc
+            local -a pakketten
+            mapfile -t pakketten < <(jq -r '.[]' /tmp/te-vragen.json)
+            aantal=$(jq -r '[.[].pkg] | unique | length' /tmp/geinstalleerd-samen.json)
+            if [ "${#pakketten[@]}" -eq 0 ] || [ "$aantal" -eq 0 ]; then
+              echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
+              exit 1
+            fi
+            # De namen komen uit een scanrapport en gaan als losse argumenten naar
+            # een container, niet als shell-string; deze controle gaat dus over
+            # de vraag of we het juiste vragen, niet over injectie. In jq
+            # toetsen en niet op de gelezen regels: een naam waar een newline in
+            # zit, ligt na het lezen al in tweeën, en beide helften zouden er
+            # dan geldig uitzien. Het echte pakket wordt nooit gevraagd en
+            # krijgt "geen kandidaat" — een stille nee.
+            afwijkend=$(jq -r '[.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not))] | length' /tmp/te-vragen.json)
+            case "$afwijkend" in
+              ''|*[!0-9]*)
+                echo "FOUT: de naamcontrole gaf geen bruikbare telling (waarde: '${afwijkend}')" >&2
+                exit 1 ;;
+            esac
+            if [ "$afwijkend" -ne 0 ]; then
+              echo "FOUT: ${afwijkend} onverwachte pakketnaam/-namen in de scanuitvoer; niet doorgegeven aan de container" >&2
+              jq -r '.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not)) | @json' /tmp/te-vragen.json >&2
+              exit 1
+            fi
+            # Dezelfde basis-image als de Dockerfile, dus dezelfde suite, en een
+            # fractie van de gepubliceerde image om binnen te halen.
+            basis=$(grep -oE '^FROM debian:[^@[:space:]]+@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2 || true)
+            if [ -z "$basis" ]; then
+              echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
+              exit 1
+            fi
+            # `apt-get update` geeft exitcode 0 als een deel van de indexen
+            # niet op te halen is; valt juist de security-suite weg, dan ziet de
+            # vraag geen enkele security-fix en leest dat als "niets te halen".
+            rc=0
+            # `apt-get update` schrijft zijn voortgang naar stdout; dat hoort
+            # niet in het bestand dat straks geparsed wordt. De indextargets
+            # gaan mee als bewijs welke bronnen daadwerkelijk zijn gebruikt.
+            docker run --rm "$basis" sh -c \
+              'apt-get update >&2 && apt-get indextargets --format "\$(SITE) \$(RELEASE)" \
+                 | sed "s/^/INDEX /" && apt-cache policy "$@"' _ "${pakketten[@]}" \
+              > /tmp/policy.txt 2> /tmp/policy-fouten.txt || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "FOUT: de policy-container eindigde met exitcode ${rc}" >&2
+              cat /tmp/policy-fouten.txt >&2
+              exit 1
+            fi
+            # Ook op het goede pad meekijken: hier komt de voortgang van
+            # `apt-get update` terecht, en een melding uit de container die
+            # nergens op matcht zou anders spoorloos verdwijnen.
+            if [ -s /tmp/policy-fouten.txt ]; then
+              echo "Meldingen uit de policy-container:"
+              head -c 2000 /tmp/policy-fouten.txt
+            fi
+            fetch_rc=0
+            grep -qE 'Failed to fetch|Some index files failed' /tmp/policy-fouten.txt || fetch_rc=$?
+            if [ "$fetch_rc" -gt 1 ]; then
+              echo "FOUT: de controle op indexfouten kon niet draaien (grep exitcode ${fetch_rc})" >&2
+              exit 1
+            fi
+            if [ "$fetch_rc" -eq 0 ]; then
+              echo "FOUT: apt-get update kon niet alle indexen ophalen; de beschikbaarheid is niet vast te stellen" >&2
+              cat /tmp/policy-fouten.txt >&2
+              exit 1
+            fi
+            # Niet-leeg zegt niets: elke afwijking in het uitvoerformaat zou
+            # stil "geen kandidaat" opleveren voor álle pakketten en daarmee
+            # elke verversing tegenhouden.
+            # Alleen de geïnstalleerde pakketten moeten gedekt zijn: een naam
+            # die alleen uit een bevinding komt kan ontbreken omdat de suite hem
+            # niet kent, en dat is een antwoord, geen kapotte meting.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/geinstalleerd-samen.json > /tmp/verwachte-koppen.txt
+            # `|| true` zou ook exitcode 2 opvangen — een onleesbaar bestand of
+            # een ongeldig patroon — en dat levert een lege telling op waarmee
+            # de vergelijking hieronder zelf faalt. In een `if`-conditie grijpt
+            # `set -e` daar niet op in, dus de controle zou stil overgeslagen
+            # worden.
+            grep_rc=0
+            gedekt=$(grep -cxFf /tmp/verwachte-koppen.txt /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de dekkingscontrole kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            case "$gedekt" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare dekkingstelling uit de policy-uitvoer (waarde: '${gedekt}')" >&2
+                exit 1 ;;
+            esac
+            # Een enkel ontbrekend pakket is een antwoord: de suite kent het
+            # niet, en het script leest dat verderop als "geen kandidaat". Nul
+            # dekking is geen antwoord maar een kapotte meting — een ander
+            # uitvoerformaat, een andere taal, of een update die geen enkele
+            # index binnenhaalde.
+            if [ "$gedekt" -eq 0 ]; then
+              echo "FOUT: apt-cache policy noemt geen enkel van de ${aantal} geïnstalleerde pakketten; de policy-uitvoer is niet gelezen zoals verwacht" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            # Een enkel pakket dat de suite niet kent is een antwoord; loopt de
+            # basis-image zover uit de pas met de gepubliceerde image dat een
+            # tiende van de namen onbekend is, dan wordt er meer geraden dan
+            # gemeten.
+            if [ $(( gedekt * 10 )) -lt $(( aantal * 9 )) ]; then
+              echo "FOUT: apt-cache policy noemt maar ${gedekt} van de ${aantal} geïnstalleerde pakketten; te veel om de uitkomst een meting te noemen" >&2
+              exit 1
+            fi
+            # De pakketten die de bevindingen dragen moeten er állemaal in staan.
+            # Voor een geïnstalleerd pakket is "de suite kent het niet" nog een
+            # antwoord; voor een pakket waar een fixbare CVE op zit is het dat
+            # niet — dan is de vraag of die fix er is simpelweg niet gesteld.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/os-samen.json > /tmp/cve-koppen.txt
+            if [ -s /tmp/cve-koppen.txt ]; then
+              cve_rc=0
+              cve_gedekt=$(grep -cxFf /tmp/cve-koppen.txt /tmp/policy.txt) || cve_rc=$?
+              if [ "$cve_rc" -gt 1 ]; then
+                echo "FOUT: de dekkingscontrole op bevindingen kon niet draaien (grep exitcode ${cve_rc})" >&2
+                exit 1
+              fi
+              cve_verwacht=$(wc -l < /tmp/cve-koppen.txt)
+              if [ "$cve_gedekt" -lt "$cve_verwacht" ]; then
+                echo "FOUT: van de ${cve_verwacht} pakketten met een fixbare bevinding noemt apt-cache policy er ${cve_gedekt}; voor de rest is de vraag niet gesteld" >&2
+                exit 1
+              fi
+            fi
+            if [ "$gedekt" -lt "$aantal" ]; then
+              echo "::warning::apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de rest kent deze suite niet — buiten apt om geïnstalleerd, of alleen aanwezig in de index van de andere architectuur"
+            fi
+            # Koppen zonder kandidaten is dezelfde kapotte meting, één laag
+            # dieper: de namen worden herkend maar de versietabel niet.
+            kandidaten=0
+            grep_rc=0
+            kandidaten=$(grep -c '^  Candidate:' /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de controle op kandidaten kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            if [ "$kandidaten" -eq 0 ]; then
+              echo "FOUT: geen enkele Candidate-regel in de policy-uitvoer; het formaat is niet wat de beoordeling verwacht" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            # Zonder indexen valt apt terug op /var/lib/dpkg/status en levert het
+            # gewoon kandidaten: de versies die al in de image zitten. Elke
+            # vergelijking komt dan op "niets te halen" uit, en dat is geen
+            # antwoord maar een meting zonder bron. Een kandidaat uit een
+            # archief is te herkennen aan de herkomstregel in de versietabel.
+            uit_archief=0
+            grep_rc=0
+            uit_archief=$(grep -cE '^ +[0-9]+ [^/]' /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de controle op de herkomst van de kandidaten kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            if [ "$uit_archief" -eq 0 ]; then
+              echo "FOUT: geen enkele kandidaat komt uit een archief; apt viel terug op de pakketstatus van de image en heeft geen suite geraadpleegd" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            if ! grep -q '^INDEX .*-security' /tmp/policy.txt; then
+              echo "FOUT: geen security-index in de gebruikte apt-bronnen; een fix uit de security-suite zou onzichtbaar blijven" >&2
+              grep '^INDEX ' /tmp/policy.txt >&2 || true
+              exit 1
+            fi
+            policy_opgehaald=1
+          }
+
+          # Exitcode 1 betekent "niets te halen", 2 of hoger betekent dat de
+          # vraag niet beantwoord is; dat laatste mag niet als "nee" tellen.
+          beschikbaar() { # modus bestand
+            local rc=0
+            "$beoordeel" "$1" "$2" /tmp/policy.txt || rc=$?
+            case "$rc" in
+              0) return 0 ;;
+              1) return 1 ;;
+              *) echo "FOUT: de beschikbaarheidsvraag kon niet beantwoord worden (exitcode ${rc})" >&2; exit 1 ;;
+            esac
+          }
+
+          # Een openstaand voorstel wordt niet elke week herschreven: een
+          # force-push zet er een nieuwe datum in en maakt de review-run die
+          # iemand daarop startte achterhaald.
+          open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[0].number // ""') || {
+            echo "FOUT: kon niet nagaan of er al een voorstel openstaat" >&2
+            exit 1
+          }
+          if [ -n "$open_pr" ]; then
+            # Zolang het voorstel blijft liggen wordt de vraag niet eens
+            # gesteld. Staat de epoch dan al over de drempel, dan is dat geen
+            # routinematige overslag meer maar een verversing die niet landt.
+            echo "Verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh (#${open_pr})."
+
+            if [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+              echo "::warning::voorstel #${open_pr} staat nog open terwijl APT_UPGRADE_EPOCH ${age} dagen oud is (drempel ${MAX_EPOCH_AGE_DAYS}); de verversing landt niet"
+            fi
+
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          reason=""
           if [ "$count" -gt 0 ]; then
-            reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten"
-          elif [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
-            reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
-          else
-            echo "Geen fixbare CRITICAL/HIGH in de apt-pakketten; epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
+            haal_policy
+            echo "Fixes die de suite nu uitlevert:"
+
+            if beschikbaar cve /tmp/os-samen.json; then
+              reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten, waarvan minstens één nu op te halen"
+            else
+              echo "::warning::${count} fixbare CRITICAL/HIGH-CVE('s), maar geen enkele fix staat in de suite"
+            fi
+          fi
+          # De periodieke verversing staat los van de CVE-vraag: een fix die
+          # blijft steken mag de routine niet maandenlang bevriezen, want die
+          # haalt ook alle andere beschikbare updates op.
+          if [ -z "$reason" ] && [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+            haal_policy
+            echo "Pakketten met een hogere kandidaat:"
+
+            if beschikbaar upgrade /tmp/geinstalleerd-samen.json; then
+              reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
+            else
+              echo "::warning::periodieke verversing overgeslagen: de epoch is ${age} dagen oud, maar geen pakket heeft een hogere kandidaat dan wat er in de image staat"
+            fi
+          fi
+          if [ -z "$reason" ]; then
+            echo "Geen verversing: niets fixbaars op te halen, epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -736,7 +1050,7 @@ jobs:
                               | group_by([.id, .pkg, .inst, .fix])
                               | .[]
                               | "- `\(.[0].id)` (\(.[0].sev)) — \(.[0].pkg): `\(.[0].inst)` → `\(.[0].fix)` (\([.[].arch] | unique | join(", ")))"' \
-                       /tmp/os-all.json | { grep -vFx 'TRIVY_EOF' || true; })
+                       /tmp/os-samen.json | { grep -vFx 'TRIVY_EOF' || true; })
           else
             summary="- Geen openstaande fixbare CRITICAL/HIGH; dit is de periodieke verversing."
           fi
@@ -776,4 +1090,7 @@ jobs:
             Verifieer lokaal met `docker compose build --no-cache` voor je merget. Deze PR is
             door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en heropen
             hem om de checks alsnog te laten draaien. Blijft er na de rebuild iets staan, dan is
-            er voor dat pakket geen Debian-update en hoort het met reden in `.trivyignore.yaml`.
+            er voor dat pakket nog geen Debian-update in de suite. Dat is niet
+            hetzelfde als "geen fix": kijk eerst of de suite hem later alsnog
+            uitlevert, en pas als dat aantoonbaar niet gebeurt hoort hij met
+            reden in `.trivyignore.yaml`.
