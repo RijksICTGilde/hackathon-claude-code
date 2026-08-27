@@ -102,7 +102,7 @@ criteria.
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
 | 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
-| 125 | scan op gepubliceerde SBOM | open | — | — | — |
+| 125 | scan op gepubliceerde SBOM | in uitvoering | `chore/scan-op-sbom` | — | branch aangemaakt; go/no-go nog te meten |
 | 127 | SARIF naar code scanning | open | — | — | — |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
