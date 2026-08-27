@@ -112,8 +112,8 @@ criteria.
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
 | 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
-| 125 | scan op gepubliceerde SBOM | verworpen | — | — | no-go gemeten; vervolgroute afgewezen door de opdrachtgever |
-| 127 | SARIF naar code scanning | open | — | — | — |
+| 125 | scan op gepubliceerde SBOM | gesloten | — | — | no-go gemeten; vervolgroute afgewezen, issue gesloten 27-08-2026 |
+| 127 | SARIF naar code scanning | open | — | — | leunt niet meer op #125; 152 CRITICAL/HIGH zonder fix blijven nu onzichtbaar |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
 | 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | — |
@@ -124,6 +124,7 @@ criteria.
 | 142 | een kwetsbaarheid die weken niet te verhelpen is blijft onder de radar | open | — | — | uit ronde 3 van #126 |
 | 143 | de fixtures van de wekelijkse jobs delen vaste paden | open | — | — | uit ronde 3 van #126 |
 | 144 | de basis-image van de controle wordt anoniem opgehaald | open | — | — | uit ronde 3 van #126 |
+| 149 | elke bouw blijft voorgoed in het register staan | open | — | — | 644 uitgaven; opruiming bestaat alleen voor voorstellen |
 | 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
