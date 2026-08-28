@@ -17,7 +17,7 @@ zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd c
 #130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
 uit #125. De PR-beschrijving noemt welke PR de basis is.
 
-#121, #132, #134 en #135 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+#121, #132, #134, #135 en #139 zijn squash-gemerged in `main` (26/27-08-2026) en de stack is daarop herbaseerd: de
 onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
 commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
 meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
@@ -111,7 +111,7 @@ criteria.
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
-| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
+| 126 | beschikbaarheid fix vóór bump-PR | gemerged | `fix/bump-alleen-als-fix-beschikbaar` | #139 | gemerged in `main` op 27-08-2026 na vijf reviewrondes |
 | 125 | scan op gepubliceerde SBOM | gesloten | — | — | no-go gemeten; vervolgroute afgewezen, issue gesloten 27-08-2026 |
 | 127 | SARIF naar code scanning | open | — | — | leunt niet meer op #125; 152 CRITICAL/HIGH zonder fix blijven nu onzichtbaar |
 | 128 | native arm64-runners | open | — | — | — |
@@ -141,7 +141,7 @@ zodra alles in de statustabel gemerged is.
 
 ## Waar het werk stond bij het onderbreken
 
-De stack is `main` ← #139 (#126); #121, #132, #134 en #135 zitten in `main`. #139 is draft en
-heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
+Alles uit de oorspronkelijke reeks tot en met #126 zit in `main`. #125 is gesloten (gemeten
+no-go). Nog te doen: #127 en #128, plus de nevenbevindingen #131 tot en met #149.
 volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
 zijn, dus de harde go/no-go van dat issue is uitvoerbaar.
