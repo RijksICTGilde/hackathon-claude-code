@@ -91,7 +91,7 @@ RUN NODE_VERSION=v24.20.0 && \
 # Blijf op dezelfde major als de gebundelde npm: een major-bump hoort een eigen
 # afweging te zijn, niet een bijvangst van een security-fix.
 # Versie wordt wekelijks gemonitord door .github/workflows/check-upstream.yml.
-RUN NPM_VERSION=11.19.0 && \
+RUN NPM_VERSION=11.19.1 && \
     npm install -g "npm@${NPM_VERSION}" --no-audit --no-fund && \
     actual=$(npm --version) && \
     { [[ "$actual" == "${NPM_VERSION}" ]] || { echo "FOUT: npm-versie '$actual' != verwacht '${NPM_VERSION}'" >&2; exit 1; }; }
