@@ -1,4 +1,4 @@
-FROM debian:13.6-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+FROM debian:13.6-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.19.0 && \
+RUN NODE_VERSION=v24.20.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647 ;; \
-      arm64) NODE_ARCH=arm64; SHA=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc ;; \
+      amd64) NODE_ARCH=x64;   SHA=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2 ;; \
+      arm64) NODE_ARCH=arm64; SHA=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -91,7 +91,7 @@ RUN NODE_VERSION=v24.19.0 && \
 # Blijf op dezelfde major als de gebundelde npm: een major-bump hoort een eigen
 # afweging te zijn, niet een bijvangst van een security-fix.
 # Versie wordt wekelijks gemonitord door .github/workflows/check-upstream.yml.
-RUN NPM_VERSION=11.19.0 && \
+RUN NPM_VERSION=11.19.1 && \
     npm install -g "npm@${NPM_VERSION}" --no-audit --no-fund && \
     actual=$(npm --version) && \
     { [[ "$actual" == "${NPM_VERSION}" ]] || { echo "FOUT: npm-versie '$actual' != verwacht '${NPM_VERSION}'" >&2; exit 1; }; }
