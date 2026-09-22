@@ -424,6 +424,10 @@ herkomst='     500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
 # verse datum mee: anders hangt hun uitkomst af van de datum die toevallig in
 # de Dockerfile staat, en kantelen ze zodra die over de drempel komt.
 vandaag="$(date -u +%F)"
+# Gevallen die een voorstel verwachten, krijgen een epoch van gisteren: vers
+# genoeg voor de CVE-tak, en niet gelijk aan vandaag, want dan weigert de stap
+# een tweede bump op dezelfde dag.
+gisteren="$(date -u -d yesterday +%F)"
 policy_met_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
 policy_zonder_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
 # Wat apt teruggeeft als er geen enkele index is: kandidaten uit de status van
@@ -435,7 +439,7 @@ cve_te_nieuw='[{"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"util-linu
 # de volledige versie staat in `ID`.
 pakketten='[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Release":"5","Arch":"amd64"},{"ID":"bind9-dnsutils@1:9.20.26-1~deb13u1","Name":"bind9-dnsutils","Version":"9.20.26","Release":"1~deb13u1","Epoch":1,"Arch":"amd64"}]'
 
-d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update"
+d="$(epoch_map)"; epoch_geval "$d" "$cve_bevinding" "$pakketten" "$policy_met_update" "" "$gisteren"
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: fix beschikbaar levert een verversing" 0 "kandidaat 2.41-5+deb13u1 dekt" "$uit" "$rc"
 geopend "epoch: fix beschikbaar zet changed=true" "$d"
@@ -480,7 +484,7 @@ arm_cve='[{"VulnerabilityID":"CVE-ARM","Severity":"HIGH","PkgName":"libnuma1","I
 arm_pakketten='[{"ID":"util-linux@2.41-5","Name":"util-linux","Version":"2.41","Release":"5","Arch":"arm64"}]'
 policy_arm="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}libnuma1:\n  Installed: 2.0.18-1\n  Candidate: 2.0.18-2\n${herkomst}"
 
-d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_arm" "" "" "$arm_cve" "$arm_pakketten"
+d="$(epoch_map)"; epoch_geval "$d" '[]' "$pakketten" "$policy_arm" "" "$gisteren" "$arm_cve" "$arm_pakketten"
 uit="$(epoch_draai "$d")"; rc=$?
 toets "epoch: arm64-only bevinding wordt aan de suite gevraagd" 0 "libnuma1: kandidaat 2.0.18-2 dekt" "$uit" "$rc"
 geopend "epoch: arm64-only bevinding opent een voorstel" "$d"
