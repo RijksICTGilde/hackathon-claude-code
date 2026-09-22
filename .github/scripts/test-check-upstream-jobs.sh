@@ -424,9 +424,10 @@ herkomst='     500 https://deb.debian.org/debian trixie/main amd64 Packages\n'
 # verse datum mee: anders hangt hun uitkomst af van de datum die toevallig in
 # de Dockerfile staat, en kantelen ze zodra die over de drempel komt.
 vandaag="$(date -u +%F)"
-# Gevallen die een voorstel verwachten, krijgen een epoch van gisteren: vers
-# genoeg voor de CVE-tak, en niet gelijk aan vandaag, want dan weigert de stap
-# een tweede bump op dezelfde dag.
+# Gevallen die verwachten dat de job een PR opent, krijgen een epoch van
+# gisteren. Niet vandaag: dan weigert de job een tweede bump op dezelfde dag.
+# Niet ouder dan de drempel: dan kan de periodieke verversing de PR openen en
+# ziet de test niet meer of de CVE-controle zelf werkt.
 gisteren="$(date -u -d yesterday +%F)"
 policy_met_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5+deb13u1\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
 policy_zonder_update="util-linux:\n  Installed: 2.41-5\n  Candidate: 2.41-5\n${herkomst}bind9-dnsutils:\n  Installed: 1:9.20.26-1~deb13u1\n  Candidate: 1:9.20.26-1~deb13u1\n${herkomst}"
