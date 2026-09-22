@@ -1070,6 +1070,9 @@ jobs:
         with:
           branch: deps/apt-security-refresh
           delete-branch: true
+          # De Trivy-stappen laten hun DB-cache in de workspace achter; zonder
+          # add-paths commit de action die mee en weigert GitHub de push.
+          add-paths: claude-sandbox/Dockerfile
           commit-message: "chore(deps): bump APT_UPGRADE_EPOCH naar ${{ steps.compare.outputs.new }}"
           title: "chore(deps): apt security-updates ophalen (APT_UPGRADE_EPOCH ${{ steps.compare.outputs.new }})"
           labels: dependencies
