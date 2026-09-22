@@ -29,7 +29,7 @@ ARG PODMAN_MULTIUID=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-08-24
+ARG APT_UPGRADE_EPOCH=2026-09-22
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.20.0 && \
+RUN NODE_VERSION=v24.21.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2 ;; \
-      arm64) NODE_ARCH=arm64; SHA=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7 ;; \
+      amd64) NODE_ARCH=x64;   SHA=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 ;; \
+      arm64) NODE_ARCH=arm64; SHA=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
