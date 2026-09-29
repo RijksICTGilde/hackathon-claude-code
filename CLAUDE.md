@@ -63,7 +63,7 @@ GitHub Actions worden op commit-SHA gepind, met de versie als comment erachter. 
 
 Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl`-, `sed`- of shell-argumenten belandt.
 
-Een workflow achter een required check draait ook op `merge_group` en gedraagt zich daar als een PR-build; anders wacht de merge queue tot de timeout. Stappen die publiceren (push, signing, SARIF-upload) gaten op de ref (`refs/heads/main`, `v*`-tag) of sluiten `merge_group` expliciet uit, niet alleen op `event_name != 'pull_request'`.
+Een workflow achter een required check draait ook op `merge_group` en gedraagt zich daar als een PR-build; anders wacht de merge queue tot de timeout. Een event-conditie die PR-gedrag kiest of uitsluit, noemt `pull_request` en `merge_group` altijd samen. Stappen die publiceren (push, signing) gaten daarnaast op de ref (`refs/heads/main`, `v*`-tag).
 
 ## Commentaar
 

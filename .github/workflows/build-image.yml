@@ -18,14 +18,14 @@ permissions:
   contents: read
 
 # Voorkom dat twee snelle pushes parallelle multi-arch builds triggeren.
-# Op PR branches mag een nieuwe push de lopende run cancellen (CI-minutes besparen).
-# Op main en tags niet, zodat tag-builds niet door een main-push worden afgebroken.
-# Veilig om PR-runs te cancellen omdat PRs niet pushen of signen; als die
-# beperking ooit weggaat moet cancel-in-progress ook voor PRs naar false,
-# anders kan cosign mid-flight worden afgebroken.
+# Op PR branches en in de merge queue mag een nieuwe run de lopende cancellen
+# (CI-minutes besparen). Op main en tags niet, zodat tag-builds niet door een
+# main-push worden afgebroken. Veilig omdat PR- en queue-runs niet pushen of
+# signen; als die beperking ooit weggaat moet cancel-in-progress daar ook naar
+# false, anders kan cosign mid-flight worden afgebroken.
 concurrency:
   group: build-image-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) }}
 
 env:
   REGISTRY: ghcr.io
@@ -50,7 +50,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -85,7 +85,7 @@ jobs:
           context: claude-sandbox
           file: claude-sandbox/Dockerfile
           platforms: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          push: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           load: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) }}
@@ -94,8 +94,8 @@ jobs:
           # elke tussenlaag, die alleen deze PR kan teruglezen en die ondertussen
           # via LRU de cache van main verdringt. Restore uit main blijft werken.
           cache-to: type=gha,mode=${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'min' || 'max' }}
-          provenance: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-          sbom: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          provenance: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+          sbom: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
 
       # trivy.yml scant alleen manifesten in de repo; Node.js komt als tarball van
       # nodejs.org en apt-pakketten zitten uitsluitend in de image. Deze stap dekt
@@ -149,7 +149,7 @@ jobs:
           exit-code: '1'
 
       - name: Install cosign
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       # Keyless signing via OIDC: ondertekent de image-digest, niet per tag.
@@ -161,7 +161,7 @@ jobs:
       # groen door, maar er wordt niets naar GHCR gepusht of getekend.
       # Zo komen we nooit in de toestand "gepusht maar onverifieerbaar".
       - name: Sign image with cosign
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
@@ -189,7 +189,7 @@ jobs:
       # blijven; als één van beide afwijkt krijg je óf een unverified
       # image óf een gegarandeerde verify-failure.
       - name: Verify image signature
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           REPO_FULL: ${{ github.repository }}

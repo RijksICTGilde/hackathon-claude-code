@@ -15,7 +15,8 @@ jobs:
     name: differential-shellcheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Same-repo PRs, push: full differential run with SARIF upload + PR comment.
+    # PR's uit deze repo, push en merge queue: volledige differentiële run met
+    # SARIF-upload en PR-comment. Fork-PR's gaan naar de fallback-job.
     if: |
       (github.event_name != 'pull_request') ||
       (github.event.pull_request.head.repo.full_name == github.repository)
