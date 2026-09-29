@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  merge_group:
   schedule:
     - cron: '0 6 * * 1'
 
@@ -16,10 +17,11 @@ jobs:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Same-repo PRs, push, schedule: full SARIF run with code-scanning upload.
-    if: |
-      (github.event_name != 'pull_request') ||
-      (github.event.pull_request.head.repo.full_name == github.repository)
+    # Alles behalve fork-PR's: volledige run, met SARIF-upload behalve in de
+    # merge queue. Fork-PR's gaan naar scan-fork-pr, met de omgekeerde conditie.
+    if: >-
+      ${{ !(github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository) }}
     permissions:
       contents: read
       security-events: write
@@ -68,8 +70,10 @@ jobs:
           trivyignores: .trivyignore.yaml
           exit-code: '1'
 
+      # Geen SARIF in de merge queue: de tijdelijke gh-readonly-queue-refs
+      # zouden als losse analyses in code scanning blijven staan.
       - name: Trivy SARIF for code-scanning dashboard
-        if: always() && steps.suppressies.outcome == 'success'
+        if: always() && steps.suppressies.outcome == 'success' && github.event_name != 'merge_group'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -85,7 +89,7 @@ jobs:
       # stale results without anyone noticing.
       - name: Verify SARIF output exists
         id: validate
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         run: |
           set -euo pipefail
           if [ ! -s trivy-results.sarif ]; then
