@@ -15,11 +15,12 @@ jobs:
     name: differential-shellcheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # PR's uit deze repo, push en merge queue: volledige differentiële run met
-    # SARIF-upload en PR-comment. Fork-PR's gaan naar de fallback-job.
-    if: |
-      (github.event_name != 'pull_request') ||
-      (github.event.pull_request.head.repo.full_name == github.repository)
+    # Alles behalve fork-PR's: volledige differentiële run met SARIF-upload en
+    # PR-comment. Fork-PR's gaan naar shellcheck-fork-pr, met de omgekeerde
+    # conditie.
+    if: >-
+      ${{ !(github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository) }}
     permissions:
       contents: read
       security-events: write
