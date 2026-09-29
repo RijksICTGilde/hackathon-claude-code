@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  merge_group:
   schedule:
     - cron: '0 6 * * 1'
 
@@ -68,8 +69,10 @@ jobs:
           trivyignores: .trivyignore.yaml
           exit-code: '1'
 
+      # Geen SARIF in de merge queue: de tijdelijke gh-readonly-queue-refs
+      # zouden als losse analyses in code scanning blijven staan.
       - name: Trivy SARIF for code-scanning dashboard
-        if: always() && steps.suppressies.outcome == 'success'
+        if: always() && steps.suppressies.outcome == 'success' && github.event_name != 'merge_group'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -85,7 +88,7 @@ jobs:
       # stale results without anyone noticing.
       - name: Verify SARIF output exists
         id: validate
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         run: |
           set -euo pipefail
           if [ ! -s trivy-results.sarif ]; then

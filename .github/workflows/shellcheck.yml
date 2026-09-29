@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  merge_group:
 
 permissions:
   contents: read
@@ -39,12 +40,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # differential-shellcheck levert SARIF + PR-comment, maar faalt PRs
-      # niet automatisch op warnings (strict-check-on-push geldt alleen
-      # voor push-events). Een tweede full-pass shellcheck zorgt dat een
-      # PR rood wordt zodra een tracked script een warning bevat.
+      # differential-shellcheck levert SARIF + PR-comment, maar faalt PRs en
+      # merge-queue-runs niet op warnings (strict-check-on-push geldt alleen
+      # voor push-events). Een tweede full-pass shellcheck maakt die rood
+      # zodra een tracked script een warning bevat.
       - name: Fail PR on shellcheck warnings
-        if: github.event_name == 'pull_request'
+        if: contains(fromJSON('["pull_request", "merge_group"]'), github.event_name)
         run: |
           set -euo pipefail
           mapfile -d '' files < <(git ls-files -z '*.sh' '*.bash' ':!:claude-sandbox/vendor/**')
