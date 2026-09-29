@@ -89,7 +89,8 @@ Een workflow achter een required check draait ook op `merge_group` en gedraagt z
 - Commit-berichten: conventional commits met Nederlandse omschrijving (`fix(deps): bump rtk naar v0.44.1`).
 - Bij het aanmaken van een pull request **nooit** een reviewer toevoegen.
 - PR-beschrijving: wat er wijzigt, waarom, en wat er geverifieerd is — inclusief wat expliciet níét geverifieerd is. Kort houden; geen ontdekkingsverhaal en geen herhaling van wat de diff al toont.
-- CI moet groen zijn voor merge.
+- Mergen gaat via de merge queue (squash of rebase; `main` heeft een lineaire historie). De queue draait de required checks opnieuw tegen de actuele `main`, dus een PR hoeft niet eerst met `main` bijgewerkt te worden; alleen bij conflicten.
+- CI moet groen zijn op de PR én in de queue.
 
 ## Issues
 
@@ -105,7 +106,7 @@ Implementatieplannen staan in `docs/superpowers/plans/` als `YYYY-MM-DD-korte-be
 
 - Elke wijziging aan de image daadwerkelijk bouwen (`docker compose build --no-cache` voor lagen die anders uit de cache komen) en het resultaat in de PR benoemen.
 - Build- en CI-output op waarschuwingen nalopen: per stuk oplossen of bewust accepteren met reden. "Build groen" is alleen een betrouwbaar signaal als er geen onverklaarde nieuwe waarschuwingen bij komen.
-- PR-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
+- PR- en merge-queue-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
 - Claim niets als geverifieerd zonder het commando en de uitkomst te hebben gezien.
 
 ## Review-aanpak
