@@ -59,12 +59,13 @@ misconfigurations:
       draait, wat een sandbox met open egress oplevert. Zie #98.
 
 vulnerabilities:
-  # De vier hieronder zitten in dependencies die npm bundelt. De Dockerfile pint
-  # npm op de nieuwste 11.x; voor deze vier bundelt geen enkele npm-release een
-  # gefixte versie. `apt-get upgrade` raakt ze niet: Node komt van nodejs.org,
-  # niet uit apt. Het zijn drie DoS-bevindingen in een sandbox die geen dienst
-  # aanbiedt, en een SSRF in npm's proxy-afhandeling die alleen speelt als npm
-  # een vijandige registry of proxyconfiguratie verwerkt.
+  # De drie hieronder zitten in dependencies die npm bundelt. De Dockerfile pint
+  # npm op de nieuwste 11.x; voor deze drie bundelt geen enkele npm-release een
+  # gefixte versie, ook de volgende major niet. `apt-get upgrade` raakt ze niet:
+  # Node komt van nodejs.org, niet uit apt. Het zijn DoS-bevindingen in een
+  # sandbox die geen dienst aanbiedt: twee vragen om een vijandig brace-patroon
+  # als invoer voor npm, de derde om een vijandige WebSocket-server waar npm
+  # zelf verbinding mee maakt.
   #
   # Het pad bindt elke regel aan de npm-bundel: dezelfde CVE in een systeem-
   # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
@@ -72,26 +73,20 @@ vulnerabilities:
   # nieuwe npm-release, wat het moment is om dat na te lopen. Verlopen deze
   # regels, dan merkt de image-gate in build-image.yml dat als eerste, en die
   # draait alleen op een pull request.
-  - id: CVE-2026-14257
+  - id: CVE-2026-102276
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2026-11-26
-    statement: brace-expansion — DoS via geheugenuitputting in expand(), fix in 5.0.8.
+    expired_at: 2027-01-06
+    statement: brace-expansion — DoS via stack-uitputting in parseCommaParts, fix in 5.0.10.
 
-  - id: CVE-2026-69152
+  - id: CVE-2026-102278
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2026-11-26
-    statement: brace-expansion — DoS via onbegrensde tussenarrays, fix in 5.0.9.
+    expired_at: 2027-01-06
+    statement: brace-expansion — DoS via onbegrensde recursie op geneste brace-groepen, fix in 5.0.11.
 
-  - id: CVE-2026-69192
+  - id: CVE-2026-19534
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2026-11-26
-    statement: ip-address — SSRF door inconsistente IP-parsing, fix in 10.3.1.
-
-  - id: CVE-2026-73566
-    paths:
-      - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2026-11-26
-    statement: tar — DoS via een geprepareerd archief met lange paden, fix in tar 7.5.21.
+    expired_at: 2027-01-06
+    statement: undici — DoS via een niet-aangevraagd WebSocket-subprotocol, fix in 6.28.1.
