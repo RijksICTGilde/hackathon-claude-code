@@ -1,4 +1,4 @@
-FROM debian:13.7-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+FROM debian:13.7-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -29,7 +29,7 @@ ARG PODMAN_MULTIUID=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-10-05
+ARG APT_UPGRADE_EPOCH=2026-10-16
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
