@@ -59,13 +59,14 @@ misconfigurations:
       draait, wat een sandbox met open egress oplevert. Zie #98.
 
 vulnerabilities:
-  # De drie hieronder zitten in dependencies die npm bundelt. De Dockerfile pint
-  # npm op de nieuwste 11.x; voor deze drie bundelt geen enkele npm-release een
-  # gefixte versie, ook de volgende major niet. `apt-get upgrade` raakt ze niet:
-  # Node komt van nodejs.org, niet uit apt. Het zijn DoS-bevindingen in een
-  # sandbox die geen dienst aanbiedt: twee vragen om een vijandig brace-patroon
-  # als invoer voor npm, de derde om een vijandige WebSocket-server waar npm
-  # zelf verbinding mee maakt.
+  # De drie hieronder zitten in undici, dat npm via node-gyp bundelt. De
+  # Dockerfile pint npm op de nieuwste 11.x; geen enkele npm-release bundelt een
+  # gefixte undici, ook de volgende major niet. `apt-get upgrade` raakt ze niet:
+  # Node komt van nodejs.org, niet uit apt. node-gyp gebruikt undici alleen om
+  # Node-headers op te halen bij het compileren van een native addon. Twee zijn
+  # een crash van npm door een vijandige server, in een sandbox die geen dienst
+  # aanbiedt. De derde vraagt om een functie in de `tls`-optie; node-gyp geeft
+  # alleen een CA mee, via `connect`, `requestTls` en `proxyTls`.
   #
   # Het pad bindt elke regel aan de npm-bundel: dezelfde CVE in een systeem-
   # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
@@ -73,20 +74,20 @@ vulnerabilities:
   # nieuwe npm-release, wat het moment is om dat na te lopen. Verlopen deze
   # regels, dan merkt de image-gate in build-image.yml dat als eerste, en die
   # draait alleen op een pull request.
-  - id: CVE-2026-102276
+  - id: CVE-2026-109869
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-06
-    statement: brace-expansion — DoS via stack-uitputting in parseCommaParts, fix in 5.0.10.
+    expired_at: 2027-01-28
+    statement: undici — DoS via een onafgevangen stream-fout bij te veel content-encodings, fix in 6.29.1.
 
-  - id: CVE-2026-102278
+  - id: CVE-2026-87018
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-06
-    statement: brace-expansion — DoS via onbegrensde recursie op geneste brace-groepen, fix in 5.0.11.
+    expired_at: 2027-01-28
+    statement: undici — DoS via TLS 1.2-renegotiatie met een ander certificaat, fix in 6.29.1.
 
-  - id: CVE-2026-19534
+  - id: CVE-2026-109383
     paths:
       - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-06
-    statement: undici — DoS via een niet-aangevraagd WebSocket-subprotocol, fix in 6.28.1.
+    expired_at: 2027-01-28
+    statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
