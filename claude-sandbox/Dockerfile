@@ -29,7 +29,7 @@ ARG PODMAN_MULTIUID=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-10-16
+ARG APT_UPGRADE_EPOCH=2026-10-28
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.22.0 && \
+RUN NODE_VERSION=v24.22.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=cc2f601cee82d9a5a233302fe307abc600727035fd7d2c3a3571755989e95008 ;; \
-      arm64) NODE_ARCH=arm64; SHA=fef00bb4d36e1c50104a9775a10359beee98f162b4104dd12472c75065c6a143 ;; \
+      amd64) NODE_ARCH=x64;   SHA=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
+      arm64) NODE_ARCH=arm64; SHA=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -216,14 +216,14 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.0.1/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.1.0/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
 # RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
 # image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
 # het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
-      true) RTK_VERSION=v1.0.1 sh /tmp/rtk-install.sh && \
+      true) RTK_VERSION=v1.1.0 sh /tmp/rtk-install.sh && \
             rm /tmp/rtk-install.sh && \
             command -v rtk >/dev/null && \
             rtk init -g --auto-patch ;; \
