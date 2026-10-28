@@ -16,7 +16,7 @@
 #
 
 
-# install:- channel: stable; cliVersion: 5.23.2; cliNativeVersion: 0.7.34; api: https://api.sdkman.io/2
+# install:- channel: stable; cliVersion: 5.24.0; cliNativeVersion: 0.8.0; api: https://api.sdkman.io/2
 
 # Refuse to install on Cygwin
 if [[ "$(uname -s)" == CYGWIN_NT* ]]; then
@@ -58,8 +58,8 @@ trap echo_failed_command EXIT
 
 # Global variables
 export SDKMAN_SERVICE="https://api.sdkman.io/2"
-export SDKMAN_VERSION="5.23.2"
-export SDKMAN_NATIVE_VERSION="0.7.34"
+export SDKMAN_VERSION="5.24.0"
+export SDKMAN_NATIVE_VERSION="0.8.0"
 
 if [ -z "$SDKMAN_DIR" ]; then
     SDKMAN_DIR="$HOME/.sdkman"
