@@ -124,7 +124,7 @@ criteria.
 | 142 | een kwetsbaarheid die weken niet te verhelpen is blijft onder de radar | open | — | — | uit ronde 3 van #126 |
 | 143 | de fixtures van de wekelijkse jobs delen vaste paden | open | — | — | uit ronde 3 van #126 |
 | 144 | de basis-image van de controle wordt anoniem opgehaald | open | — | — | uit ronde 3 van #126 |
-| 149 | elke bouw blijft voorgoed in het register staan | open | — | — | 644 uitgaven; opruiming bestaat alleen voor voorstellen |
+| 149 | elke bouw blijft voorgoed in het register staan | open | — | — | 889 uitgaven op 04-11-2026; er is geen opruiming, ook niet voor voorstellen |
 | 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
@@ -142,6 +142,6 @@ zodra alles in de statustabel gemerged is.
 ## Waar het werk stond bij het onderbreken
 
 Alles uit de oorspronkelijke reeks tot en met #126 zit in `main`. #125 is gesloten (gemeten
-no-go). Nog te doen: #127 en #128, plus de nevenbevindingen #131 tot en met #149.
-volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
-zijn, dus de harde go/no-go van dat issue is uitvoerbaar.
+no-go). Nog te doen: #127 en #128, plus de nevenbevindingen #131 tot en met #149. Op
+04-11-2026 zijn die allemaal opnieuw tegen `main` gecontroleerd en nog actueel; de tekst van
+#140 en #149 is daarbij bijgewerkt.
