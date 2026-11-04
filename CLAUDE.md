@@ -20,7 +20,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/compose.yml` | Compose-service, volumes, capabilities voor de firewall |
 | `claude-sandbox/init-firewall.sh`, `entrypoint.sh` | Netwerkrestricties en containerstart |
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
-| `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
+| `claude-sandbox/docs/` | Opstarten/afsluiten, handmatige verificatie van de hardening |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
 | `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, scriptcontroles, shellcheck, trivy |
 
