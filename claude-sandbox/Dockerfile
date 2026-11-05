@@ -398,8 +398,11 @@ RUN test ! -e /home/claude/.ssh-host
 # INSTALL_GO in .env.sample, en in docs/opstarten-en-afsluiten.md de tabel
 # 'Optionele componenten' en de sectie 'Fundament-plug-ins'.
 #
+# Go en functl worden wekelijks gemonitord door .github/workflows/check-upstream.yml
+# (jobs go-version en functl-version).
+#
 # Go komt als officiële tarball op versie plus SHA-256 per architectuur. De
-# versie volgt de `go`-regel in de go.mod van Fundament. GOTOOLCHAIN=local staat
+# versie is minstens de `go`-regel in de go.mod van Fundament. GOTOOLCHAIN=local staat
 # in $GOROOT/go.env en niet als ENV, zodat hij ook geldt in SSH-sessies; anders
 # haalt Go bij een hogere `go`-regel zelf een andere toolchain op, buiten deze
 # pin om. sed slaagt ook als het patroon ontbreekt, vandaar de controle erna.
