@@ -1,4 +1,4 @@
-FROM debian:13.6-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+FROM debian:13.7-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 # Gebruik bash met -e, -u en pipefail zodat pipelines niet stil falen
 # (truncated download, HTTP-fouten na redirect, ongedefinieerde variabelen)
@@ -29,7 +29,7 @@ ARG PODMAN_MULTIUID=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-08-24
+ARG APT_UPGRADE_EPOCH=2026-11-05
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.19.0 && \
+RUN NODE_VERSION=v24.22.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647 ;; \
-      arm64) NODE_ARCH=arm64; SHA=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc ;; \
+      amd64) NODE_ARCH=x64;   SHA=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
+      arm64) NODE_ARCH=arm64; SHA=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -91,7 +91,7 @@ RUN NODE_VERSION=v24.19.0 && \
 # Blijf op dezelfde major als de gebundelde npm: een major-bump hoort een eigen
 # afweging te zijn, niet een bijvangst van een security-fix.
 # Versie wordt wekelijks gemonitord door .github/workflows/check-upstream.yml.
-RUN NPM_VERSION=11.19.0 && \
+RUN NPM_VERSION=11.21.1 && \
     npm install -g "npm@${NPM_VERSION}" --no-audit --no-fund && \
     actual=$(npm --version) && \
     { [[ "$actual" == "${NPM_VERSION}" ]] || { echo "FOUT: npm-versie '$actual' != verwacht '${NPM_VERSION}'" >&2; exit 1; }; }
@@ -101,11 +101,11 @@ RUN NPM_VERSION=11.19.0 && \
 # (opent automatisch een PR zodra er een nieuwere release op dandavison/delta is).
 # Dit pakket komt met `dpkg -i` binnen, niet uit apt: de wekelijkse verversing
 # van de apt-laag kan het dus niet bewegen en laat het buiten de weging.
-RUN DELTA_VERSION=0.19.2 && \
+RUN DELTA_VERSION=0.20.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) SHA=ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093 ;; \
-      arm64) SHA=0edc36cf514f1bd84becac3e94ee8ae9f8818c6a1f99f7b2ee67b362afa253d3 ;; \
+      amd64) SHA=0683067a4cbbcc19b9fd2841253131d1b37ccfa724725098d811d4d0d9fcc25b ;; \
+      arm64) SHA=6e08b734d611037eb9eb5db883cab7ac0a089216a9efdc1d2caac44319029c28 ;; \
       *) echo "FOUT: git-delta niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
@@ -216,14 +216,14 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v0.45.0/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.1.0/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
 # RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
 # image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
 # het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
-      true) RTK_VERSION=v0.45.0 sh /tmp/rtk-install.sh && \
+      true) RTK_VERSION=v1.1.0 sh /tmp/rtk-install.sh && \
             rm /tmp/rtk-install.sh && \
             command -v rtk >/dev/null && \
             rtk init -g --auto-patch ;; \

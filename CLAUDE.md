@@ -63,6 +63,8 @@ GitHub Actions worden op commit-SHA gepind, met de versie als comment erachter. 
 
 Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl`-, `sed`- of shell-argumenten belandt.
 
+Een workflow achter een required check draait ook op `merge_group` en gedraagt zich daar als een PR-build; anders wacht de merge queue tot de timeout. Een event-conditie die PR-gedrag kiest of uitsluit, noemt `pull_request` en `merge_group` altijd samen. Stappen die publiceren (push, signing) gaten daarnaast op de ref (`refs/heads/main`, `v*`-tag).
+
 ## Commentaar
 
 - Leg het _waarom_ vast — de niet-evidente beslissing, de security- of contract-invariant — niet het _wat_ dat de code al toont.
@@ -87,7 +89,8 @@ Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl
 - Commit-berichten: conventional commits met Nederlandse omschrijving (`fix(deps): bump rtk naar v0.44.1`).
 - Bij het aanmaken van een pull request **nooit** een reviewer toevoegen.
 - PR-beschrijving: wat er wijzigt, waarom, en wat er geverifieerd is — inclusief wat expliciet níét geverifieerd is. Kort houden; geen ontdekkingsverhaal en geen herhaling van wat de diff al toont.
-- CI moet groen zijn voor merge.
+- Mergen gaat via de merge queue met squash merges; `main` heeft een lineaire historie. De queue draait de required checks opnieuw tegen de actuele `main`, dus een PR hoeft niet eerst met `main` bijgewerkt te worden; alleen bij conflicten.
+- CI moet groen zijn op de PR én in de queue.
 
 ## Issues
 
@@ -103,7 +106,7 @@ Implementatieplannen staan in `docs/superpowers/plans/` als `YYYY-MM-DD-korte-be
 
 - Elke wijziging aan de image daadwerkelijk bouwen (`docker compose build --no-cache` voor lagen die anders uit de cache komen) en het resultaat in de PR benoemen.
 - Build- en CI-output op waarschuwingen nalopen: per stuk oplossen of bewust accepteren met reden. "Build groen" is alleen een betrouwbaar signaal als er geen onverklaarde nieuwe waarschuwingen bij komen.
-- PR-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
+- PR- en merge-queue-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
 - Claim niets als geverifieerd zonder het commando en de uitkomst te hebben gezien.
 
 ## Review-aanpak
