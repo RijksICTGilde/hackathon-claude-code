@@ -36,9 +36,22 @@ Vereist de plugins `pr-review-toolkit`, `superpowers`, `developer-overheid` en `
 
 ## 1. Per PR: bouwen
 
-- Eigen worktree onder `.claude/worktrees/<naam>` (gitignored); zet de sessie erin met
-  `EnterWorktree` (`path`). Weigert een guard daar `git`, gebruik dan `/usr/bin/git` vanaf de
-  worktree-root.
+- **Elke PR een eigen worktree**, ook een kleine, onder `.claude/worktrees/<naam>` (gitignored).
+  Werk en commit nooit in de hoofd-checkout: daar kan ander werk van de opdrachtgever staan, en
+  een branchwissel daar verplaatst dat werk mee.
+  - Aanmaken: `git worktree add -b <branch> .claude/worktrees/<naam> origin/<basis>`. Vanuit een
+    worktree-sessie doe je dat met een relatief pad (`../<naam>`): een `git -C <hoofd-checkout>`
+    wordt daar geweigerd.
+  - Zet de sessie erin met `EnterWorktree` (`path`) vóór de eerste bewerking. Weigert een guard
+    daar `git`, gebruik dan `/usr/bin/git` vanaf de worktree-root.
+  - Bestaat de branch al (een PR die je bijwerkt), zet de worktree dan op die branch in plaats van
+    een nieuwe aan te maken, en werk hem eerst bij met `origin/<branch>`.
+- **Bouwen uitbesteden aan een subagent** kan, maar alleen met `isolation: "worktree"`. Een agent
+  erft de worktree-pinning van de sessie en mag dus niet in een andere, door jou aangemaakte
+  worktree schrijven. Maak voor zo'n PR zelf geen worktree of branch met dezelfde naam aan. Laat
+  de agent beginnen met `git fetch origin`, `git reset --hard origin/<basis>` en
+  `git branch -m <branch>`, alleen laten committen (pushen en de PR openen doe je zelf), en het
+  absolute pad van zijn worktree rapporteren. Reviewers blijven read-only en krijgen dat pad.
 - Branch `feat/`, `fix/`, `chore/` of `docs/`. Gestapeld: de branch van de vorige PR is de basis.
 - Commits: conventional commits met Nederlandse omschrijving.
 - Implementeer met tests waar het script een `test-*.sh` heeft of hoort te krijgen: happy en
@@ -220,4 +233,7 @@ kwetsbaarheden in bestaande code uit stap 3.
 ## Hervatten na compactie of sessieverlies
 
 De stand staat in git en op de PR: commits `fix: reviewronde <N>` en de afsluitcomment. Bij
-hervatten: `gh pr list --author @me --draft` en per worktree `git log --oneline origin/main..HEAD`.
+hervatten: `gh pr list --author @me --draft`, `git worktree list` en per worktree
+`git log --oneline origin/main..HEAD`.
+
+Een worktree ruim je pas op als zijn PR gemerged of gesloten is: `git worktree remove <pad>`.
