@@ -394,20 +394,19 @@ RUN case "$INSTALL_SSHD" in \
 RUN test ! -e /home/claude/.ssh-host
 
 # Optioneel: kubectl en helm voor Helm-charts en een cluster buiten de
-# container. Default uit. Let op: houd in sync: de tools-tabel in README.md, de
-# toelichting bij INSTALL_K8S in .env.sample, en in docs/opstarten-en-afsluiten.md
-# de tabel 'Optionele componenten' en de sectie 'Kubernetes-clusters'.
+# container. Default uit. Houd in sync: de build-arg in compose.yml, de
+# tools-tabel in README.md, de toelichting bij INSTALL_K8S in .env.sample, en in
+# docs/opstarten-en-afsluiten.md de tabel 'Optionele componenten' en de sectie
+# 'Kubernetes (kubectl en helm)'.
 #
-# Beide komen als officiële release-binary op versie plus SHA-256 per
-# architectuur. kubectl werkt met een API-server van één minor-versie lager of
-# hoger. De minor volgt dus de clusters, niet de nieuwste kubectl: 1.35 dekt
-# 1.34 tot en met 1.36. Gardener, waar Fundament op draait, ondersteunt voor
-# clusters 1.34 en 1.35 tot in 2027.
+# kubectl werkt met een API-server van één minor-versie lager of hoger. De minor
+# volgt dus de clusterversies die Fundament (Gardener) aanbiedt, niet de
+# nieuwste kubectl: 1.35 dekt 1.34 tot en met 1.36.
 #
 # De versiecontrole draait als nobody, zonder capabilities en met no_new_privs:
 # het is upstream-code, en de setuid-strip komt pas na deze laag. De tijdelijke
-# HOME vangt config en cache die de tools eventueel schrijven; wat nobody in
-# /tmp of /var/tmp achterlaat, zou in de image belanden.
+# HOME vangt config en cache die de tools eventueel schrijven; wat nobody elders
+# achterlaat, zou in de image belanden.
 #
 # De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
 # een flip zou anders alle lagen hierboven opnieuw laten bouwen.
@@ -440,7 +439,7 @@ RUN case "$INSTALL_K8S" in \
             actual=$(als_nobody helm version --template '{{.Version}}') && \
             { [[ "$actual" == "${HELM_VERSION}" ]] || { echo "FOUT: helm-versie '$actual' != verwacht '${HELM_VERSION}'" >&2; exit 1; }; } && \
             rm -rf /tmp/k8s-home && \
-            left=$(find /tmp /var/tmp -mindepth 1 -user 65534 -print -quit) && \
+            left=$(find / /tmp /var/tmp /run/lock -xdev \( -path /proc -o -path /sys \) -prune -o -user 65534 -print -quit) && \
             { [ -z "$left" ] || { echo "FOUT: kubectl of helm liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
       false) echo "INFO: INSTALL_K8S=false — kubectl en helm overgeslagen" ;; \
       *) echo "FOUT: INSTALL_K8S='$INSTALL_K8S' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
