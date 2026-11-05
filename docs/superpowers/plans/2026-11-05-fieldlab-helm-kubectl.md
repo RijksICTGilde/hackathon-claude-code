@@ -33,7 +33,7 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
 | 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `kubectl` en `helm`, kubeconfig-override, documentatie over koppelen, netwerk en rechten | Refs #205 |
-| 4 | `ci/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures, CI-build van de K8S-variant | Refs #205 |
+| 4 | `chore/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures, CI-build van de K8S-variant | Refs #205 |
 
 #205 blijft open: deployen naar een echt cluster (op de host en op afstand) is hier niet getest.
 
@@ -368,3 +368,123 @@ afgedwongen (de testapiserver heeft geen netwerk-plug-in), de DNS-selector op ee
 `auth whoami` via de kube-api-proxy van Fundament, de Fundament-blokken tegen echte `functl`, de
 gedragsclaims over Fundament anders dan door het lezen van de broncode, Docker Desktop en
 Docker Engine, arm64, en de volledige image-build.
+
+## PR 4: tracking en CI-build
+
+### Stappen
+
+1. Dockerfile: kubectl- en helm-pins in eigen blokken binnen de laag; `TODO(#205)` weg.
+2. `check-upstream.yml`: jobs `kubectl-version` en `helm-version`, achteraan in het bestand.
+3. Fixtures in `test-check-upstream-jobs.sh`, als eigen sectie aan het eind.
+4. `build-image.yml`: job `build-k8s-variant`, achteraan in het bestand.
+5. `.trivyignore.yaml`, README 'Dependency-onderhoud' en CLAUDE.md.
+
+### Ontwerpkeuzes
+
+**kubectl volgt `stable-<minor>.txt`.** De minor komt uit de pin, dus de job bumpt alleen
+patches. Noemt dat bestand een andere minor, dan faalt de job. Een nieuwere minor in `stable.txt`
+geeft altijd een `::warning::` in de run, ook zonder patch, en een zin in de PR-body als er een
+PR komt. Zo blijft de melding zichtbaar als de gepinde minor geen patches meer krijgt.
+
+**helm kiest zelf uit de releaselijst.** helm brengt v3 en v4 naast elkaar uit (v4.3.1 en
+v3.22.1 staan direct na elkaar in de lijst), dus `releases/latest` kan een v3-patch zijn. De job haalt één pagina (`per_page=100`) en houdt alleen tags over die geen concept
+en geen pre-release zijn en exact `vX.Y.Z` zijn (`\A…\z`: `$` laat in jq een afsluitende newline
+door). Daarna sorteert hij numeriek en kiest hij binnen de gepinde major. Een hogere major
+wordt gemeld, net als bij kubectl.
+
+**Gepubliceerde checksums, niet zelf hashen.** `kubectl.sha256` van `dl.k8s.io` en
+`.sha256sum` van `get.helm.sh` komen van dezelfde host als de binary. Zelf downloaden en hashen
+zegt dus niets extra's over de herkomst, en kost per run twee downloads van 60 MB. De build
+toetst de binary ertegen. Dit volgt `node-version` en `go-version`; `delta-version` hasht zelf
+omdat delta geen checksumbestand publiceert. Bij helm moet de bestandsnaam in de `.sha256sum`
+kloppen.
+
+**Pins in eigen blokken.** In de Dockerfile van PR 3 stonden `KUBECTL_VERSION` en
+`HELM_VERSION` op aangrenzende regels, net als de SHA's per architectuur. Een kubectl- en een
+helm-auto-PR conflicteerden daardoor altijd. Nu heeft elke tool een eigen `case`, met regels
+ertussen die geen van beide jobs wijzigt. Beide `case`-blokken weigeren een onbekende
+architectuur.
+
+**README en `docs/kubernetes.md` verschuiven mee bij een helm-minor.** Beide noemen `4.3`.
+`vervang-pin.sh` weigert een spatie, dus de job vervangt `4.3` met precies één treffer per
+bestand. Bij kubectl verandert de minor nooit via de job.
+
+**Plaats in de bestanden.** De jobs en fixtures staan achteraan, en de variant-build ook. PR 2
+(#211) voegt zijn jobs in na `rtk-version` en voor `build`. Zo voegt deze PR geen conflict
+met #211 toe.
+
+**`build-k8s-variant`.** Opgezet als `build-sshd-variant` en de Go-variant uit #211:
+
+- alleen amd64, geen push, niet op tags;
+- action-pins gelijk aan `build-and-push`;
+- een eigen cache-scope `k8s`.
+
+De controlestap leest de pins uit de Dockerfile en draait `kubectl version --client -o json` en
+`helm version` als `claude`, met `env -i` en zonder netwerk. Elke `docker run` wordt eerst
+toegewezen, zodat een falende run telt. Trivy scant met `TRIVY_PKG_TYPES: library`; de
+os-pakketten scant `build-and-push` al.
+
+**Suppressies voor de huidige binaries.** Trivy (lokaal, `aquasec/trivy:latest`, `rootfs` op
+de twee binaries) vindt drie fixbare HIGH's:
+
+- CVE-2026-111943 in de Go-stdlib van helm (Go 1.27.2, fix in 1.27.3);
+- CVE-2026-78669 in `golang.org/x/net` 0.56.0 van kubectl;
+- CVE-2026-56851 in `golang.org/x/text` 0.39.0 van kubectl.
+
+Er is geen release met de fix: v1.35.10 is de laatste 1.35-patch, v4.3.1 de laatste v4. Zonder
+suppressie komt de nieuwe job rood binnen, zonder iets dat een PR kan verhelpen. De drie regels
+zijn gebonden aan het pad van de binary en verlopen op 2026-12-31. De helm-regel zegt eerlijk
+dat de bevinding relevant is: helm praat TLS met repositories, registries en de API-server.
+Zelf bouwen met een nieuwere Go is afgewezen, omdat dan de pin op de officiële binary vervalt.
+
+### Verificatie
+
+- `actionlint -shellcheck ~/.local/bin/shellcheck .github/workflows/*.yml`: schoon, op de
+  workflows van de eerste commit. Daarna bleef actionlint lokaal hangen op `check-upstream.yml`,
+  ook op de versie van PR 3. Hij blokkeerde bij het schrijven van het run-blok van
+  `apt-security-refresh` (22 KB) naar shellcheck. Voor de laatste stand daarom:
+  - actionlint zonder shellcheck: schoon;
+  - alle 38 run-blokken los door shellcheck, met de opties van actionlint: schoon.
+- `shellcheck --severity=warning .github/scripts/*.sh`: schoon.
+- Fixtures:
+  - `test-check-upstream-jobs.sh`: 179 geslaagd, 0 gefaald, waarvan 97 nieuw voor kubectl en
+    helm;
+  - `test-vervang-pin.sh`: 20/0;
+  - `test-valideer-trivyignore.sh`: 30/0;
+  - `test-apt-upgrade-beschikbaar.sh`: 22/0;
+  - `valideer-trivyignore.sh` op de nieuwe lijst: rc 0.
+- Mutatiecheck op een `git archive`-kopie: 55 mutaties in de twee compare-stappen en de
+  PR-stappen, 54 gevangen. De eerste ronde liet een SHA-regex zonder `^` door; daar zijn
+  fixtures voor bijgekomen. Niet gevangen: `\A` vervangen door `^` in het tagfilter. Dat is
+  equivalent, want in jq is `^` al het begin van de string (gemeten: `"x\nv4.1.0"` matcht
+  niet).
+- Tegen de echte upstream, op een kopie:
+  - beide jobs geven `changed=false` op de huidige pins;
+  - kubectl meldt `stable.txt` op v1.37.2 als nieuwere minor;
+  - een bump vanaf oude pins (kubectl v1.35.9, helm v4.2.4 met `4.2` in README en docs, nep-SHA's)
+    levert een Dockerfile, README en `docs/kubernetes.md` op die byte-gelijk zijn aan de huidige.
+- Conflictproef met `git merge-file`:
+  - een kubectl- en een helm-bump op de nieuwe indeling mergen zonder conflict, en beide bumps
+    staan in het resultaat;
+  - op de indeling van PR 3 gaf dezelfde proef een conflict;
+  - tegen #211 voegt deze PR geen conflict toe in de workflows, de fixtures, README, CLAUDE.md,
+    `.trivyignore.yaml` en de Dockerfile. De bekende conflicten in README en Dockerfile tussen
+    PR 3 en #210/#211 blijven.
+- Testimage met de K8S-laag letterlijk uit de nieuwe Dockerfile (podman, amd64): beide SHA's OK,
+  versiecontrole als nobody groen.
+- De controlestap van `build-k8s-variant`, met yq uit de workflow gehaald en tegen die testimage
+  gedraaid:
+  - groen op de pins;
+  - rood bij een andere kubectl-pin, een andere helm-pin, een falende `docker run` en een
+    onleesbare pin.
+- Trivy met de nieuwe `.trivyignore.yaml` op de twee binaries: 0 bevindingen, rc 0.
+
+Niet geverifieerd:
+
+- **`build-k8s-variant` heeft nog niet in CI gedraaid.** De volledige image met
+  `INSTALL_K8S=true` is lokaal niet gebouwd (apt over poort 80). De Trivy-versie en -DB van
+  `trivy-action` v0.36.0 kunnen afwijken van de lokale scan.
+- **De `create-pull-request`-stappen.** De PR-teksten zijn alleen statisch via yq getoetst,
+  inclusief de ingevulde `format()`-zinnen.
+- **De echte upstream bij een nieuwe patch of release.** Dat pad is alleen tegen stubs getoetst,
+  en via de bump vanaf oude pins.
