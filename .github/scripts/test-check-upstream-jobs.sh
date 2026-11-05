@@ -844,6 +844,10 @@ d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$
 uit="$(draai "$d" kubectl-version)"; rc=$?
 toets "kubectl: arm64-checksum met aanhangsel wordt rood" 1 "geen sha256 uit kubectl.sha256 voor arm64" "$uit" "$rc"
 
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "x${sha_a}" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: amd64-checksum met voorvoegsel wordt rood" 1 "geen sha256 uit kubectl.sha256 voor amd64" "$uit" "$rc"
+
 d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "" "$sha_b"
 uit="$(draai "$d" kubectl-version)"; rc=$?
 toets "kubectl: lege checksum wordt rood" 1 "'' is geen sha256" "$uit" "$rc"
@@ -1029,6 +1033,10 @@ toets "helm: mislukte API-aanvraag wordt rood" 1 "kon de releases van helm/helm 
 d="$(k8s_map)"; helm_geval "$d" geen-sha "$sha_b" "$(helm_release "${helm_patch}")"
 uit="$(draai "$d" helm-version)"; rc=$?
 toets "helm: checksum die geen sha256 is wordt rood" 1 "'geen-sha' is geen sha256 uit helm-${helm_patch}-linux-amd64.tar.gz.sha256sum" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" "x${sha_a}" "$sha_b" "$(helm_release "${helm_patch}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: checksum met voorvoegsel wordt rood" 1 "'x${sha_a}' is geen sha256" "$uit" "$rc"
 
 d="$(k8s_map)"; helm_geval "$d" "$sha_a" "" "$(helm_release "${helm_patch}")"
 uit="$(draai "$d" helm-version)"; rc=$?
