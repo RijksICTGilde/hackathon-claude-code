@@ -33,15 +33,19 @@ delta_nu="$(lees_pin DELTA_VERSION)"
 node_nu="$(lees_pin NODE_VERSION)"
 npm_nu="$(lees_pin NPM_VERSION)"
 npm_major="${npm_nu%%.*}"
+go_nu="$(lees_pin GO_VERSION)"
+# Een pseudo-versie past niet in het X.Y.Z-patroon van lees_pin.
+functl_nu="$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' "${wortel}/claude-sandbox/Dockerfile" \
+  | head -1 | cut -d= -f2)"
 
-for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}"; do
+for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}" "${go_nu}" "${functl_nu}"; do
   if [ -z "${waarde}" ]; then
     echo "FOUT: kon niet alle pins uit de Dockerfile lezen"
     exit 1
   fi
 done
 
-for job in vendored-scripts rtk-version delta-version node-version npm-version apt-security-refresh; do
+for job in vendored-scripts rtk-version delta-version node-version npm-version go-version functl-version apt-security-refresh; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
   # Precies één run-blok: `yq` plakt er anders meerdere achter elkaar en dan
   # draait de fixture een script dat geen enkele stap zo uitvoert.
@@ -307,6 +311,251 @@ d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
 dubbele_pin "$d" 'RUN NPM_VERSION=' 'RUN NPM_VERSION=0.0.1 \\'
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: tweede pin wordt rood" 1 "precies één NPM_VERSION-pin" "$uit" "$rc"
+
+# ── Go ──
+sha_a="$(printf 'a%.0s' $(seq 64))"
+sha_b="$(printf 'b%.0s' $(seq 64))"
+
+# Een feed zoals go.dev hem levert: een release candidate vooraan, die de job
+# moet overslaan, en per versie ook bestanden die geen Linux-archief zijn.
+go_feed() { # map versie sha-amd64 sha-arm64
+  jq -n --arg v "$2" --arg a "$3" --arg b "$4" '[
+    {version: "go999.0rc1", stable: false, files: []},
+    {version: $v, stable: true, files: [
+      {filename: ($v + ".src.tar.gz"), kind: "source", sha256: ("c" * 64)},
+      {filename: ($v + ".linux-amd64.tar.gz"), kind: "archive", sha256: $a},
+      {filename: ($v + ".linux-arm64.tar.gz"), kind: "archive", sha256: $b}
+    ]},
+    {version: "go1.0.0", stable: true, files: []}
+  ]' > "$1/feed.json"
+  stub "$1" curl "cat '$1/feed.json'"
+}
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: bump verzet versie en beide SHAs" 0 "GO_VERSION=${go_nu} -> GO_VERSION=99.0.0" "$uit" "$rc"
+geopend "go: bump zet changed=true" "$d"
+vervangingen "go: drie vervangingen" "$uit" 3
+grep -q "amd64) GO_SHA=${sha_a} ;;" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) GO_SHA=${sha_b} ;;" "$d/ws/claude-sandbox/Dockerfile"
+controle "go: elke architectuur krijgt zijn eigen SHA" $?
+
+d="$(nieuwe_map)"; go_feed "$d" "go${go_nu}" "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "go: changed=false bij gelijke versie" $?
+
+d="$(nieuwe_map)"; go_feed "$d" 'go99.0.0; rm -rf /' "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: vijandige versie geweigerd" 1 "onverwachte Go-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: versie zonder patch-nummer geweigerd" 1 "onverwachte Go-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; stub "$d" curl 'printf "[]\n"'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: lege feed wordt rood" 1 "kon laatste stabiele Go-versie niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; stub "$d" curl 'printf "<html>proxy</html>\n"'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: feed die geen JSON is wordt rood" 1 "kon laatste stabiele Go-versie niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 geen-sha "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: checksum die geen sha256 is wordt rood" 1 "geen sha256" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+jq '(.[1].files) |= map(select(.filename | endswith("arm64.tar.gz") | not))' "$d/feed.json" > "$d/feed.tmp"
+mv "$d/feed.tmp" "$d/feed.json"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekend arm64-archief in de feed wordt rood" 1 "geen sha256" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i 's|      amd64) GO_SHA=|      amd64)   GO_SHA=|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: hertabelleerd case-blok blijft werken" 0 "" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i 's|      arm64) GO_SHA=[a-f0-9]*|      arm64) GO_SHA=|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende arm64-pin wordt rood" 1 "precies één arm64-SHA-pin voor Go" "$uit" "$rc"
+
+# Ook zonder nieuwe release: anders valt een verdwenen pin pas op bij de
+# eerstvolgende bump.
+d="$(nieuwe_map)"; go_feed "$d" "go${go_nu}" "$sha_a" "$sha_b"
+sed -i 's|      amd64) GO_SHA=[a-f0-9]*|      amd64) GO_SHA=|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende amd64-pin wordt ook zonder bump rood" 1 "precies één amd64-SHA-pin voor Go" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+dubbele_pin "$d" '              arm64) GO_SHA=' "              arm64) GO_SHA=${sha_b} ;; \\\\"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: tweede arm64-pin wordt rood" 1 "precies één arm64-SHA-pin voor Go" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+dubbele_pin "$d" '      true) GO_VERSION=' '            GO_VERSION=1.0.0 && \\'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: tweede pin wordt rood" 1 "precies één GO_VERSION-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i "s|GO_VERSION=${go_nu}|GO_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende versiepin wordt rood" 1 "kon huidige GO_VERSION niet" "$uit" "$rc"
+
+# ── functl ──
+functl_commit="abcdef1234567890abcdef1234567890abcdef12"
+functl_versie="v0.0.0-20991231235959-abcdef123456"
+functl_h1="h1:$(printf 'A%.0s' $(seq 40))+/9="
+fundament=github.com/fundament-oss/fundament
+
+# De stubs schrijven hun argumenten weg, zodat een geval kan toetsen dat de
+# proxy naar de commit en de checksum-database naar de versie gevraagd is.
+functl_geval() { # map commit versie h1 go-regel
+  printf 'Rolling build of functl from the latest push to master.\n\n- Version: `x-master-1`\n- Commit: %s\n\nSee functl/README.md.\n' \
+    "$2" > "$1/body.txt"
+  printf '{"Version":"%s","Time":"2099-12-31T23:59:59Z"}\n' "$3" > "$1/info.json"
+  printf '70856769\n%s %s %s\n%s %s/go.mod h1:0ik80wQK/R9m20shc5M8R4KbA/dhI6RcLIKNqjDVHjA=\n\ngo.sum database tree\n' \
+    "${fundament}" "$3" "$4" "${fundament}" "$3" > "$1/lookup.txt"
+  printf 'module %s\n\ngo %s\n\nrequire example.com/x v1.0.0\n' "${fundament}" "$5" > "$1/mod.txt"
+  stub "$1" gh "cat '$1/body.txt'"
+  stub "$1" curl "printf '%s\n' \"\$@\" >> '$1/curl-argumenten.txt'
+for arg in \"\$@\"; do case \"\$arg\" in
+  https://proxy.golang.org/*.info) cat '$1/info.json'; exit 0;;
+  https://sum.golang.org/lookup/*) cat '$1/lookup.txt'; exit 0;;
+  https://proxy.golang.org/*.mod) cat '$1/mod.txt'; exit 0;;
+esac; done"
+}
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: bump verzet versie en h1" 0 "FUNCTL_VERSION=${functl_nu} -> FUNCTL_VERSION=${functl_versie}" "$uit" "$rc"
+geopend "functl: bump zet changed=true" "$d"
+vervangingen "functl: twee vervangingen" "$uit" 2
+grep -qF "FUNCTL_H1=${functl_h1} " "$d/ws/claude-sandbox/Dockerfile"
+controle "functl: de nieuwe h1 staat heel in de Dockerfile" $?
+grep -qx 'go_te_laag=false' "$d/uitvoer"; controle "functl: lagere go-regel geeft geen waarschuwing" $?
+grep -qx "https://proxy.golang.org/${fundament}/@v/${functl_commit}.info" "$d/curl-argumenten.txt" \
+  && grep -qx "https://sum.golang.org/lookup/${fundament}@${functl_versie}" "$d/curl-argumenten.txt" \
+  && grep -qx "https://proxy.golang.org/${fundament}/@v/${functl_versie}.mod" "$d/curl-argumenten.txt"
+controle "functl: proxy en checksum-database op commit en versie bevraagd" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i 's/$/\r/' "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release-body met CRLF blijft werken" 0 "" "$uit" "$rc"
+geopend "functl: release-body met CRLF zet changed=true" "$d"
+
+# De commit achter de huidige pin, aangevuld tot 40 tekens: alleen de eerste 12
+# staan in de pseudo-versie.
+d="$(nieuwe_map)"
+functl_geval "$d" "${functl_nu##*-}$(printf '0%.0s' $(seq 28))" "${functl_nu}" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "functl: changed=false bij gelijke versie" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" 'abcdef123456; rm -rf /' "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige commit geweigerd" 1 "onverwachte commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" abcdef123456 "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: verkorte commit geweigerd" 1 "onverwachte commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf 'Rolling build of functl.\n' > "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release zonder commit wordt rood" 1 "precies één '- Commit:'-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf -- '- Commit: %s\n' "$functl_commit" >> "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release met twee commits wordt rood" 1 "precies één '- Commit:'-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/info.json"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege proxy-info wordt rood" 1 "kon de pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v1.2.3 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: getagde versie i.p.v. pseudo-versie geweigerd" 1 "onverwachte pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "${functl_versie}; rm -rf /" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige pseudo-versie geweigerd" 1 "onverwachte pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v0.0.0-20991231235959-000000000000 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: pseudo-versie van een andere commit geweigerd" 1 "hoort niet bij commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" 'h1:kort=' 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: ongeldige h1 geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "${functl_h1}; rm" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: h1 met aanhangsel geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/lookup.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege checksum-lookup wordt rood" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+# Alleen de regel van de gevraagde versie telt; een h1 van een andere versie
+# mag niet als die van deze versie gepind worden.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf '1\n%s v0.0.0-20000101000000-abcdef123456 %s\n' "${fundament}" "$functl_h1" > "$d/lookup.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: h1 van een andere versie geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 99.0
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: hogere go-regel bumpt wel" 0 "::warning::go.mod van ${fundament}@${functl_versie} vraagt go 99.0" "$uit" "$rc"
+geopend "functl: hogere go-regel zet changed=true" "$d"
+grep -qx 'go_te_laag=true' "$d/uitvoer"; controle "functl: hogere go-regel zet go_te_laag=true" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" "${go_nu}"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: go-regel gelijk aan de pin" 0 "" "$uit" "$rc"
+grep -qx 'go_te_laag=false' "$d/uitvoer"; controle "functl: go-regel gelijk aan de pin geeft geen waarschuwing" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/mod.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege go.mod wordt rood" 1 "onverwachte go-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" '1.20; rm -rf /'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige go-regel geweigerd" 1 "onverwachte go-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i '/^            FUNCTL_H1=/d' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: ontbrekende h1-pin wordt rood" 1 "precies één FUNCTL_H1-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i 's|FUNCTL_H1=h1:[^ ]*|FUNCTL_H1=onbekend|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare h1-pin wordt rood" 1 "kon huidige FUNCTL_H1 niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+dubbele_pin "$d" '            FUNCTL_VERSION=' '            FUNCTL_VERSION=v0.0.0-20000101000000-000000000000 && \\'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: tweede versiepin wordt rood" 1 "precies één FUNCTL_VERSION-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i "s|FUNCTL_VERSION=${functl_nu}|FUNCTL_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare versiepin wordt rood" 1 "kon huidige FUNCTL_VERSION niet" "$uit" "$rc"
+
+# De PR-stappen draaien hier niet; wat ze moeten melden staat in de body.
+yq '.jobs."functl-version".steps[] | select(has("uses")) | .with.body' "${workflow}" \
+  | grep -q "go_te_laag == 'true'"
+controle "functl: de PR-body meldt een te hoge go-regel" $?
+yq '.jobs."go-version".steps[] | select(has("uses")) | .with.body' "${workflow}" \
+  | grep -q 'niet lager zijn dan de `go`-regel'
+controle "go: de PR-body noemt de go-regel van Fundament" $?
 
 
 # ── apt-security-refresh: de beslissing om wel of niet te verversen ──

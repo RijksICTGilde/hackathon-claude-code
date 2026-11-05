@@ -506,6 +506,250 @@ jobs:
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
 
+  # Job 2d: Go — versie en beide architectuur-SHAs, uit de officiële feed van
+  # go.dev. De Go-versie moet minstens de `go`-regel in de go.mod van Fundament
+  # zijn: de image bouwt functl met GOTOOLCHAIN=local en haalt dus geen hogere
+  # toolchain op.
+  go-version:
+    name: go-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine latest stable Go release and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          # Eén keer ophalen: versie en checksums komen zo uit dezelfde feed.
+          feed=$(curl -fsSL 'https://go.dev/dl/?mode=json' || true)
+          latest=$(jq -r '[.[] | select(.stable == true)] | first | .version // empty' <<<"$feed" 2>/dev/null || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste stabiele Go-versie niet bepalen" >&2
+            exit 1
+          fi
+          # De versie komt van buiten en belandt in curl- en sed-argumenten;
+          # een `case`-patroon zou hier alles achter een spatie doorlaten.
+          if ! [[ "$latest" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte Go-versie '$latest' (verwacht: goX.Y.Z)" >&2
+            exit 1
+          fi
+          latest=${latest#go}
+          current=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige GO_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'GO_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één GO_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          # Ook bij gelijke versie: een verdwenen SHA-pin hoort niet pas bij de
+          # volgende release op te vallen. Eigen namen (GO_SHA), zodat de
+          # telling van de delta-job er niet over struikelt.
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*GO_SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor Go in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # De checksums uit de feed vertrouwen, zoals node-version de
+          # SHASUMS256.txt van nodejs.org: zelf downloaden en hashen zegt niets
+          # extra's over de herkomst. De build toetst de tarball ertegen.
+          sha_amd64=$(jq -r --arg f "go${latest}.linux-amd64.tar.gz" \
+            '.[].files[]? | select(.filename == $f and .kind == "archive") | .sha256' <<<"$feed")
+          sha_arm64=$(jq -r --arg f "go${latest}.linux-arm64.tar.gz" \
+            '.[].files[]? | select(.filename == $f and .kind == "archive") | .sha256' <<<"$feed")
+          for sha in "$sha_amd64" "$sha_arm64"; do
+            if ! [[ "$sha" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha}' is geen sha256 uit de Go-feed voor go${latest}" >&2
+              exit 1
+            fi
+          done
+          current_amd64=$(grep -oP 'amd64\)\s*GO_SHA=\K[a-f0-9]{64}' Dockerfile)
+          current_arm64=$(grep -oP 'arm64\)\s*GO_SHA=\K[a-f0-9]{64}' Dockerfile)
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "GO_VERSION=$current" "GO_VERSION=$latest" 1
+          "$vervang" Dockerfile "GO_SHA=$current_amd64" "GO_SHA=$sha_amd64" 1
+          "$vervang" Dockerfile "GO_SHA=$current_arm64" "GO_SHA=$sha_arm64" 1
+          {
+            echo "changed=true"
+            echo "amd64=$sha_amd64"
+            echo "arm64=$sha_arm64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if Go changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/go
+          delete-branch: true
+          commit-message: "chore(deps): bump Go to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump Go to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe stabiele Go-release gedetecteerd op go.dev/dl.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://go.dev/doc/devel/release
+
+            De Go-versie mag niet lager zijn dan de `go`-regel in de `go.mod` van Fundament
+            op de gepinde `FUNCTL_VERSION`: de image bouwt `functl` met `GOTOOLCHAIN=local`
+            en faalt dan.
+
+            Verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+
+  # Job 2e: functl — Fundament publiceert alleen de rolling release
+  # `functl-latest`. De commit uit die release wordt een pseudo-versie, en de
+  # h1-hash komt uit de checksum-database van Go; de build toetst de module
+  # daar zelf nog eens tegen bij `go mod download`.
+  functl-version:
+    name: functl-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine functl-latest commit and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          module=github.com/fundament-oss/fundament
+          body=$(gh api repos/fundament-oss/fundament/releases/tags/functl-latest --jq .body || true)
+          # Een release-body kan CRLF-regeleinden hebben; de `\r` zou anders
+          # in de commit belanden en de toets hieronder laten falen.
+          body=$(tr -d '\r' <<<"$body")
+          if [ "$(grep -c '^- Commit: ' <<<"$body" || true)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één '- Commit:'-regel in de release functl-latest" >&2
+            exit 1
+          fi
+          commit=$(sed -n 's/^- Commit: //p' <<<"$body")
+          # De commit komt uit een repository van derden en belandt hieronder
+          # in curl-URL's; alleen een volledige hash is hier geldig.
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "FOUT: onverwachte commit '$commit' in functl-latest (verwacht: 40 hex-tekens)" >&2
+            exit 1
+          fi
+          info=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${commit}.info" || true)
+          latest=$(jq -r '.Version // empty' <<<"$info" 2>/dev/null || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon de pseudo-versie van commit ${commit} niet bepalen via proxy.golang.org" >&2
+            exit 1
+          fi
+          if ! [[ "$latest" =~ ^v0\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ]]; then
+            echo "FOUT: onverwachte pseudo-versie '$latest' (verwacht: v0.0.0-<tijd>-<commit>)" >&2
+            exit 1
+          fi
+          # Zonder deze toets kan de proxy een geldig gevormde versie van een
+          # andere commit teruggeven, en pint de PR iets anders dan de release.
+          if [ "${latest##*-}" != "${commit:0:12}" ]; then
+            echo "FOUT: pseudo-versie '$latest' hoort niet bij commit ${commit}" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige FUNCTL_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin per naam; zie de toelichting bij node-version.
+          for pin in FUNCTL_VERSION FUNCTL_H1; do
+            if [ "$(grep -oE "${pin}=" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current_h1=$(grep -oE 'FUNCTL_H1=h1:[A-Za-z0-9+/]{43}=' Dockerfile | cut -d= -f2- || true)
+          if [ -z "$current_h1" ]; then
+            echo "FOUT: kon huidige FUNCTL_H1 niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "commit=$commit"
+            echo "old_commit=${current##*-}"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          lookup=$(curl -fsSL "https://sum.golang.org/lookup/${module}@${latest}" || true)
+          h1=$(awk -v m="$module" -v v="$latest" '$1 == m && $2 == v {print $3}' <<<"$lookup")
+          if ! [[ "$h1" =~ ^h1:[A-Za-z0-9+/]{43}=$ ]]; then
+            echo "FOUT: geen geldige h1-hash voor ${module}@${latest} uit sum.golang.org ('${h1}')" >&2
+            exit 1
+          fi
+          # GOTOOLCHAIN=local: een `go`-regel boven de gepinde Go laat de
+          # image-build falen. Dat blokkeert de bump niet, maar de PR moet het
+          # zeggen, want dan hoort er eerst een Go-bump bij.
+          mod=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${latest}.mod" || true)
+          go_mod=$(awk '$1 == "go" {print $2}' <<<"$mod")
+          if ! [[ "$go_mod" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "FOUT: onverwachte go-regel '${go_mod}' in de go.mod van ${module}@${latest}" >&2
+            exit 1
+          fi
+          go_pin=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$go_pin" ]; then
+            echo "FOUT: kon huidige GO_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          go_te_laag=false
+          if [ "$(printf '%s\n%s\n' "$go_pin" "$go_mod" | sort -V | tail -1)" != "$go_pin" ]; then
+            go_te_laag=true
+            echo "::warning::go.mod van ${module}@${latest} vraagt go ${go_mod}, de Dockerfile pint Go ${go_pin}"
+          fi
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "FUNCTL_VERSION=$current" "FUNCTL_VERSION=$latest" 1
+          "$vervang" Dockerfile "FUNCTL_H1=$current_h1" "FUNCTL_H1=$h1" 1
+          {
+            echo "changed=true"
+            echo "h1=$h1"
+            echo "go_mod=$go_mod"
+            echo "go_pin=$go_pin"
+            echo "go_te_laag=$go_te_laag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if functl changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/functl
+          delete-branch: true
+          commit-message: "chore(deps): bump functl to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump functl to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe commit achter de rolling release `functl-latest` van Fundament.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **h1:** `${{ steps.compare.outputs.h1 }}` (sum.golang.org)
+            - **`go`-regel in go.mod:** `${{ steps.compare.outputs.go_mod }}`; de Dockerfile pint Go `${{ steps.compare.outputs.go_pin }}`
+            - **Wijzigingen:** https://github.com/fundament-oss/fundament/compare/${{ steps.compare.outputs.old_commit }}...${{ steps.compare.outputs.commit }}
+
+            ${{ steps.compare.outputs.go_te_laag == 'true' && format('**Let op:** de go.mod vraagt Go {0}, de Dockerfile pint Go {1}. Met `GOTOOLCHAIN=local` faalt de image-build; merge eerst een Go-bump naar minstens {0}.', steps.compare.outputs.go_mod, steps.compare.outputs.go_pin) || '' }}
+
+            `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
+            en verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+
   # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
   # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
   # Dockerfile.
