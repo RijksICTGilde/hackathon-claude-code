@@ -395,9 +395,9 @@ RUN test ! -e /home/claude/.ssh-host
 
 # Optioneel: kubectl en helm voor Helm-charts en een cluster buiten de
 # container. Default uit. Houd in sync: de build-arg in compose.yml, de
-# tools-tabel in README.md, de toelichting bij INSTALL_K8S in .env.sample, en in
-# docs/opstarten-en-afsluiten.md de tabel 'Optionele componenten' en de sectie
-# 'Kubernetes (kubectl en helm)'.
+# tools-tabel in README.md, de toelichting bij INSTALL_K8S in .env.sample, de
+# tabel 'Optionele componenten' in docs/opstarten-en-afsluiten.md, en
+# docs/kubernetes.md.
 #
 # kubectl werkt met een API-server van één minor-versie lager of hoger. De minor
 # volgt dus de clusterversies die Fundament (Gardener) aanbiedt, niet de
