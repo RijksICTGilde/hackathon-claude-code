@@ -549,6 +549,12 @@ sed -i "s|FUNCTL_VERSION=${functl_nu}|FUNCTL_VERSION=latest|" "$d/ws/claude-sand
 uit="$(draai "$d" functl-version)"; rc=$?
 toets "functl: onleesbare versiepin wordt rood" 1 "kon huidige FUNCTL_VERSION niet" "$uit" "$rc"
 
+# Zonder Go-pin is de vergelijking met de go-regel geen meting.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i "s|GO_VERSION=${go_nu}|GO_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare Go-pin wordt rood" 1 "kon huidige GO_VERSION niet" "$uit" "$rc"
+
 # De PR-stappen draaien hier niet; wat ze moeten melden staat in de body.
 yq '.jobs."functl-version".steps[] | select(has("uses")) | .with.body' "${workflow}" \
   | grep -q "go_te_laag == 'true'"
