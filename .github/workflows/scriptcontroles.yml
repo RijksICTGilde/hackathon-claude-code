@@ -1,0 +1,38 @@
+name: scriptcontroles
+
+on:
+  push:
+    branches: [ "main" ]
+  # Geen basisbranch-filter: de suppressielijst wijzigt juist in een gestapelde
+  # pull request, en de scanworkflows draaien daar niet.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Fixtures van de CI-scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # De fixtures eerst: een controle die zelf stuk is, keurt alles goed.
+      - name: Fixtures van de suppressie-validatie
+        run: .github/scripts/test-valideer-trivyignore.sh
+
+      - name: Fixtures van de pin-vervanging
+        run: .github/scripts/test-vervang-pin.sh
+
+      - name: Fixtures van de beschikbaarheidsvraag
+        run: .github/scripts/test-apt-upgrade-beschikbaar.sh
+
+      - name: Fixtures van de wekelijkse versiejobs
+        run: .github/scripts/test-check-upstream-jobs.sh
+
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        run: .github/scripts/valideer-trivyignore.sh

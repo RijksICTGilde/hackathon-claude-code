@@ -22,7 +22,7 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
 | `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
-| `.github/workflows/` | build-image, check-upstream, release-sign, scorecard, shellcheck, trivy |
+| `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, scriptcontroles, shellcheck, trivy |
 
 ## Commando's
 
@@ -35,6 +35,17 @@ docker compose up --build --detach             # bouwen en starten
 docker compose build --no-cache                # volledige rebuild (verifieert install-scripts echt)
 docker exec -tiu claude claude-sandbox bash    # de container in
 shellcheck --severity=warning <script>         # zoals CI (vendor/** uitgesloten)
+```
+
+Vanuit de repo-wortel, voor workflowwijzigingen:
+
+```bash
+# shellcheck expliciet meegeven: zonder dat pad slaat actionlint de run-blokken stil over
+actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
+.github/scripts/test-valideer-trivyignore.sh  # fixtures van de suppressie-validatie (vereist yq)
+.github/scripts/test-vervang-pin.sh            # fixtures van de pin-vervanging
+.github/scripts/test-apt-upgrade-beschikbaar.sh # fixtures van de beschikbaarheidsvraag
+.github/scripts/test-check-upstream-jobs.sh    # fixtures van de wekelijkse versiejobs (vereist yq)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
@@ -51,6 +62,8 @@ Twee mechanismen, allebei gericht op reproduceerbaarheid en een gereviewde upgra
 GitHub Actions worden op commit-SHA gepind, met de versie als comment erachter. Dependabot dekt Docker, GitHub Actions en pip — een GitHub-release-binary valt in geen enkel ecosysteem en heeft dus eigen tracking nodig.
 
 Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl`-, `sed`- of shell-argumenten belandt.
+
+Een workflow achter een required check draait ook op `merge_group` en gedraagt zich daar als een PR-build; anders wacht de merge queue tot de timeout. Een event-conditie die PR-gedrag kiest of uitsluit, noemt `pull_request` en `merge_group` altijd samen. Stappen die publiceren (push, signing) gaten daarnaast op de ref (`refs/heads/main`, `v*`-tag).
 
 ## Commentaar
 
@@ -76,7 +89,8 @@ Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl
 - Commit-berichten: conventional commits met Nederlandse omschrijving (`fix(deps): bump rtk naar v0.44.1`).
 - Bij het aanmaken van een pull request **nooit** een reviewer toevoegen.
 - PR-beschrijving: wat er wijzigt, waarom, en wat er geverifieerd is — inclusief wat expliciet níét geverifieerd is. Kort houden; geen ontdekkingsverhaal en geen herhaling van wat de diff al toont.
-- CI moet groen zijn voor merge.
+- Mergen gaat via de merge queue met squash merges; `main` heeft een lineaire historie. De queue draait de required checks opnieuw tegen de actuele `main`, dus een PR hoeft niet eerst met `main` bijgewerkt te worden; alleen bij conflicten.
+- CI moet groen zijn op de PR én in de queue.
 
 ## Issues
 
@@ -92,7 +106,7 @@ Implementatieplannen staan in `docs/superpowers/plans/` als `YYYY-MM-DD-korte-be
 
 - Elke wijziging aan de image daadwerkelijk bouwen (`docker compose build --no-cache` voor lagen die anders uit de cache komen) en het resultaat in de PR benoemen.
 - Build- en CI-output op waarschuwingen nalopen: per stuk oplossen of bewust accepteren met reden. "Build groen" is alleen een betrouwbaar signaal als er geen onverklaarde nieuwe waarschuwingen bij komen.
-- PR-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
+- PR- en merge-queue-builds draaien alleen `linux/amd64`; arm64 komt pas bij de push naar `main`. Noem dat expliciet als het relevant is voor de wijziging.
 - Claim niets als geverifieerd zonder het commando en de uitkomst te hebben gezien.
 
 ## Review-aanpak

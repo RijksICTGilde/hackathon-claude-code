@@ -94,7 +94,7 @@ De container start als root en dropt in `entrypoint-root.sh` onherroepelijk naar
 `claude`. Alles hieronder gebeurt vóór die drop; daarna is er geen weg terug.
 
 Trivy meldt hierop `DS-0002` ("last USER should not be root"). Die melding is
-onderdrukt in `.trivyignore`, met de onderbouwing daar. Het alternatief — de
+onderdrukt in `.trivyignore.yaml`, met de onderbouwing daar. Het alternatief — de
 firewall in een aparte init-service — staat in
 [#98](https://github.com/RijksICTGilde/hackathon-claude-code/issues/98).
 

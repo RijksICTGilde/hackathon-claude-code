@@ -60,6 +60,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL "$URL" -o /tmp/upstream.sh
+          # Een 200 met een lege of vervangen body passeert `curl -f`; zonder
+          # deze controle belandt zoiets in de vendor-map.
+          if [ ! -s /tmp/upstream.sh ] || ! head -1 /tmp/upstream.sh | grep -q '^#!'; then
+            echo "FOUT: het opgehaalde script van $URL is leeg of begint niet met een shebang" >&2
+            exit 1
+          fi
           upstream_sha=$(sha256sum /tmp/upstream.sh | awk '{print $1}')
           if [ ! -f "$FILE" ]; then
             echo "FOUT: vendored bestand '$FILE' bestaat niet" >&2
@@ -73,6 +79,13 @@ jobs:
           if [ "$upstream_sha" != "$current_sha" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             cp /tmp/upstream.sh "$FILE"
+          # Teruglezen: een mislukte kopie zou een voorstel opleveren dat zegt
+          # het bestand te hebben bijgewerkt terwijl er niets is veranderd.
+          na_kopie=$(sha256sum "$FILE" | awk '{print $1}')
+          if [ "$na_kopie" != "$upstream_sha" ]; then
+            echo "FOUT: $FILE komt na de kopie niet overeen met de upstream-hash" >&2
+            exit 1
+          fi
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
@@ -115,12 +128,29 @@ jobs:
         run: |
           set -euo pipefail
           latest=$(curl -fsSL https://nodejs.org/dist/index.json \
-            | jq -r '[.[] | select(.lts != false)] | first | .version')
+            | jq -r '[.[] | select(.lts != false)] | first | .version' || true)
           if [ -z "$latest" ] || [ "$latest" = "null" ]; then
             echo "FOUT: kon laatste Node.js LTS-versie niet bepalen" >&2
             exit 1
           fi
-          current=$(grep -oE 'NODE_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          # De versie komt van buiten en belandt in curl- en sed-argumenten;
+          # een `case`-patroon zou hier alles achter een spatie doorlaten.
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte Node.js-versie '$latest' (verwacht: vX.Y.Z)" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'NODE_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige NODE_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten: een tweede pin met een ander
+          # versienummer valt buiten de telling van de vervanging en zou stil
+          # blijven staan onder een voorstel dat zegt hem te hebben gebumpt.
+          if [ "$(grep -oE 'NODE_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één NODE_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
           {
             echo "current=$current"
             echo "latest=$latest"
@@ -130,20 +160,31 @@ jobs:
             exit 0
           fi
           # Nieuwe versie: haal beide SHAs uit de officiële SHASUMS256.txt.
-          shasums=$(curl -fsSL "https://nodejs.org/dist/${latest}/SHASUMS256.txt")
+          shasums=$(curl -fsSL "https://nodejs.org/dist/${latest}/SHASUMS256.txt" || true)
           sha_amd64=$(echo "$shasums" | awk -v f="node-${latest}-linux-x64.tar.xz"   '$2==f {print $1}')
           sha_arm64=$(echo "$shasums" | awk -v f="node-${latest}-linux-arm64.tar.xz" '$2==f {print $1}')
-          if [ -z "$sha_amd64" ] || [ -z "$sha_arm64" ]; then
-            echo "FOUT: kon SHAs voor ${latest} niet uit SHASUMS256.txt halen" >&2
-            exit 1
-          fi
-          # Huidige SHAs uit Dockerfile lezen (regel met case amd64/arm64).
-          current_amd64=$(grep -oP '(?<=amd64\) NODE_ARCH=x64;   SHA=)[a-f0-9]{64}' Dockerfile)
-          current_arm64=$(grep -oP '(?<=arm64\) NODE_ARCH=arm64; SHA=)[a-f0-9]{64}' Dockerfile)
-          # Vervang versie en beide SHAs.
-          sed -i "s|NODE_VERSION=${current}|NODE_VERSION=${latest}|" Dockerfile
-          sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
-          sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
+          # De checksums komen van buiten en belanden in de Dockerfile; een
+          # waarde die geen sha256 is, sneuvelt anders pas bij de build.
+          for sha in "$sha_amd64" "$sha_arm64"; do
+            if ! [[ "$sha" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha}' is geen sha256 uit SHASUMS256.txt voor ${latest}" >&2
+              exit 1
+            fi
+          done
+          # Huidige SHAs uit de Dockerfile lezen. Het patroon hangt aan
+          # NODE_ARCH en niet aan de kolomuitlijning: hertabelleren van dat blok
+          # zou de job anders wekelijks zwijgend laten sterven.
+          for arch in x64 arm64; do
+            if [ "$(grep -oP "NODE_ARCH=${arch};\\s*SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één SHA-pin voor NODE_ARCH=${arch} in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current_amd64=$(grep -oP 'NODE_ARCH=x64;\s*SHA=\K[a-f0-9]{64}' Dockerfile || true)
+          current_arm64=$(grep -oP 'NODE_ARCH=arm64;\s*SHA=\K[a-f0-9]{64}' Dockerfile || true)
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NODE_VERSION=$current" "NODE_VERSION=$latest" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_amd64" "$sha_amd64" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_arm64" "$sha_arm64" 1
           # README tools-tabel verwijst naar 'Node.js 24 LTS' — als de major-versie
           # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
           old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
@@ -178,6 +219,82 @@ jobs:
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
+  # Job 2a-bis: npm — eigen release-lijn, los van Node. De npm die met de
+  # Node-tarball meekomt loopt achter, en die achterstand zit in modules die npm
+  # bundelt (tar, undici, brace-expansion). Zonder deze job is een Trivy-melding
+  # het enige signaal, en dat is reactief: pas als iemand een CVE publiceert.
+  #
+  # Blijft binnen dezelfde major als de pin: een major-bump hoort een eigen
+  # afweging te zijn en zou hier wekelijks dezelfde PR opleveren.
+  npm-version:
+    name: npm-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine latest npm within the pinned major and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          # Beide `|| true`'s: onder `set -e` met pipefail zou een niet-matchende
+          # grep of een gefaalde curl de stap beëindigen voor de foutmelding
+          # eronder wordt bereikt.
+          current=$(grep -oE 'NPM_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige npm-versie niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'NPM_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één NPM_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          major=${current%%.*}
+          # Alleen stabiele versies binnen dezelfde major; pre-releases (11.0.0-pre)
+          # sorteren anders mee en leveren een onbruikbare pin op.
+          latest=$(curl -fsSL https://registry.npmjs.org/npm \
+            | jq -r --arg m "$major" '.versions | keys[] | select(test("^" + $m + "\\.[0-9]+\\.[0-9]+$"))' \
+            | sort -V | tail -1 || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste npm-versie binnen major $major niet bepalen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "major=$major"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NPM_VERSION=$current" "NPM_VERSION=$latest" 1
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if npm changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/npm
+          delete-branch: true
+          commit-message: "chore(deps): bump npm to ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump npm to ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe npm-release binnen major ${{ steps.compare.outputs.major }} gedetecteerd op registry.npmjs.org.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+
+            npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
+            `ip-address`). Loop bij het reviewen `.trivyignore.yaml` na: staat er een
+            suppressie voor een module die deze release bumpt, haal die dan weg.
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+
   # Job 2b: git-delta — GitHub release-tracking + per-arch SHAs (zelf berekenen,
   # geen officiële SHA-feed beschikbaar).
   delta-version:
@@ -195,12 +312,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest=$(gh api repos/dandavison/delta/releases/latest --jq .tag_name)
+          latest=$(gh api repos/dandavison/delta/releases/latest --jq .tag_name || true)
           if [ -z "$latest" ]; then
-            echo "FOUT: kon laatste delta-versie niet bepalen via GitHub API" >&2
+            echo "FOUT: kon laatste delta-versie niet bepalen via de GitHub API" >&2
             exit 1
           fi
-          current=$(grep -oE 'DELTA_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          # De tag komt uit een repository van derden en belandt hieronder in
+          # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
+          # glob-`*` matcht ook een spatie en alles erachter.
+          if ! [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte delta-tag '$latest' (verwacht: X.Y.Z)" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'DELTA_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige DELTA_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'DELTA_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één DELTA_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
           {
             echo "current=$current"
             echo "latest=$latest"
@@ -215,15 +348,36 @@ jobs:
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_amd64.deb"
           curl -fsSL -o "$tmpdir/arm64.deb" \
             "https://github.com/dandavison/delta/releases/download/${latest}/git-delta_${latest}_arm64.deb"
+          # `curl -f` weert alleen HTTP-fouten; een 200 met een andere body
+          # levert een keurige SHA over de verkeerde inhoud, die pas bij de
+          # image-build sneuvelt.
+          for arch in amd64 arm64; do
+            if [ ! -s "$tmpdir/${arch}.deb" ]; then
+              echo "FOUT: de ${arch}-download van delta is leeg" >&2
+              exit 1
+            fi
+            if ! head -c 8 "$tmpdir/${arch}.deb" | grep -q '^!<arch>'; then
+              echo "FOUT: de ${arch}-download van delta is geen .deb-archief" >&2
+              exit 1
+            fi
+          done
           sha_amd64=$(sha256sum "$tmpdir/amd64.deb" | awk '{print $1}')
           sha_arm64=$(sha256sum "$tmpdir/arm64.deb" | awk '{print $1}')
           rm -rf "$tmpdir"
-          # Huidige SHAs uit Dockerfile lezen.
-          current_amd64=$(grep -oP '(?<=amd64\) SHA=)[a-f0-9]{64}' Dockerfile)
-          current_arm64=$(grep -oP '(?<=arm64\) SHA=)[a-f0-9]{64}' Dockerfile)
-          sed -i "s|DELTA_VERSION=${current}|DELTA_VERSION=${latest}|" Dockerfile
-          sed -i "s|${current_amd64}|${sha_amd64}|" Dockerfile
-          sed -i "s|${current_arm64}|${sha_arm64}|" Dockerfile
+          # Huidige SHAs uit de Dockerfile lezen. Het patroon hangt aan de
+          # case-tak en niet aan de kolomuitlijning: hertabelleren van dat blok
+          # zou de job anders wekelijks zwijgend laten sterven.
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor delta in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current_amd64=$(grep -oP 'amd64\)\s*SHA=\K[a-f0-9]{64}' Dockerfile || true)
+          current_arm64=$(grep -oP 'arm64\)\s*SHA=\K[a-f0-9]{64}' Dockerfile || true)
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "DELTA_VERSION=$current" "DELTA_VERSION=$latest" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_amd64" "$sha_amd64" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_arm64" "$sha_arm64" 1
           {
             echo "changed=true"
             echo "amd64=$sha_amd64"
@@ -252,8 +406,8 @@ jobs:
 
   # Job 2c: rtk — volgt de release-tag zelf, omdat het script per tag wordt
   # gevendord en een sha256-diff tegen die URL dus nooit iets detecteert.
-  # Bumpt de drie plekken die samen moeten verschuiven: het vendored script, de
-  # herkomst-URL en RTK_VERSION. Een aparte SHA-pin voor de binary is niet
+  # Bumpt de vier plekken die samen moeten verschuiven: het vendored script, de
+  # herkomst-URL, RTK_VERSION en de vermelding in de README. Een aparte SHA-pin voor de binary is niet
   # nodig: het script verifieert die tegen de checksums.txt van dezelfde release.
   rtk-version:
     name: rtk-version
@@ -270,16 +424,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest=$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name)
+          latest=$(gh api repos/rtk-ai/rtk/releases/latest --jq .tag_name || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste rtk-versie niet bepalen via de GitHub API" >&2
+            exit 1
+          fi
           # De tag komt uit een repository van derden en belandt hieronder in
-          # curl- en sed-argumenten: alleen strikte semver toelaten.
-          case "$latest" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "FOUT: onverwachte rtk-tag '$latest' (verwacht: vX.Y.Z)" >&2; exit 1;;
-          esac
-          current=$(grep -oE 'RTK_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2)
+          # curl- en sed-argumenten. Een `case`-patroon is hier te zwak: de
+          # glob-`*` matcht ook een spatie en alles erachter, dus 'v1.0.0; rm'
+          # zou erdoor komen. `=~` toetst de hele waarde, waar een regexp per
+          # regel ook een tweede regel zou doorlaten.
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte rtk-tag '$latest' (verwacht: vX.Y.Z)" >&2
+            exit 1
+          fi
+          # Zonder `|| true` beëindigt een gefaalde grep de stap voor de
+          # foutmelding eronder wordt bereikt.
+          current=$(grep -oE 'RTK_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
           if [ -z "$current" ]; then
             echo "FOUT: kon huidige RTK_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'RTK_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één RTK_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
           {
@@ -291,13 +459,29 @@ jobs:
             exit 0
           fi
           # Byte-identiek aan de upstream-tag houden, zodat de herkomst
-          # controleerbaar blijft.
+          # controleerbaar blijft. Eerst naar een tijdelijk bestand: een lege
+          # of ontbrekende download zou anders stil in de vendor-map belanden
+          # onder een voorstel dat zegt het script te hebben bijgewerkt.
+          nieuw_script=$(mktemp)
           curl -fsSL "https://raw.githubusercontent.com/rtk-ai/rtk/${latest}/install.sh" \
-            -o vendor/install-scripts/rtk.sh
-          # Binary-pin, herkomst-URL in de Dockerfile en de versie in de README.
-          sed -i "s|RTK_VERSION=${current}|RTK_VERSION=${latest}|" Dockerfile
-          sed -i "s|rtk-ai/rtk/${current}/install.sh|rtk-ai/rtk/${latest}/install.sh|" Dockerfile
-          sed -i "s|\`rtk\` ${current}|\`rtk\` ${latest}|" README.md
+            -o "$nieuw_script"
+          if [ ! -s "$nieuw_script" ]; then
+            echo "FOUT: het opgehaalde rtk-install-script is leeg" >&2
+            exit 1
+          fi
+          if ! head -1 "$nieuw_script" | grep -q '^#!'; then
+            echo "FOUT: het opgehaalde rtk-install-script begint niet met een shebang" >&2
+            exit 1
+          fi
+          mv "$nieuw_script" vendor/install-scripts/rtk.sh
+          # Per vorm apart, niet als telling van twee: anders is "twee
+          # voorkomens" een proxy voor "de goede twee plekken", en zou een derde
+          # vermelding de herkomst-URL ongemerkt op de oude tag laten staan
+          # terwijl de telling toch klopt.
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "RTK_VERSION=$current" "RTK_VERSION=$latest" 1
+          "$vervang" Dockerfile "rtk-ai/rtk/$current/install.sh" "rtk-ai/rtk/$latest/install.sh" 1
+          "$vervang" README.md "$current" "$latest" 1
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open auto-PR if rtk changed
@@ -311,7 +495,8 @@ jobs:
           labels: dependencies
           body: |
             Nieuwe rtk-release gedetecteerd op GitHub. Bijgewerkt zijn het vendored
-            install-script, de herkomst-URL in de `Dockerfile` en de `RTK_VERSION`-pin.
+            install-script, de herkomst-URL in de `Dockerfile`, de `RTK_VERSION`-pin
+            en de vermelding in `README.md`.
 
             - **Oude versie:** `${{ steps.compare.outputs.current }}`
             - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
@@ -320,3 +505,595 @@ jobs:
             Bekijk de diff van `vendor/install-scripts/rtk.sh`: dat script draait tijdens
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
+
+  # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
+  # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
+  # Dockerfile.
+  #
+  # De image-scan in build-image.yml draait alleen op PR-builds en die zijn
+  # amd64-only, dus de gepubliceerde multi-arch image wordt daar niet gedekt.
+  # Deze job scant hem wekelijks op beide architecturen, elk op de digest uit de
+  # manifest list — `:latest` zou naar het platform van de runner resolven.
+  apt-security-refresh:
+    name: apt-security-refresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    env:
+      IMAGE_REPO: ghcr.io/rijksictgilde/claude-sandbox
+      # Drempel waarboven een verversings-PR opengaat, ook zonder bevindingen.
+      # Patchen is een cyclus, geen reactie op een scannerdrempel: de scan ziet
+      # alleen fixbare CRITICAL/HIGH, dus MEDIUM en LOW komen alleen binnen via
+      # een rebuild — deze verversing of een Dependabot-bump van de
+      # base-digest. 28 is vier keer de wekelijkse cron: staat de epoch op de
+      # crondag, dan valt de vierde run precies op de drempel in plaats van
+      # erover.
+      MAX_EPOCH_AGE_DAYS: '28'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Ook nodig wanneer het package publiek is: anonieme GHCR-pulls lopen
+      # tegen een lagere rate limit aan.
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # De digests komen uit het register en belanden hieronder in een image-ref:
+      # valideren op vorm voor ze verder gaan.
+      - name: Resolve per-architecture digests
+        id: digests
+        run: |
+          set -euo pipefail
+          manifest=$(docker buildx imagetools inspect "${IMAGE_REPO}:latest" --format '{{json .Manifest}}')
+          resolved=()
+          for arch in amd64 arm64; do
+            digest=$(jq -r --arg a "$arch" \
+              '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a) | .digest] | first // ""' \
+              <<<"$manifest")
+            if ! grep -qE '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
+              echo "FOUT: geen bruikbare linux/${arch}-digest in ${IMAGE_REPO}:latest (waarde: '${digest}')" >&2
+              jq -c '[.manifests[]?.platform]' <<<"$manifest" >&2
+              exit 1
+            fi
+            resolved+=("$digest")
+            echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
+          done
+          # De manifest list hoort twee verschillende digests te bevatten;
+          # gelijke digests wijzen op een kapotte publicatie.
+          if [ "${resolved[0]}" = "${resolved[1]}" ]; then
+            echo "FOUT: amd64 en arm64 verwijzen naar dezelfde digest (${resolved[0]})" >&2
+            exit 1
+          fi
+
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        working-directory: ${{ github.workspace }}
+        run: .github/scripts/valideer-trivyignore.sh
+
+      # Zelfde severity, ignore-unfixed en suppressies als de gate in
+      # build-image.yml; een amd64-bevinding hier voorspelt daar dus een falende
+      # gate. Voor arm64 bestaat die tegenhanger niet. Exit-code 0: deze job
+      # opent een PR in plaats van te falen.
+      - name: Trivy scan of published image (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.amd64 }}
+          format: json
+          output: /tmp/trivy-amd64.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
+          exit-code: '0'
+
+      - name: Trivy scan of published image (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REPO }}@${{ steps.digests.outputs.arm64 }}
+          format: json
+          output: /tmp/trivy-arm64.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore.yaml
+          list-all-pkgs: true
+          exit-code: '0'
+          # De binary zit na de vorige stap in de tool-cache.
+          skip-setup-trivy: true
+
+      - name: Bump APT_UPGRADE_EPOCH if needed
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Alleen os-pkgs komt uit apt. Bevindingen in de npm-bundel of in de
+          # gepinde binaries (Node, git-delta, rtk) lost een bump van deze laag
+          # niet op; die volgen hun eigen versiepin, met een eigen job hierboven.
+          os='[.Results[]? | select(.Class == "os-pkgs") | .Vulnerabilities[]?]'
+          rest='[.Results[]? | select(.Class != null and .Class != "os-pkgs") | .Vulnerabilities[]?]'
+          fields='{id: .VulnerabilityID, sev: .Severity, pkg: .PkgName, inst: .InstalledVersion, fix: .FixedVersion}'
+          : > /tmp/os-all.json
+          : > /tmp/rest-all.json
+          : > /tmp/geinstalleerd.json
+          for arch in amd64 arm64; do
+            report="/tmp/trivy-${arch}.json"
+            # Een crashende scan maakt de stap rood, maar een scan die netjes
+            # exit 0 geeft over het verkeerde ding niet: OS niet herkend, of een
+            # rapport over de andere architectuur. Assert daarom per
+            # architectuur dat er werkelijk een Debian-image van díe
+            # architectuur met apt-pakketten is gescand.
+            if [ ! -s "$report" ]; then
+              echo "FOUT: $report ontbreekt of is leeg; de scanstap heeft niets weggeschreven" >&2
+              exit 1
+            fi
+            family=$(jq -r '.Metadata.OS.Family // ""' "$report" || true)
+            if [ "$family" != "debian" ]; then
+              echo "FOUT: geen Debian-OS gedetecteerd in $report (family='${family}'); de apt-laag is niet gescand" >&2
+              exit 1
+            fi
+            scanned_arch=$(jq -r '.Metadata.ImageConfig.architecture // ""' "$report" || true)
+            if [ "$scanned_arch" != "$arch" ]; then
+              echo "FOUT: $report bevat een '${scanned_arch}'-image, verwacht ${arch}" >&2
+              exit 1
+            fi
+            os_targets=$(jq "[.Results[]? | select(.Class == \"os-pkgs\")] | length" "$report" || true)
+            case "$os_targets" in
+              ''|*[!0-9]*|0)
+                echo "FOUT: geen os-pkgs-target in $report; de apt-laag is niet gescand" >&2
+                exit 1 ;;
+            esac
+            arch_count=$(jq "$os | group_by(.VulnerabilityID) | length" "$report" || true)
+            case "$arch_count" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling van bevindingen in $report (waarde: '${arch_count}')" >&2
+                exit 1 ;;
+            esac
+            echo "Gescand: ${arch} (${family}), ${os_targets} os-pkgs-target(s), ${arch_count} fixbare CRITICAL/HIGH."
+            jq --arg arch "$arch" "$os   | map($fields + {arch: \$arch})" "$report" >> /tmp/os-all.json
+            jq --arg arch "$arch" "$rest | map($fields + {arch: \$arch})" "$report" >> /tmp/rest-all.json
+            # Geïnstalleerde apt-pakketten: de invoer voor de vraag of er
+            # überhaupt iets te upgraden valt. De volledige versie zit in `ID`
+            # (naam@versie); `Version` bevat alleen het upstream-deel, zonder
+            # epoch en revisie, en zou elke vergelijking laten kloppen.
+            zonder_id=$(jq '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]? | select(.ID == null)] | length' "$report")
+            if [ "$zonder_id" -ne 0 ]; then
+              echo "FOUT: ${zonder_id} pakket(ten) in $report zonder ID; de volledige versie is daar niet uit te lezen" >&2
+              exit 1
+            fi
+            jq --arg arch "$arch" \
+              '[.Results[]? | select(.Class == "os-pkgs") | .Packages[]?
+                | {pkg: .Name, inst: (.ID | sub("^.*@"; "")), arch: $arch}]' \
+              "$report" >> /tmp/geinstalleerd.json
+          done
+          # Tellen per CVE-ID over beide architecturen samen: één CVE die tien
+          # pakketten op twee architecturen raakt is één bevinding. `ruw` is
+          # alles wat de scan meldde; `count` telt alleen wat een verversing
+          # werkelijk kan raken en is daarmee de telling waarop besloten wordt.
+          ruw=$(jq -s 'add | [.[].id] | unique | length' /tmp/os-all.json || true)
+          other=$(jq -s 'add | [.[].id] | unique | length' /tmp/rest-all.json || true)
+          for var in ruw other; do
+            case "${!var}" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare telling uit /tmp/os-all.json of /tmp/rest-all.json (${var}='${!var}')" >&2
+                head -c 500 /tmp/os-all.json >&2
+                exit 1 ;;
+            esac
+          done
+          if [ "$other" -gt 0 ]; then
+            echo "::warning::${other} fixbare CRITICAL/HIGH buiten de apt-pakketten; die volgen hun eigen versiepin, niet APT_UPGRADE_EPOCH"
+          fi
+          # `|| true`: zonder match zou grep onder pipefail de stap laten
+          # eindigen voor de foutmelding hieronder wordt bereikt.
+          current=$(grep -oE '^ARG APT_UPGRADE_EPOCH=[0-9]{4}-[0-9]{2}-[0-9]{2}$' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon ARG APT_UPGRADE_EPOCH niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          if [ "$(grep -c '^ARG APT_UPGRADE_EPOCH=' Dockerfile)" -ne 1 ]; then
+            echo "FOUT: meerdere APT_UPGRADE_EPOCH-regels; de bump zou er maar één verversen" >&2
+            exit 1
+          fi
+          new=$(date -u +%F)
+          # De regex hierboven dekt de vorm, niet de semantiek: 2026-02-30 komt
+          # er doorheen en zou verderop op een rekenfout stranden.
+          current_seconds=$(date -u -d "$current" +%s) || {
+            echo "FOUT: APT_UPGRADE_EPOCH '${current}' is geen bestaande datum" >&2
+            exit 1
+          }
+          now_seconds=$(date -u +%s)
+          # Op seconden vergelijken: integer-deling kapt af richting nul, dus een
+          # epoch van morgen zou als leeftijd 0 langs deze guard glippen.
+          if [ "$current_seconds" -gt "$now_seconds" ]; then
+            echo "FOUT: APT_UPGRADE_EPOCH (${current}) ligt in de toekomst; de periodieke verversing slaat pas ${MAX_EPOCH_AGE_DAYS} dagen ná die datum aan" >&2
+            exit 1
+          fi
+          age=$(( ( now_seconds - current_seconds ) / 86400 ))
+          # Een leeftijd ver boven de drempel betekent dat eerdere verversingen
+          # niet zijn geland: meestal een PR die blijft liggen of een rebuild van
+          # :latest die nog moet komen, soms een schedule dat GitHub na
+          # langdurige repo-inactiviteit heeft uitgeschakeld.
+          if [ "$age" -ge $(( MAX_EPOCH_AGE_DAYS * 2 )) ]; then
+            echo "::warning::APT_UPGRADE_EPOCH is ${age} dagen oud, ruim boven de drempel ${MAX_EPOCH_AGE_DAYS}; staat de verversings-PR nog open, of draaien de wekelijkse runs niet meer?"
+          fi
+          # De uitsluitingslijst wordt uit de Dockerfile afgeleid in plaats van
+          # apart bijgehouden: een tweede `dpkg -i` zou anders stil gaan
+          # meewegen (week na week een voorstel dat het pakket meteen weer op
+          # zijn eigen pin terugzet), en een naam die er blijft staan terwijl
+          # het pakket inmiddels uit apt komt, zou zijn bevindingen voorgoed
+          # wegfilteren. De bestandsnaam van de `.deb` is de pakketnaam; klopt
+          # die aanname niet, dan valt dat op omdat het pakket niet in de scan
+          # voorkomt.
+          # `|| true`: zonder match zou grep onder pipefail de stap laten eindigen
+          # nog voor de melding hieronder wordt bereikt.
+          # Commentregels eruit: die noemen `dpkg -i` juist om uit te leggen wat
+          # hier gebeurt, en zouden anders als installatie meetellen.
+          grep -vE '^[[:space:]]*#' Dockerfile > "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments"
+          buiten_apt=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)[[:space:]]+[^[:space:]]+\.deb' \
+              "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } \
+            | sed -E 's|.*/||; s|\.deb$||' | sort -u | jq -R . | jq -sc .)
+          # Voorkomens tellen, geen regels: twee installaties op één regel zijn
+          # ook twee installaties.
+          dpkg_regels=$({ grep -oE 'dpkg[[:space:]]+(-i|--install)' \
+            "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" || true; } | wc -l)
+          afgeleid=$(jq 'length' <<<"$buiten_apt")
+          if [ "$dpkg_regels" -ne "$afgeleid" ]; then
+            echo "FOUT: ${dpkg_regels} dpkg-installatie(s) in de Dockerfile, maar ${afgeleid} pakketnaam/-namen af te leiden; de vorm is niet herkend" >&2
+            grep -nE 'dpkg[[:space:]]+(-i|--install)' "${RUNNER_TEMP:-/tmp}/dockerfile-zonder-comments" >&2 || true
+            exit 1
+          fi
+          echo "Buiten de apt-laag geïnstalleerd volgens de Dockerfile: ${buiten_apt}"
+          # Pakketten die niet uit de apt-laag komen, kan een epoch-bump niet
+          # bewegen: ze worden verderop in de Dockerfile op een eigen versie
+          # gepind en volgen hun eigen wekelijkse job. Een voorstel op grond van
+          # zo'n pakket verhelpt niets en bouwt drie keer voor niets.
+          jq -s --argjson buiten "$buiten_apt" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not))' \
+            /tmp/os-all.json > /tmp/os-samen.json
+          for pkg in $(jq -r '.[]' <<<"$buiten_apt"); do
+            gevonden=$(jq -s --arg p "$pkg" '[add[] | select(.pkg == $p)] | length' /tmp/os-all.json)
+            [ "$gevonden" -eq 0 ] || echo "Buiten de weging gelaten: ${gevonden} bevinding(en) op ${pkg}, dat buiten apt om wordt gepind."
+          done
+          # De kandidaat komt altijd uit een amd64-container, maar de
+          # geïnstalleerde versies van beide architecturen worden gewogen: bouwt
+          # arm64 op een ander moment, of heeft een pakket daar een eigen
+          # binNMU-revisie, dan zou een achterstand op die architectuur anders
+          # nooit een verversing uitlokken. Een binNMU is hoger dan het
+          # amd64-origineel, dus dat geeft geen vals alarm.
+          jq -s --argjson buiten "$buiten_apt" \
+            'add | map(select(.pkg as $p | $buiten | index($p) | not)) | unique_by([.pkg, .inst])' \
+            /tmp/geinstalleerd.json > /tmp/geinstalleerd-samen.json
+          # De pakketlijst die we voorleggen is de unie van beide architecturen:
+          # een pakket dat alleen op arm64 een bevinding heeft, zou anders geen
+          # kandidaat krijgen en dat leest als "de fix staat niet in de suite".
+          jq -s '[add[].pkg] | unique' \
+            /tmp/geinstalleerd.json /tmp/os-all.json > /tmp/te-vragen.json
+          count=$(jq '[.[].id] | unique | length' /tmp/os-samen.json)
+          case "$count" in
+            ''|*[!0-9]*)
+              echo "FOUT: geen bruikbare telling uit /tmp/os-samen.json (waarde: '${count}')" >&2
+              exit 1 ;;
+          esac
+          if [ "$count" -ne "$ruw" ]; then
+            echo "Van de ${ruw} fixbare CRITICAL/HIGH raken er ${count} de apt-laag; de rest zit op een pakket dat buiten apt om gepind is."
+          fi
+          beoordeel="${GITHUB_WORKSPACE}/.github/scripts/apt-upgrade-beschikbaar.sh"
+
+          # De policy-uitvoer wordt hoogstens één keer opgehaald, en alleen als
+          # er iets te beslissen valt.
+          policy_opgehaald=0
+          haal_policy() {
+            [ "$policy_opgehaald" -eq 0 ] || return 0
+            local aantal gedekt basis rc
+            local -a pakketten
+            mapfile -t pakketten < <(jq -r '.[]' /tmp/te-vragen.json)
+            aantal=$(jq -r '[.[].pkg] | unique | length' /tmp/geinstalleerd-samen.json)
+            if [ "${#pakketten[@]}" -eq 0 ] || [ "$aantal" -eq 0 ]; then
+              echo "FOUT: geen geïnstalleerde apt-pakketten uit de scan; de vraag wat er te halen valt is niet te stellen" >&2
+              exit 1
+            fi
+            # De namen komen uit een scanrapport en gaan als losse argumenten naar
+            # een container, niet als shell-string; deze controle gaat dus over
+            # de vraag of we het juiste vragen, niet over injectie. In jq
+            # toetsen en niet op de gelezen regels: een naam waar een newline in
+            # zit, ligt na het lezen al in tweeën, en beide helften zouden er
+            # dan geldig uitzien. Het echte pakket wordt nooit gevraagd en
+            # krijgt "geen kandidaat" — een stille nee.
+            afwijkend=$(jq -r '[.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not))] | length' /tmp/te-vragen.json)
+            case "$afwijkend" in
+              ''|*[!0-9]*)
+                echo "FOUT: de naamcontrole gaf geen bruikbare telling (waarde: '${afwijkend}')" >&2
+                exit 1 ;;
+            esac
+            if [ "$afwijkend" -ne 0 ]; then
+              echo "FOUT: ${afwijkend} onverwachte pakketnaam/-namen in de scanuitvoer; niet doorgegeven aan de container" >&2
+              jq -r '.[] | select((gsub("[a-z0-9+.-]"; "")) != "" or (test("^[a-z0-9]") | not)) | @json' /tmp/te-vragen.json >&2
+              exit 1
+            fi
+            # Dezelfde basis-image als de Dockerfile, dus dezelfde suite, en een
+            # fractie van de gepubliceerde image om binnen te halen.
+            basis=$(grep -oE '^FROM debian:[^@[:space:]]+@sha256:[0-9a-f]{64}' Dockerfile | head -1 | cut -d' ' -f2 || true)
+            if [ -z "$basis" ]; then
+              echo "FOUT: kon de basis-image niet uit de Dockerfile lezen" >&2
+              exit 1
+            fi
+            # `apt-get update` geeft exitcode 0 als een deel van de indexen
+            # niet op te halen is; valt juist de security-suite weg, dan ziet de
+            # vraag geen enkele security-fix en leest dat als "niets te halen".
+            rc=0
+            # `apt-get update` schrijft zijn voortgang naar stdout; dat hoort
+            # niet in het bestand dat straks geparsed wordt. De indextargets
+            # gaan mee als bewijs welke bronnen daadwerkelijk zijn gebruikt.
+            docker run --rm "$basis" sh -c \
+              'apt-get update >&2 && apt-get indextargets --format "\$(SITE) \$(RELEASE)" \
+                 | sed "s/^/INDEX /" && apt-cache policy "$@"' _ "${pakketten[@]}" \
+              > /tmp/policy.txt 2> /tmp/policy-fouten.txt || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "FOUT: de policy-container eindigde met exitcode ${rc}" >&2
+              cat /tmp/policy-fouten.txt >&2
+              exit 1
+            fi
+            # Ook op het goede pad meekijken: hier komt de voortgang van
+            # `apt-get update` terecht, en een melding uit de container die
+            # nergens op matcht zou anders spoorloos verdwijnen.
+            if [ -s /tmp/policy-fouten.txt ]; then
+              echo "Meldingen uit de policy-container:"
+              head -c 2000 /tmp/policy-fouten.txt
+            fi
+            fetch_rc=0
+            grep -qE 'Failed to fetch|Some index files failed' /tmp/policy-fouten.txt || fetch_rc=$?
+            if [ "$fetch_rc" -gt 1 ]; then
+              echo "FOUT: de controle op indexfouten kon niet draaien (grep exitcode ${fetch_rc})" >&2
+              exit 1
+            fi
+            if [ "$fetch_rc" -eq 0 ]; then
+              echo "FOUT: apt-get update kon niet alle indexen ophalen; de beschikbaarheid is niet vast te stellen" >&2
+              cat /tmp/policy-fouten.txt >&2
+              exit 1
+            fi
+            # Niet-leeg zegt niets: elke afwijking in het uitvoerformaat zou
+            # stil "geen kandidaat" opleveren voor álle pakketten en daarmee
+            # elke verversing tegenhouden.
+            # Alleen de geïnstalleerde pakketten moeten gedekt zijn: een naam
+            # die alleen uit een bevinding komt kan ontbreken omdat de suite hem
+            # niet kent, en dat is een antwoord, geen kapotte meting.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/geinstalleerd-samen.json > /tmp/verwachte-koppen.txt
+            # `|| true` zou ook exitcode 2 opvangen — een onleesbaar bestand of
+            # een ongeldig patroon — en dat levert een lege telling op waarmee
+            # de vergelijking hieronder zelf faalt. In een `if`-conditie grijpt
+            # `set -e` daar niet op in, dus de controle zou stil overgeslagen
+            # worden.
+            grep_rc=0
+            gedekt=$(grep -cxFf /tmp/verwachte-koppen.txt /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de dekkingscontrole kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            case "$gedekt" in
+              ''|*[!0-9]*)
+                echo "FOUT: geen bruikbare dekkingstelling uit de policy-uitvoer (waarde: '${gedekt}')" >&2
+                exit 1 ;;
+            esac
+            # Een enkel ontbrekend pakket is een antwoord: de suite kent het
+            # niet, en het script leest dat verderop als "geen kandidaat". Nul
+            # dekking is geen antwoord maar een kapotte meting — een ander
+            # uitvoerformaat, een andere taal, of een update die geen enkele
+            # index binnenhaalde.
+            if [ "$gedekt" -eq 0 ]; then
+              echo "FOUT: apt-cache policy noemt geen enkel van de ${aantal} geïnstalleerde pakketten; de policy-uitvoer is niet gelezen zoals verwacht" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            # Een enkel pakket dat de suite niet kent is een antwoord; loopt de
+            # basis-image zover uit de pas met de gepubliceerde image dat een
+            # tiende van de namen onbekend is, dan wordt er meer geraden dan
+            # gemeten.
+            if [ $(( gedekt * 10 )) -lt $(( aantal * 9 )) ]; then
+              echo "FOUT: apt-cache policy noemt maar ${gedekt} van de ${aantal} geïnstalleerde pakketten; te veel om de uitkomst een meting te noemen" >&2
+              exit 1
+            fi
+            # De pakketten die de bevindingen dragen moeten er állemaal in staan.
+            # Voor een geïnstalleerd pakket is "de suite kent het niet" nog een
+            # antwoord; voor een pakket waar een fixbare CVE op zit is het dat
+            # niet — dan is de vraag of die fix er is simpelweg niet gesteld.
+            jq -r '[.[].pkg] | unique | .[] + ":"' /tmp/os-samen.json > /tmp/cve-koppen.txt
+            if [ -s /tmp/cve-koppen.txt ]; then
+              cve_rc=0
+              cve_gedekt=$(grep -cxFf /tmp/cve-koppen.txt /tmp/policy.txt) || cve_rc=$?
+              if [ "$cve_rc" -gt 1 ]; then
+                echo "FOUT: de dekkingscontrole op bevindingen kon niet draaien (grep exitcode ${cve_rc})" >&2
+                exit 1
+              fi
+              cve_verwacht=$(wc -l < /tmp/cve-koppen.txt)
+              if [ "$cve_gedekt" -lt "$cve_verwacht" ]; then
+                echo "FOUT: van de ${cve_verwacht} pakketten met een fixbare bevinding noemt apt-cache policy er ${cve_gedekt}; voor de rest is de vraag niet gesteld" >&2
+                exit 1
+              fi
+            fi
+            if [ "$gedekt" -lt "$aantal" ]; then
+              echo "::warning::apt-cache policy noemt ${gedekt} van de ${aantal} geïnstalleerde pakketten; de rest kent deze suite niet — buiten apt om geïnstalleerd, of alleen aanwezig in de index van de andere architectuur"
+            fi
+            # Koppen zonder kandidaten is dezelfde kapotte meting, één laag
+            # dieper: de namen worden herkend maar de versietabel niet.
+            kandidaten=0
+            grep_rc=0
+            kandidaten=$(grep -c '^  Candidate:' /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de controle op kandidaten kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            if [ "$kandidaten" -eq 0 ]; then
+              echo "FOUT: geen enkele Candidate-regel in de policy-uitvoer; het formaat is niet wat de beoordeling verwacht" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            # Zonder indexen valt apt terug op /var/lib/dpkg/status en levert het
+            # gewoon kandidaten: de versies die al in de image zitten. Elke
+            # vergelijking komt dan op "niets te halen" uit, en dat is geen
+            # antwoord maar een meting zonder bron. Een kandidaat uit een
+            # archief is te herkennen aan de herkomstregel in de versietabel.
+            uit_archief=0
+            grep_rc=0
+            uit_archief=$(grep -cE '^ +[0-9]+ [^/]' /tmp/policy.txt) || grep_rc=$?
+            if [ "$grep_rc" -gt 1 ]; then
+              echo "FOUT: de controle op de herkomst van de kandidaten kon niet draaien (grep exitcode ${grep_rc})" >&2
+              exit 1
+            fi
+            if [ "$uit_archief" -eq 0 ]; then
+              echo "FOUT: geen enkele kandidaat komt uit een archief; apt viel terug op de pakketstatus van de image en heeft geen suite geraadpleegd" >&2
+              head -c 500 /tmp/policy.txt >&2
+              exit 1
+            fi
+            if ! grep -q '^INDEX .*-security' /tmp/policy.txt; then
+              echo "FOUT: geen security-index in de gebruikte apt-bronnen; een fix uit de security-suite zou onzichtbaar blijven" >&2
+              grep '^INDEX ' /tmp/policy.txt >&2 || true
+              exit 1
+            fi
+            policy_opgehaald=1
+          }
+
+          # Exitcode 1 betekent "niets te halen", 2 of hoger betekent dat de
+          # vraag niet beantwoord is; dat laatste mag niet als "nee" tellen.
+          beschikbaar() { # modus bestand
+            local rc=0
+            "$beoordeel" "$1" "$2" /tmp/policy.txt || rc=$?
+            case "$rc" in
+              0) return 0 ;;
+              1) return 1 ;;
+              *) echo "FOUT: de beschikbaarheidsvraag kon niet beantwoord worden (exitcode ${rc})" >&2; exit 1 ;;
+            esac
+          }
+
+          # Een openstaand voorstel wordt niet elke week herschreven: een
+          # force-push zet er een nieuwe datum in en maakt de review-run die
+          # iemand daarop startte achterhaald.
+          open_pr=$(gh pr list --head deps/apt-security-refresh --state open --json number --jq '.[0].number // ""') || {
+            echo "FOUT: kon niet nagaan of er al een voorstel openstaat" >&2
+            exit 1
+          }
+          if [ -n "$open_pr" ]; then
+            # Zolang het voorstel blijft liggen wordt de vraag niet eens
+            # gesteld. Staat de epoch dan al over de drempel, dan is dat geen
+            # routinematige overslag meer maar een verversing die niet landt.
+            echo "Verversing overgeslagen: er staat al een voorstel open op deps/apt-security-refresh (#${open_pr})."
+
+            if [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+              echo "::warning::voorstel #${open_pr} staat nog open terwijl APT_UPGRADE_EPOCH ${age} dagen oud is (drempel ${MAX_EPOCH_AGE_DAYS}); de verversing landt niet"
+            fi
+
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          reason=""
+          if [ "$count" -gt 0 ]; then
+            haal_policy
+            echo "Fixes die de suite nu uitlevert:"
+
+            if beschikbaar cve /tmp/os-samen.json; then
+              reason="${count} fixbare CRITICAL/HIGH-CVE('s) in Debian-pakketten, waarvan minstens één nu op te halen"
+            else
+              echo "::warning::${count} fixbare CRITICAL/HIGH-CVE('s), maar geen enkele fix staat in de suite"
+            fi
+          fi
+          # De periodieke verversing staat los van de CVE-vraag: een fix die
+          # blijft steken mag de routine niet maandenlang bevriezen, want die
+          # haalt ook alle andere beschikbare updates op.
+          if [ -z "$reason" ] && [ "$age" -ge "$MAX_EPOCH_AGE_DAYS" ]; then
+            haal_policy
+            echo "Pakketten met een hogere kandidaat:"
+
+            if beschikbaar upgrade /tmp/geinstalleerd-samen.json; then
+              reason="periodieke verversing: APT_UPGRADE_EPOCH is ${age} dagen oud"
+            else
+              echo "::warning::periodieke verversing overgeslagen: de epoch is ${age} dagen oud, maar geen pakket heeft een hogere kandidaat dan wat er in de image staat"
+            fi
+          fi
+          if [ -z "$reason" ]; then
+            echo "Geen verversing: niets fixbaars op te halen, epoch is ${age} dagen oud (drempel ${MAX_EPOCH_AGE_DAYS})."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current" = "$new" ]; then
+            # Al vandaag gebumpt: een tweede bump levert dezelfde inhoud op en
+            # dus een lege commit.
+            echo "::warning::${reason}, maar APT_UPGRADE_EPOCH staat al op ${new}; geen PR. De rebuild van :latest moet nog langskomen."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -i "s|^ARG APT_UPGRADE_EPOCH=${current}$|ARG APT_UPGRADE_EPOCH=${new}|" Dockerfile
+          grep -qx "ARG APT_UPGRADE_EPOCH=${new}" Dockerfile || {
+            echo "FOUT: bump van APT_UPGRADE_EPOCH is niet toegepast" >&2
+            exit 1
+          }
+          # Eén regel per unieke combinatie van CVE, pakket en versiepaar.
+          # Architecturen met hetzelfde versiepaar staan samen op één regel;
+          # verschillen de versies, dan krijgt elke architectuur een eigen
+          # regel. Het aantal regels kan daarom hoger liggen dan de telling, die
+          # per CVE-ID gaat.
+          #
+          # De delimiter-filter op de jq-uitvoer is een vangnet: de regels
+          # beginnen altijd met een streepje, dus scanuitvoer kan de
+          # GITHUB_OUTPUT-heredoc niet vroegtijdig afsluiten.
+          if [ "$count" -gt 0 ]; then
+            summary=$(jq -rs 'add
+                              | group_by([.id, .pkg, .inst, .fix])
+                              | .[]
+                              | "- `\(.[0].id)` (\(.[0].sev)) — \(.[0].pkg): `\(.[0].inst)` → `\(.[0].fix)` (\([.[].arch] | unique | join(", ")))"' \
+                       /tmp/os-samen.json | { grep -vFx 'TRIVY_EOF' || true; })
+          else
+            summary="- Geen openstaande fixbare CRITICAL/HIGH; dit is de periodieke verversing."
+          fi
+          {
+            echo 'summary<<TRIVY_EOF'
+            printf '%s\n' "$summary"
+            echo 'TRIVY_EOF'
+            echo "current=$current"
+            echo "new=$new"
+            echo "reason=$reason"
+            echo "changed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if a bump is needed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/apt-security-refresh
+          delete-branch: true
+          # De Trivy-stappen laten hun DB-cache in de workspace achter; zonder
+          # add-paths commit de action die mee en weigert GitHub de push.
+          add-paths: claude-sandbox/Dockerfile
+          commit-message: "chore(deps): bump APT_UPGRADE_EPOCH naar ${{ steps.compare.outputs.new }}"
+          title: "chore(deps): apt security-updates ophalen (APT_UPGRADE_EPOCH ${{ steps.compare.outputs.new }})"
+          labels: dependencies
+          body: |
+            Aanleiding: ${{ steps.compare.outputs.reason }}, gemeten op
+            `${{ env.IMAGE_REPO }}:latest` over linux/amd64 en linux/arm64.
+            `APT_UPGRADE_EPOCH` is gebumpt zodat de `apt-get upgrade`-laag opnieuw draait
+            in plaats van uit de layer cache te komen.
+
+            - **Oude waarde:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe waarde:** `${{ steps.compare.outputs.new }}`
+
+            Bevindingen (één regel per CVE, pakket en versiepaar; architecturen met
+            hetzelfde versiepaar staan samen op één regel):
+
+            ${{ steps.compare.outputs.summary }}
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget. Deze PR is
+            door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en heropen
+            hem om de checks alsnog te laten draaien. Blijft er na de rebuild iets staan, dan is
+            er voor dat pakket nog geen Debian-update in de suite. Dat is niet
+            hetzelfde als "geen fix": kijk eerst of de suite hem later alsnog
+            uitlevert, en pas als dat aantoonbaar niet gebeurt hoort hij met
+            reden in `.trivyignore.yaml`.
