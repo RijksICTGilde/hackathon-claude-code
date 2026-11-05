@@ -29,10 +29,11 @@ esac
 
 # Beide waarden belanden in een sed-expressie. `&` en `\1` in de vervanging en
 # metatekens in het patroon zouden het bestand stil corrumperen, dus alleen
-# tekens toelaten die in een versie, checksum of URL voorkomen.
+# tekens toelaten die in een versie, checksum of URL voorkomen. `+` hoort daarbij
+# vanwege base64-hashes (h1:…) en is in de basic regexp van sed letterlijk.
 for waarde in "${oud}" "${nieuw}"; do
   case "${waarde}" in
-    *[!A-Za-z0-9._/:=-]*)
+    *[!A-Za-z0-9._/:=+-]*)
       echo "FOUT: '${waarde}' bevat een teken dat hier niet is toegestaan." >&2
       exit 1 ;;
   esac
