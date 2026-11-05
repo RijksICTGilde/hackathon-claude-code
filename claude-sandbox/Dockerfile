@@ -58,6 +58,7 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     openssh-client \
     file \
     xz-utils \
+    libatomic1 \
     python3 \
     python3-pip \
     python3-venv \
@@ -67,6 +68,7 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # Let op: houd versie in de README tools-tabel in sync
+# De binary linkt dynamisch tegen libatomic.so.1; libatomic1 staat daarom in de apt-laag.
 RUN NODE_VERSION=v26.13.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
