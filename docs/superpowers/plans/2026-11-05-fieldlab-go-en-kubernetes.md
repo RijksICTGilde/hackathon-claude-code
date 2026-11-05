@@ -35,8 +35,8 @@ valt. `go install pkg@versie` leest die `go.sum` niet. De versie-stempel
 `no_new_privs`, omdat de setuid-strip pas na deze laag komt.
 
 **Go via de officiële tarball** van `go.dev/dl`, versie plus SHA-256 per architectuur, net als
-Node.js. De versie volgt de `go`-regel in de `go.mod` van Fundament en het `golang:`-image in de
-plug-in-scaffold (nu beide 1.27.3).
+Node.js. De versie is minstens de `go`-regel in de `go.mod` van Fundament (nu 1.27.3, gelijk aan
+het `golang:`-image in de plug-in-scaffold); de wekelijkse tracking volgt de laatste stabiele Go.
 
 **Symlinks in `/usr/local/bin`** voor `go` en `gofmt`. Een non-interactieve SSH-sessie erft de
 Docker-`ENV` niet; via `/usr/local/bin` vindt hij Go zonder extra PATH-regels.
