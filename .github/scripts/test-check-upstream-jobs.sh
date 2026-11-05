@@ -31,6 +31,7 @@ lees_pin() { # variabelenaam
 rtk_nu="$(lees_pin RTK_VERSION)"
 delta_nu="$(lees_pin DELTA_VERSION)"
 node_nu="$(lees_pin NODE_VERSION)"
+node_major="${node_nu#v}"; node_major="${node_major%%.*}"
 npm_nu="$(lees_pin NPM_VERSION)"
 npm_major="${npm_nu%%.*}"
 
@@ -49,6 +50,7 @@ for job in vendored-scripts rtk-version delta-version node-version npm-version a
   # beslisstap los getoetst.
   verwacht_blokken=1
   [ "${job}" = apt-security-refresh ] && verwacht_blokken=3
+  [ "${job}" = node-version ] && verwacht_blokken=2
 
   if [ ! -s "${werkmap}/${job}.sh" ] \
      || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne "${verwacht_blokken}" ]; then
@@ -62,6 +64,16 @@ yq '.jobs."apt-security-refresh".steps[] | select(.id == "compare") | .run' "${w
   > "${werkmap}/epoch.sh"
 if [ ! -s "${werkmap}/epoch.sh" ]; then
   echo "FOUT: geen compare-stap gevonden in apt-security-refresh"
+  exit 1
+fi
+
+# node-version: versievergelijking en library-vergelijking los toetsen.
+yq '.jobs."node-version".steps[] | select(.id == "compare") | .run' "${workflow}" \
+  > "${werkmap}/node-version.sh"
+yq '.jobs."node-version".steps[] | select(.id == "libs") | .run' "${workflow}" \
+  > "${werkmap}/node-libs.sh"
+if [ ! -s "${werkmap}/node-version.sh" ] || [ ! -s "${werkmap}/node-libs.sh" ]; then
+  echo "FOUT: geen compare- of libs-stap gevonden in node-version"
   exit 1
 fi
 
@@ -246,7 +258,20 @@ d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: bump verzet versie en beide SHAs" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v99.0.0" "$uit" "$rc"
 geopend "node: bump zet changed=true" "$d"
-vervangingen "node: drie vervangingen" "$uit" 3
+vervangingen "node: drie pins plus README bij een major-bump" "$uit" 4
+grep -qF "Node.js 99 LTS" "$d/ws/claude-sandbox/README.md" \
+  && ! grep -qF "Node.js ${node_major} LTS" "$d/ws/claude-sandbox/README.md"
+controle "node: major-bump werkt de README tools-tabel bij" $?
+
+d="$(nieuwe_map)"; stub "$d" curl "${node_stub//v99.0.0/v${node_major}.99.0}"
+uit="$(draai "$d" node-version)"; rc=$?
+toets "node: bump binnen dezelfde major" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v${node_major}.99.0" "$uit" "$rc"
+vervangingen "node: README ongemoeid binnen dezelfde major" "$uit" 3
+
+d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
+sed -i "s|Node.js ${node_major} LTS|Node.js ${node_major}|" "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" node-version)"; rc=$?
+toets "node: README zonder major-vermelding wordt rood" 1 "precies één 'Node.js ${node_major} LTS'" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 sed -i 's|      amd64) NODE_ARCH=x64;   SHA=|      amd64) NODE_ARCH=x64; SHA=|' "$d/ws/claude-sandbox/Dockerfile"
@@ -281,6 +306,64 @@ d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 sed -i '0,/      arm64) NODE_ARCH=arm64; SHA=[a-f0-9]*/s//      arm64) NODE_ARCH=arm64; SHA=/' "$d/ws/claude-sandbox/Dockerfile"
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: ontbrekende arm64-pin wordt rood" 1 "NODE_ARCH=arm64" "$uit" "$rc"
+
+# ── node: gedeelde libraries ──
+# De tarballs bevatten een nep-binary waarvan de inhoud de NEEDED-lijst is;
+# readelf is gestubd en leest die terug. Zo is de stap zonder echte ELF te toetsen.
+libs_geval() { # map oude-needed nieuwe-needed (regels gescheiden door \n)
+  local d="$1" v a inhoud
+  for v in "${node_nu}" v99.0.0; do
+    inhoud="$2"; [ "$v" = v99.0.0 ] && inhoud="$3"
+    for a in x64 arm64; do
+      mkdir -p "$d/bouw/node-$v-linux-$a/bin" "$d/tar"
+      printf '%b' "$inhoud" > "$d/bouw/node-$v-linux-$a/bin/node"
+      tar -cJf "$d/tar/node-$v-linux-$a.tar.xz" -C "$d/bouw" "node-$v-linux-$a"
+    done
+  done
+  stub "$d" curl "uit=; url=
+while [ \$# -gt 0 ]; do case \"\$1\" in -o) shift; uit=\"\$1\";; http*) url=\"\$1\";; esac; shift; done
+cp \"$d/tar/\${url##*/}\" \"\$uit\""
+  stub "$d" readelf 'while read -r s; do echo " 0x0000000000000001 (NEEDED)             Shared library: [$s]"; done < "$2"'
+}
+
+sha_van() { sha256sum "$1/tar/$2" | awk '{print $1}'; }
+
+libs_draai() { # map [afwijkende nieuwe x64-sha]
+  local d="$1"
+  mkdir -p "$d/tmp"
+  ( cd "$d/ws/claude-sandbox" \
+      && PATH="$d/bin:$PATH" GITHUB_OUTPUT="$d/uitvoer" TMPDIR="$d/tmp" \
+         CURRENT="${node_nu}" LATEST=v99.0.0 \
+         CURRENT_X64="$(sha_van "$d" "node-${node_nu}-linux-x64.tar.xz")" \
+         CURRENT_ARM64="$(sha_van "$d" "node-${node_nu}-linux-arm64.tar.xz")" \
+         LATEST_X64="${2:-$(sha_van "$d" node-v99.0.0-linux-x64.tar.xz)}" \
+         LATEST_ARM64="$(sha_van "$d" node-v99.0.0-linux-arm64.tar.xz)" \
+         bash "${werkmap}/node-libs.sh" ) 2>&1
+}
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\nlibatomic.so.1\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: nieuwe library wordt gemeld" 0 "libatomic.so.1" "$uit" "$rc"
+grep -qxF 'nieuwe_libs=`libatomic.so.1` (x64), `libatomic.so.1` (arm64)' "$d/uitvoer"
+controle "node-libs: melding noemt beide architecturen" $?
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: gelijke libraries" 0 "nieuwe libraries: geen" "$uit" "$rc"
+grep -qx 'nieuwe_libs=' "$d/uitvoer"
+controle "node-libs: gelijke libraries geven een lege melding" $?
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d" "$(printf "a%.0s" $(seq 64))")"; rc=$?
+toets "node-libs: afwijkende checksum wordt rood" 1 "did NOT match" "$uit" "$rc"
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: lijst zonder libc wordt rood" 1 "geen libc.so.6" "$uit" "$rc"
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\n' 'libc.so.6\nlib$(id).so\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: vijandige soname geweigerd" 1 "onverwachte soname" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'
 stub "$d" curl 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { shift; printf "<html>proxy</html>\n" > "$1"; }; shift; done'

@@ -239,7 +239,7 @@ De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
-- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
+- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs en bij een major-bump de tools-tabel bij, en meldt gedeelde libraries die de nieuwe binary extra nodig heeft)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
 - een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL, `RTK_VERSION` en de vermelding hierboven samen bij)
 - een nieuwere `npm`-release binnen dezelfde major beschikbaar is (PR werkt `NPM_VERSION` bij; ook het moment om de npm-suppressies in `.trivyignore.yaml` na te lopen)

@@ -185,18 +185,90 @@ jobs:
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NODE_VERSION=$current" "NODE_VERSION=$latest" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_amd64" "$sha_amd64" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_arm64" "$sha_arm64" 1
-          # README tools-tabel verwijst naar 'Node.js 24 LTS' — als de major-versie
-          # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
+          # De README tools-tabel noemt de major-versie ('Node.js 24 LTS'); bij een
+          # major-bump gaat die mee in dezelfde PR. vervang-pin.sh weigert spaties,
+          # dus hier een eigen telling vóór en na. Beide majors zijn hierboven al
+          # als cijfers gevalideerd.
           old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
           new_major=$(echo "$latest"  | sed -E 's/^v([0-9]+)\..*$/\1/')
+          if [ "$old_major" != "$new_major" ]; then
+            oud="Node.js ${old_major} LTS"
+            nieuw="Node.js ${new_major} LTS"
+            if [ "$(grep -oF -- "$oud" README.md | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één '$oud' in README.md" >&2
+              exit 1
+            fi
+            sed -i "s|Node\.js ${old_major} LTS|${nieuw}|" README.md
+            if grep -qF -- "$oud" README.md || [ "$(grep -oF -- "$nieuw" README.md | wc -l)" -ne 1 ]; then
+              echo "FOUT: README.md bevat na de vervanging niet precies één '$nieuw'" >&2
+              exit 1
+            fi
+            echo "README.md: $oud -> $nieuw (1×)"
+          fi
           {
             echo "changed=true"
             echo "amd64=$sha_amd64"
             echo "arm64=$sha_arm64"
+            echo "current_amd64=$current_amd64"
+            echo "current_arm64=$current_arm64"
             echo "major_change=$([ "$old_major" != "$new_major" ] && echo true || echo false)"
             echo "old_major=$old_major"
             echo "new_major=$new_major"
           } >> "$GITHUB_OUTPUT"
+
+      # Een nieuwe release kan een gedeelde library vereisen die niet in de
+      # slim-base zit; de build faalt dan pas op `node --version`. Deze stap
+      # vergelijkt de NEEDED-entries van de huidige en de nieuwe binary per
+      # architectuur en zet een nieuw vereiste library in de PR-beschrijving.
+      - name: Compare shared-library dependencies
+        id: libs
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.compare.outputs.current }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+          CURRENT_X64: ${{ steps.compare.outputs.current_amd64 }}
+          CURRENT_ARM64: ${{ steps.compare.outputs.current_arm64 }}
+          LATEST_X64: ${{ steps.compare.outputs.amd64 }}
+          LATEST_ARM64: ${{ steps.compare.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          needed() { # versie arch sha -> gesorteerde NEEDED-sonames op stdout
+            local v="$1" a="$2" sha="$3" t="${tmp}/node-$1-linux-$2.tar.xz"
+            curl -fsSL "https://nodejs.org/dist/${v}/node-${v}-linux-${a}.tar.xz" -o "$t"
+            echo "${sha}  ${t}" | sha256sum -c --quiet -
+            tar -xJf "$t" -C "$tmp" "node-${v}-linux-${a}/bin/node"
+            readelf -d "${tmp}/node-${v}-linux-${a}/bin/node" \
+              | sed -nE 's/.*\(NEEDED\).*\[(.+)\]$/\1/p' | sort -u
+          }
+          nieuwe_libs=""
+          for arch in x64 arm64; do
+            case "$arch" in
+              x64)   oud_sha="$CURRENT_X64";   nieuw_sha="$LATEST_X64" ;;
+              arm64) oud_sha="$CURRENT_ARM64"; nieuw_sha="$LATEST_ARM64" ;;
+            esac
+            needed "$CURRENT" "$arch" "$oud_sha" > "${tmp}/oud-${arch}.txt"
+            needed "$LATEST" "$arch" "$nieuw_sha" > "${tmp}/nieuw-${arch}.txt"
+            # Elke Node-binary linkt tegen libc; ontbreekt die, dan heeft het
+            # uitlezen gefaald en zou een lege lijst als "niets nieuws" lezen.
+            for lijst in "${tmp}/oud-${arch}.txt" "${tmp}/nieuw-${arch}.txt"; do
+              if ! grep -qx 'libc.so.6' "$lijst"; then
+                echo "FOUT: geen libc.so.6 in de NEEDED-lijst van $(basename "$lijst" .txt) (${arch})" >&2
+                exit 1
+              fi
+            done
+            while read -r soname; do
+              # De soname komt uit een gedownloade binary en belandt in de PR-tekst.
+              if ! [[ "$soname" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+                echo "FOUT: onverwachte soname '${soname}' in node ${LATEST} (${arch})" >&2
+                exit 1
+              fi
+              nieuwe_libs="${nieuwe_libs:+${nieuwe_libs}, }\`${soname}\` (${arch})"
+            done < <(comm -13 "${tmp}/oud-${arch}.txt" "${tmp}/nieuw-${arch}.txt")
+          done
+          echo "nieuwe libraries: ${nieuwe_libs:-geen}"
+          echo "nieuwe_libs=${nieuwe_libs}" >> "$GITHUB_OUTPUT"
+          rm -rf "$tmp"
 
       - name: Open auto-PR if Node.js LTS changed
         if: steps.compare.outputs.changed == 'true'
@@ -215,7 +287,9 @@ jobs:
             - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
             - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
 
-            ${{ steps.compare.outputs.major_change == 'true' && format('**Let op:** major-versie wijzigt van {0} naar {1}. Werk de README tools-tabel bij (`Node.js {0} LTS` → `Node.js {1} LTS`).', steps.compare.outputs.old_major, steps.compare.outputs.new_major) || '' }}
+            ${{ steps.compare.outputs.major_change == 'true' && format('**Let op:** major-versie wijzigt van {0} naar {1}. De README tools-tabel is meegenomen (`Node.js {0} LTS` → `Node.js {1} LTS`).', steps.compare.outputs.old_major, steps.compare.outputs.new_major) || '' }}
+
+            ${{ steps.libs.outputs.nieuwe_libs != '' && format('**Let op:** de nieuwe binary vereist gedeelde libraries die de huidige niet nodig heeft: {0}. Voeg het bijbehorende Debian-pakket toe aan de apt-laag van de Dockerfile en de README tools-tabel; zonder dat pakket faalt de build op `node --version`.', steps.libs.outputs.nieuwe_libs) || '' }}
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
