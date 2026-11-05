@@ -51,6 +51,7 @@ De image bevat de volgende tools:
 | Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
 | Systeem             | procps                                                                                                                                |
 | Runtimes            | Node.js 24 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv)                                                      |
+| Kubernetes          | kubectl 1.35, helm 4.3 (officiële release-binaries, SHA-pinned; alleen bij `INSTALL_K8S=true`, zie [Kubernetes-clusters](docs/opstarten-en-afsluiten.md#kubernetes-clusters-na-install_k8strue)) |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |

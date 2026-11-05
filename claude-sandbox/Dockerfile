@@ -393,6 +393,59 @@ RUN case "$INSTALL_SSHD" in \
 # er stil weer privésleutelmateriaal in de image te staan.
 RUN test ! -e /home/claude/.ssh-host
 
+# Optioneel: kubectl en helm voor Helm-charts en een cluster buiten de
+# container. Default uit. Let op: houd in sync: de tools-tabel in README.md, de
+# toelichting bij INSTALL_K8S in .env.sample, en in docs/opstarten-en-afsluiten.md
+# de tabel 'Optionele componenten' en de sectie 'Kubernetes-clusters'.
+#
+# Beide komen als officiële release-binary op versie plus SHA-256 per
+# architectuur. kubectl werkt met een API-server van één minor-versie lager of
+# hoger. De minor volgt dus de clusters, niet de nieuwste kubectl: 1.35 dekt
+# 1.34 tot en met 1.36. Gardener, waar Fundament op draait, ondersteunt voor
+# clusters 1.34 en 1.35 tot in 2027.
+#
+# De versiecontrole draait als nobody, zonder capabilities en met no_new_privs:
+# het is upstream-code, en de setuid-strip komt pas na deze laag. De tijdelijke
+# HOME vangt config en cache die de tools eventueel schrijven; wat nobody in
+# /tmp of /var/tmp achterlaat, zou in de image belanden.
+#
+# De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
+# een flip zou anders alle lagen hierboven opnieuw laten bouwen.
+ARG INSTALL_K8S=false
+RUN case "$INSTALL_K8S" in \
+      true) KUBECTL_VERSION=v1.35.10 && \
+            HELM_VERSION=v4.3.1 && \
+            ARCH=$(dpkg --print-architecture) && \
+            case "$ARCH" in \
+              amd64) KUBECTL_SHA=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327; \
+                     HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
+              arm64) KUBECTL_SHA=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5; \
+                     HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
+              *) echo "FOUT: kubectl en helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
+            curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /tmp/kubectl && \
+            echo "$KUBECTL_SHA  /tmp/kubectl" | sha256sum -c - && \
+            install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz && \
+            echo "$HELM_SHA  /tmp/helm.tar.gz" | sha256sum -c - && \
+            mkdir /tmp/helm && \
+            tar -xzf /tmp/helm.tar.gz -C /tmp/helm "linux-${ARCH}/helm" && \
+            install -m 0755 "/tmp/helm/linux-${ARCH}/helm" /usr/local/bin/helm && \
+            rm -rf /tmp/kubectl /tmp/helm.tar.gz /tmp/helm && \
+            mkdir /tmp/k8s-home && chown 65534:65534 /tmp/k8s-home && \
+            als_nobody() { HOME=/tmp/k8s-home setpriv --reuid=65534 --regid=65534 --clear-groups \
+                             --no-new-privs --inh-caps=-all --bounding-set=-all "$@"; } && \
+            actual=$(als_nobody kubectl version --client -o json | jq -r .clientVersion.gitVersion) && \
+            { [[ "$actual" == "${KUBECTL_VERSION}" ]] || { echo "FOUT: kubectl-versie '$actual' != verwacht '${KUBECTL_VERSION}'" >&2; exit 1; }; } && \
+            actual=$(als_nobody helm version --template '{{.Version}}') && \
+            { [[ "$actual" == "${HELM_VERSION}" ]] || { echo "FOUT: helm-versie '$actual' != verwacht '${HELM_VERSION}'" >&2; exit 1; }; } && \
+            rm -rf /tmp/k8s-home && \
+            left=$(find /tmp /var/tmp -mindepth 1 -user 65534 -print -quit) && \
+            { [ -z "$left" ] || { echo "FOUT: kubectl of helm liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
+      false) echo "INFO: INSTALL_K8S=false — kubectl en helm overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_K8S='$INSTALL_K8S' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
 # heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
 # kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.
