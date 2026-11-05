@@ -11,7 +11,7 @@ fixtures de pins uit de Dockerfile lezen.
 
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
-| 1 | `feat/go-functl` | `INSTALL_GO`: Go-toolchain en `functl`, firewall-domeinen, documentatie | Refs #204 |
+| 1 | `feat/go-functl` | `INSTALL_GO`: Go-toolchain en `functl`, documentatie inclusief de benodigde Go-domeinen | Refs #204 |
 | 2 | `ci/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures; CI-build met `INSTALL_GO=true` | Closes #204 |
 | 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `helm` en `kubectl`, kubeconfig-mount, documentatie over koppelen en rechten | Refs #205 |
 | 4 | `ci/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
@@ -26,20 +26,20 @@ fixtures de pins uit de Dockerfile lezen.
 **functl vanaf de bron op een gepinde pseudo-versie.** Upstream publiceert alleen de rolling
 pre-release `functl-latest`, waarvan de assets bij elke push naar master vervangen worden. Een
 SHA-pin op die assets breekt de image-build bij elke upstream-push, tot de wekelijkse job een PR
-opent. `go install …/functl/cmd/functl@<pseudo-versie>` legt de commit vast. De Dockerfile pint
-daarnaast de h1-hash van de module en controleert die in de buildinfo (`go version -m`). Die
-hash dekt ook de `go.sum`, en daarmee alle dependencies. De versie-stempel
+opent. De pseudo-versie legt de commit vast. De Dockerfile pint daarnaast de h1-hash van de
+module en controleert die na `go mod download`. `functl` wordt daarna als hoofdmodule gebouwd met
+`-mod=readonly`, zodat Go elke dependency toetst aan de `go.sum` van Fundament, die onder de h1
+valt. `go install pkg@versie` leest die `go.sum` niet. De versie-stempel
 (`-X …/functl/pkg/cli.version`) is de pseudo-versie, zodat `functl version` direct als
-`--sdk-version` bruikbaar is. De versiecontrole draait als `nobody`: als root zou upstream-code
-in die laag bestanden kunnen wijzigen die bij elke start als root draaien.
+`--sdk-version` bruikbaar is. De versiecontrole draait als `nobody`, zonder capabilities en met
+`no_new_privs`, omdat de setuid-strip pas na deze laag komt.
 
 **Go via de officiële tarball** van `go.dev/dl`, versie plus SHA-256 per architectuur, net als
 Node.js. De versie volgt de `go`-regel in de `go.mod` van Fundament en het `golang:`-image in de
 plug-in-scaffold (nu beide 1.27.3).
 
-**Symlinks in `/usr/local/bin`** voor `go` en `gofmt`. De root-fase van de entrypoint en
-non-interactieve SSH-sessies hebben een eigen PATH; via `/usr/local/bin` vinden ze Go zonder extra
-PATH-regels.
+**Symlinks in `/usr/local/bin`** voor `go` en `gofmt`. Een non-interactieve SSH-sessie erft de
+Docker-`ENV` niet; via `/usr/local/bin` vindt hij Go zonder extra PATH-regels.
 
 **`GOTOOLCHAIN=local` in `$GOROOT/go.env`**, niet als `ENV`: een SSH-sessie erft de Docker-`ENV`
 niet. Zonder deze waarde haalt Go bij een hogere `go`-regel in een `go.mod` stil een andere
