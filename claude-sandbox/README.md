@@ -19,6 +19,7 @@ Daarna kun je claude starten met `claude-danger`.
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
 - [Maven en Testcontainers via podman](podman/README.md) — Testcontainers draait ín de sandbox, via rootless podman. Er is geen host-side agent meer. Niet elk platform is ondersteund; zie de platformtabel daar.
+- [Kubernetes (kubectl en helm)](docs/kubernetes.md) — Helm-charts controleren en uitrollen naar een cluster buiten de container (`INSTALL_K8S`), met wat Claude met clustertoegang kan.
 - [Firewall](#firewall) — netwerk-beperkingen van de container.
 
 > **LET OP**: Bij wijziging in environment variabelen moet ook het volume verwijderd en opnieuw aangemaakt worden. Dit

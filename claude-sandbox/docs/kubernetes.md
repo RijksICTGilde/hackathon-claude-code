@@ -2,7 +2,7 @@
 
 ## Wat je krijgt en wat niet
 
-**Geef je de sandbox toegang tot een cluster, dan kan Claude alles wat die toegangsgegevens toestaan**, ook buiten de sandbox: het token in de kubeconfig is te kopiëren. Met clustertoegang beperkt `OPEN_HTTPS=false` ook niet meer wat Claude bereikt. Pods draaien op het netwerk van het cluster, en via port-forward, een Ingress of de naam van een container-image loopt verkeer buiten de firewall van de sandbox om. De rechten hieronder verkleinen dat; ze sluiten het niet uit.
+**Geef je de sandbox toegang tot een cluster, dan kan Claude alles wat die toegangsgegevens toestaan**, ook buiten de sandbox: het token in de kubeconfig is te kopiëren. Met clustertoegang beperkt `OPEN_HTTPS=false` ook niet meer wat Claude bereikt. Pods draaien op het netwerk van het cluster, en via port-forward, een Ingress of de naam van een container-image loopt verkeer buiten de firewall van de sandbox om. De rechten hieronder verkleinen dat; ze sluiten het niet uit. Bij Fundament geldt het token voor je hele Fundament-account, en kan Claude er een blijvende API-sleutel mee maken: gebruik daar altijd een [apart account](#fundament).
 
 Met `INSTALL_K8S=true` bevat de image `kubectl` (1.35) en `helm` (4.3). Daarmee schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
 
@@ -12,7 +12,9 @@ Wat op de host gebeurt, staat erbij. De rest draai je in de sandbox.
 
 ### De image bouwen (op de host)
 
-Zet in `.env` de regel `INSTALL_K8S=true`, en bouw en start de sandbox vanuit `claude-sandbox/`:
+Nog niet opgezet? Volg dan eerst [Opstarten, configureren en afsluiten](opstarten-en-afsluiten.md). Op de host heb je nodig: [`kubectl`](https://kubernetes.io/docs/tasks/tools/), voor een lokaal cluster [`k3d`](https://k3d.io/stable/#installation), en voor Fundament [`functl`](https://github.com/fundament-oss/fundament/blob/master/docs/user/functl.md#install) en [`jq`](https://jqlang.org/download/).
+
+Zet in `.env` de regel `INSTALL_K8S=true`, en bouw en start de sandbox vanuit `claude-sandbox/`. Gebruik je een podman-override, zet die er met een extra `-f` bij:
 
 ```bash
 docker compose up --build -d
@@ -34,7 +36,7 @@ Gebruikt een chart andere charts (`dependencies` in `Chart.yaml`), dan haalt `he
 
 ### Een cluster kiezen
 
-**k3d op Docker (voorkeur).** Een testcluster op je eigen machine, op het netwerk van de sandbox. Dit werkt met `OPEN_HTTPS=false`. Start eerst de sandbox ([De image bouwen](#de-image-bouwen-op-de-host)), nog zonder de kubeconfig-override; compose maakt daarbij het netwerk aan. De naam van dat netwerk toont `docker inspect claude-sandbox -f '{{range $n, $_ := .NetworkSettings.Networks}}{{println $n}}{{end}}'`, meestal `claude-sandbox_default`. Maak dan op de host het cluster:
+**k3d op Docker (voorkeur).** Een testcluster op je eigen machine, op het netwerk van de sandbox. Dit werkt met `OPEN_HTTPS=false`. Start eerst de sandbox ([De image bouwen](#de-image-bouwen-op-de-host)), nog zonder de kubeconfig-override; compose maakt daarbij het netwerk aan. De naam van dat netwerk toont `docker inspect claude-sandbox -f '{{range $n, $_ := .NetworkSettings.Networks}}{{println $n}}{{end}}'`, meestal `claude-sandbox_default`. Wijkt de naam af, vervang dan `claude-sandbox_default` in `--network`. Maak dan op de host het cluster:
 
 ```bash
 k3d cluster create fieldlab \
@@ -61,11 +63,12 @@ De nodes van k3d zijn containers met de rechten van je container-runtime: bij Do
 
 ### Rechten zetten (op de host, als beheerder)
 
-Geef de sandbox een eigen ServiceAccount in één namespace, met een eigen rol. De ingebouwde rol `edit` is te ruim: daarmee kan Claude zelf tokens uitgeven die langer gelden. Draai dit op de host, met de kubeconfig van de clusterbeheerder (die van k3d of van je cloudprovider). Kies in de eerste regel de naam van de namespace.
+Geef de sandbox een eigen ServiceAccount in één namespace, met een eigen rol. De ingebouwde rol `edit` is te ruim: daarmee kan Claude zelf tokens uitgeven die langer gelden. Draai dit op de host, met de kubeconfig van de clusterbeheerder (die van k3d of van je cloudprovider). Kies in de eerste regel de naam van een nieuwe namespace.
 
 ```bash
 NS=team-a
-kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - &&
+{ [ "$(kubectl get namespace "$NS" -o jsonpath='{.metadata.labels.claude-sandbox}' 2>/dev/null)" = true ] ||
+  kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl label --local -f - claude-sandbox=true -o yaml | kubectl create -f -; } &&
 kubectl label --overwrite namespace "$NS" pod-security.kubernetes.io/enforce=restricted &&
 kubectl -n "$NS" create serviceaccount sandbox --dry-run=client -o yaml | kubectl apply -f - &&
 kubectl -n "$NS" apply -f - <<'EOF' &&
@@ -162,12 +165,12 @@ EOF
 kubectl -n "$NS" create rolebinding sandbox --role=sandbox --serviceaccount="${NS}:sandbox" --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Het blok stopt bij de eerste fout, en geeft de ServiceAccount pas rechten als al het andere staat. Opnieuw draaien kan altijd: het zet alles terug zoals hierboven.
+Het blok stopt bij de eerste fout, en geeft de ServiceAccount pas rechten als al het andere staat. Het maakt de namespace aan met het label `claude-sandbox=true`, en stopt bij een bestaande namespace zonder dat label (ook `default`): zo neem je nooit een bestaande namespace van een ander over, en verwijdert het opruimblok er ook geen. Claude kan dat label niet zetten. Opnieuw draaien kan altijd: het zet de objecten uit dit blok terug; wat Claude aanmaakte blijft staan, zie [Opruimen](#opruimen-op-de-host).
 
 #### Wat het rechtenblok doet
 
-- **De NetworkPolicy** laat pods in de namespace alleen elkaar bereiken, plus de DNS van het cluster. Naar buiten, naar de API-server en naar andere namespaces kan een pod dan niet. Van buiten de namespace komt er niets binnen, behalve via `kubectl port-forward` vanuit de sandbox. Zonder DNS vinden pods elkaar niet op naam; heeft je chart dat niet nodig, laat het tweede `to`-blok dan weg. Via DNS kan een pod nog wel namen buiten het cluster opvragen: een smal kanaal naar buiten dat deze policy niet sluit. Een NetworkPolicy werkt alleen als de netwerk-plug-in van het cluster hem afdwingt. k3s, en dus k3d, doet dat standaard; vraag het bij een ander cluster na bij de beheerder. Draait DNS daar niet als `k8s-app: kube-dns` in `kube-system` op poort 53, pas die regel dan aan.
-- **De ResourceQuota** begrenst hoeveel pods en andere objecten Claude aanmaakt, en hoeveel rekenkracht en opslag die gebruiken. Ze verbiedt Services van het type `LoadBalancer` en `NodePort`: die maken een pod bereikbaar van buiten het cluster.
+- **De NetworkPolicy** laat pods in de namespace alleen elkaar bereiken, plus de DNS van het cluster. Naar buiten en naar andere namespaces kan een pod dan niet. Verkeer tussen een pod en de node waarop hij draait, houdt een NetworkPolicy niet tegen; draait de API-server op die node, zoals bij k3d, dan kan een pod hem daarlangs mogelijk toch bereiken. Van buiten de namespace komt er niets binnen, behalve via `kubectl port-forward` vanuit de sandbox. Zonder DNS vinden pods elkaar niet op naam; heeft je chart dat niet nodig, laat het tweede `to`-blok dan weg. Via DNS kan een pod nog wel namen buiten het cluster opvragen: een smal kanaal naar buiten dat deze policy niet sluit. Een NetworkPolicy werkt alleen als de netwerk-plug-in van het cluster hem afdwingt. k3s, en dus k3d, doet dat standaard; vraag het bij een ander cluster na bij de beheerder. Draait DNS daar niet als `k8s-app: kube-dns` in `kube-system` op poort 53, pas die regel dan aan.
+- **De ResourceQuota** begrenst hoeveel pods en andere objecten Claude aanmaakt, en hoeveel rekenkracht en opslag die gebruiken. Bij k3d (opslag via `local-path`) begrenst ze bij blijvende opslag wel het aantal PVC's, maar niet de schijfruimte: `local-path` houdt de gevraagde grootte niet aan. Ze verbiedt Services van het type `LoadBalancer` en `NodePort`: die maken een pod bereikbaar van buiten het cluster.
 - **Services met `externalIPs` houdt de quota niet tegen.** Met zo'n Service kan Claude verkeer binnen het cluster naar een willekeurig adres omleiden naar een eigen pod ([CVE-2020-8554](https://github.com/kubernetes/kubernetes/issues/97076)). De k3d-commando's op deze pagina zetten daarom `DenyServiceExternalIPs` aan. Vraag bij een ander cluster de beheerder of die admission-plugin aanstaat, of een ValidatingAdmissionPolicy die `externalIPs` weigert.
 - **De LimitRange** vult per container de `resources` aan die hij zelf niet noemt: een limiet van 1 CPU, 1Gi geheugen en 1Gi tijdelijke opslag, en een request van 100m CPU, 128Mi geheugen en 256Mi opslag. Zonder die waarden weigert de quota de pod. Noemt een container alleen een request, dan krijgt hij de standaardlimiet erbij; vraagt hij meer dan die limiet, dan weigert het cluster de pod. `helm install` slaagt dan wel, maar er komen geen pods; de reden staat alleen in `kubectl get events`. Zet in de chart dan ook `limits`.
 - **De rol `sandbox`** mag in deze namespace workloads, Services, ConfigMaps, volumes en ServiceAccounts beheren, logs en events lezen, en port-forwarden. Dat is genoeg voor de meeste charts.
@@ -211,16 +214,21 @@ Werk je met `OPEN_HTTPS=false`, zet dan de host uit de regel `server:` van dat b
 
 ```bash
 unset CLUSTER NS
-CLUSTER=<cluster-id>
-NS=<namespace van je project>
+CLUSTER='<cluster-id>'
+NS='<namespace van je project>'
 F=$HOME/.kube/sandbox/config
 HOST_SERVER=$(kubectl --kubeconfig ~/.kube/fundament.yaml config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 CA=
 SERVER=$HOST_SERVER
-token_ophalen() { [ -n "$CLUSTER" ] && functl cluster token "$CLUSTER" | jq -er '.status.token | select(type == "string" and length > 0)'; }
+token_ophalen() {
+  case "$CLUSTER" in
+    ''|*[^0-9a-fA-F-]*) echo "FOUT: CLUSTER ($CLUSTER) is geen cluster-id; vul hem in" >&2; return 1 ;;
+  esac
+  functl cluster token "$CLUSTER" | jq -er '.status.token | select(type == "string" and length > 0)'
+}
 ```
 
-`CA=` blijft leeg: de kubeconfig van Fundament noemt geen CA, en `kubectl` gebruikt dan de CA's van het systeem.
+`CA=` blijft leeg: de kubeconfig van Fundament noemt geen CA, en `kubectl` gebruikt dan de CA's van het systeem. Vul je een placeholder niet in, dan stopt het schrijfblok hieronder met `FOUT`.
 
 Schrijf dan de kubeconfig. Dit blok is voor elke route hetzelfde:
 
@@ -231,10 +239,16 @@ Schrijf dan de kubeconfig. Dit blok is voor elke route hetzelfde:
     echo "FOUT: F, NS, SERVER of HOST_SERVER is leeg" >&2
     exit 1
   fi
-  case "$SERVER" in
-    *://127.*|*://localhost|*://localhost[:/]*|*://0.0.0.0*|*://\[::1\]*)
+  case "$NS" in
+    *[^a-z0-9-]*) echo "FOUT: NS ($NS) is geen namespace-naam; vul hem in" >&2; exit 1 ;;
+  esac
+  adres=$(printf '%s' "$SERVER" | tr '[:upper:]' '[:lower:]')
+  case "$adres" in
+    *://127.*|*://localhost|*://localhost[:/.]*|*://0|*://0[:/]*|*://0.0.0.0*|*://\[::1\]*|*://\[::\]*|*://\[::ffff:127.*|*://\[0:0:0:0:0:0:0:1\]*)
       echo "FOUT: SERVER ($SERVER) wijst in de sandbox naar de container zelf; zet het adres waarop de sandbox het cluster bereikt" >&2
       exit 1 ;;
+    *://*) ;;
+    *) echo "FOUT: SERVER ($SERVER) is geen URL; begin met https://" >&2; exit 1 ;;
   esac
   if [ -s "$F" ] && [ "$(kubectl --kubeconfig "$F" config view -o jsonpath='{.users[*].name}')" != sandbox ]; then
     echo "FOUT: $F bevat andere toegangsgegevens dan 'sandbox'; kies een ander pad" >&2
@@ -249,7 +263,7 @@ Schrijf dan de kubeconfig. Dit blok is voor elke route hetzelfde:
   TOKEN=$(token_ophalen) && [ -n "$TOKEN" ] || { echo "FOUT: geen token gekregen" >&2; exit 1; }
   tmp=$(mktemp "$dir/.config.XXXXXX") || exit 1
   trap 'rm -f "$tmp"' EXIT
-  cat > "$tmp" <<EOF || exit 1
+  cat >| "$tmp" <<EOF || exit 1
 apiVersion: v1
 kind: Config
 clusters:
@@ -271,7 +285,7 @@ current-context: sandbox
 EOF
   naam=${SERVER#*://}; naam=${naam%%/*}; naam=${naam%:*}
   kubectl --kubeconfig "$tmp" --server "$HOST_SERVER" --tls-server-name "$naam" auth whoami || exit 1
-  cat "$tmp" > "$F" && chmod 644 "$F"
+  cat "$tmp" >| "$F" && chmod 644 "$F"
 )
 ```
 
@@ -294,7 +308,12 @@ EOF
    kubectl get pods
    kubectl get events
    ```
-   Komen er geen pods, dan staat de reden in de events. De voorbeeldchart van `helm create` haalt `restricted` niet; zie [Pod Security](#pod-security). Ook een request boven de limiet van de [LimitRange](#wat-het-rechtenblok-doet) houdt pods tegen.
+   Bij de voorbeeldchart is "geen pods" hier het verwachte resultaat: hij haalt `restricted` niet, en de events tonen de weigering. Zet dan op de host de namespace op `baseline` (zie [Pod Security](#pod-security)), en start in de sandbox de pods opnieuw:
+   ```bash
+   kubectl rollout restart deployment/demo
+   kubectl get pods
+   ```
+   Komen er bij een eigen chart geen pods, dan staat de reden ook in de events. Ook een request boven de limiet van de [LimitRange](#wat-het-rechtenblok-doet) houdt pods tegen.
 
 Het bestand staat in de container alleen-lezen op `/run/kubeconfig/config`, buiten de projectmap en buiten `claude-home`; start je zonder de override, dan is het weg. `KUBECONFIG` en `HELM_DRIVER` staan in de omgeving van de container, maar niet in een SSH-sessie (Kepler); zet ze daar zelf met `export`. Bij Fundament kies je met `-n <naam>` een andere namespace van je project; de ServiceAccount van de andere routes heeft alleen rechten in zijn eigen namespace.
 
@@ -305,7 +324,12 @@ Niet bij Fundament: `$NS` is daar de namespace van je project. Zie daarvoor [na 
 Bij k3d of een cluster op afstand: ruim na elke sessie op, met de kubeconfig van de beheerder en dezelfde `NS` als in het rechtenblok:
 
 ```bash
-kubectl delete namespace "$NS"
+if [ "$(kubectl get namespace "$NS" -o jsonpath='{.metadata.labels.claude-sandbox}')" = true ]; then
+  kubectl delete namespace "$NS"
+else
+  echo "FOUT: namespace $NS bestaat niet of heeft geen label claude-sandbox=true; niet verwijderd" >&2
+  false
+fi
 ```
 
 Dat is de enige betrouwbare manier. Een token van `kubectl create token` verloopt, maar dat begrenst de toegang niet: Claude kan zelf ServiceAccounts aanmaken, en pods starten die een token krijgen dat lang geldig blijft. Pas met de namespace verdwijnen al die ServiceAccounts, pods en tokens.
@@ -329,7 +353,6 @@ k3d cluster create fieldlab \
 
 - `--api-port 443` zet de API-server op poort 443 van je machine, ook bereikbaar vanaf je netwerk. Zonder toegangsgegevens kom je er niet in, maar zet het cluster stop als je het niet gebruikt (`k3d cluster stop fieldlab`).
 - Rootless podman mag standaard geen poort onder 1024 openen. Verlaag die grens op de host vóór `k3d cluster create` en vóór elke `k3d cluster start` met `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`, en zet hem na afloop terug op de standaardwaarde: `sudo sysctl net.ipv4.ip_unprivileged_port_start=1024`.
-- Zet bij het maken van de kubeconfig, na het blok met de variabelen, `SERVER=https://host.containers.internal:443`.
 - De nodes zijn hier containers met de rechten van jouw gebruiker.
 
 ### Netwerk en ALLOWED_DOMAINS

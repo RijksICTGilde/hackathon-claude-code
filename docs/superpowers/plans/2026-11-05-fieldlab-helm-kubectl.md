@@ -39,7 +39,7 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
 
 De documentatie staat in `claude-sandbox/docs/kubernetes.md`: wat je krijgt en wat niet (de
 risico's eerst, dan wat er geïnstalleerd is), een hoofdpad voor een deelnemer (image bouwen,
-charts controleren, cluster kiezen, rechten, kubeconfig, gebruiken, opruimen) en naslag. `opstarten-en-afsluiten.md` verwijst er onder 'Na installatie' naar.
+charts controleren, cluster kiezen, rechten, kubeconfig, gebruiken, opruimen) en naslag. `opstarten-en-afsluiten.md` verwijst er onder 'Na installatie' naar, de README onder 'Verder lezen'.
 
 ## Ontwerpkeuzes
 
@@ -172,9 +172,17 @@ ServiceAccount geen rechten in een half afgeschermde namespace. Een heredoc midd
 (`<<'EOF' &&`) werkt geplakt in bash en zsh. Een nieuwe run zet een `baseline`-terugval weer op
 `restricted`; de documentatie zegt dat.
 
+De namespace krijgt bij het aanmaken het label `claude-sandbox=true` (`kubectl create`, niet
+`apply`), en het blok stopt bij een bestaande namespace zonder dat label, ook `default`. Anders zou
+het een namespace van een ander overnemen: de ServiceAccount `sandbox` kan daar een pod starten
+onder een bestaande ServiceAccount met meer rechten, en het opruimblok zou de namespace
+verwijderen. De Role mag de namespace niet wijzigen, dus Claude kan het label niet zetten.
+
 **Opruimen: de namespace verwijderen.** Het token is geen grens: Claude kan eigen
 ServiceAccounts aanmaken en pods met langlevende projected tokens starten. Alleen
-`kubectl delete namespace` ruimt dat allemaal op; de documentatie noemt geen andere route.
+`kubectl delete namespace` ruimt dat allemaal op; de documentatie noemt geen andere route. Het
+opruimblok verwijdert alleen een namespace met het label `claude-sandbox=true`, en eindigt anders
+met `FOUT` en een exitcode ongelijk aan 0 (`false`, geen `exit`: het blok wordt geplakt).
 
 **Pod Security `restricted`**, met `baseline` + `warn=restricted` als terugval, en voor k3d
 `seccomp-default=true` op de kubelet. Beschreven als risicoverkleining: bij k3d zijn de nodes
@@ -188,10 +196,13 @@ sandbox het bereikt), `CA` en een functie `token_ophalen`. Bij k3d op Docker en 
 verschilt `SERVER` van `HOST_SERVER`, ook bij vernieuwen. De CA komt uit `--flatten`, zodat een
 CA-bestandspad in de beheer-kubeconfig ook werkt. Het schrijfblok is voor alle routes gelijk:
 
-- het controleert `F`, `NS`, `SERVER` en `HOST_SERVER` op leeg, weigert een `SERVER` die in de
-  sandbox naar de container zelf wijst (`127.*`, `localhost`, `0.0.0.0`, `[::1]`: de vergeten
-  k3d-regel), en weigert als `F` al andere users dan `sandbox` bevat. Elke fout eindigt met
-  `exit 1` in de subshell: het blok eindigt met een exitcode ongelijk aan 0, zonder een
+- het controleert `F`, `NS`, `SERVER` en `HOST_SERVER` op leeg, weigert een `NS` met andere tekens
+  dan `a-z`, `0-9` en `-` (een niet ingevulde placeholder), weigert een `SERVER` zonder `://` of
+  die in de sandbox naar de container zelf wijst (na omzetten naar kleine letters: `127.*`,
+  `localhost`, `localhost.`, `0`, `0.0.0.0`, `[::1]`, `[::]`, `[::ffff:127.…]`,
+  `[0:0:0:0:0:0:0:1]`: de vergeten k3d-regel), en weigert als `F` al andere users dan `sandbox`
+  bevat. De tekenklasse is `[^…]`, niet `[!…]`: geplakt in zsh geeft `!` `event not found`. Elke
+  fout eindigt met `exit 1` in de subshell: het blok eindigt met een exitcode ongelijk aan 0, zonder een
   interactieve shell te sluiten.
 - de map krijgt alleen een modus als het blok hem zelf maakt (`[ -d ] || mkdir -m 700 -p`); een
   bestaande map die groep of anderen toegang geeft is een fout (`ls -ld` tegen `d???------*`,
@@ -203,11 +214,12 @@ CA-bestandspad in de beheer-kubeconfig ook werkt. Het schrijfblok is voor alle r
 - de controle is `kubectl --kubeconfig "$tmp" --server "$HOST_SERVER" --tls-server-name <host uit
   SERVER> auth whoami`: ze toont het account dat het cluster bij het token ziet, en faalt als de
   naam waarmee de sandbox verbindt niet in het certificaat staat. Pas na een geslaagde controle
-  zet `cat "$tmp" > "$F"` het bestand op zijn plek, daarna `chmod 644`. Bij een mislukte controle
+  zet `cat "$tmp" >| "$F"` het bestand op zijn plek, daarna `chmod 644`. Bij een mislukte controle
   blijft de oude kubeconfig staan.
 
-`cat >` op `F` houdt de inode gelijk, zodat een draaiende container een vernieuwd token meteen
-ziet; een nieuw bestand (ook `mv` van het tijdelijke) ziet een bind-mount pas na
+Beide schrijfacties gebruiken `>|`, zodat ze ook werken met `noclobber` (het tijdelijke bestand
+bestaat al door `mktemp`). `cat >|` op `F` houdt de inode gelijk, zodat een draaiende container
+een vernieuwd token meteen ziet; een nieuw bestand (ook `mv` van het tijdelijke) ziet een bind-mount pas na
 `--force-recreate` (gemeten). bash en zsh bewaren een heredoc mogelijk kort in een tijdelijk
 bestand met mode 600.
 
@@ -219,21 +231,28 @@ modifier (`bad substitution`); de rolebinding gebruikt daarom `"${NS}:sandbox"`.
 (toont het cluster-id) en `functl cluster kubeconfig <id> > ~/.kube/fundament.yaml`
 (`functl/pkg/cli/cluster_kubeconfig.go` print de kubeconfig op stdout). De host uit `server:`
 moet bij `OPEN_HTTPS=false` in `ALLOWED_DOMAINS`. Het variabelenblok begint met
-`unset CLUSTER NS`: een niet ingevulde placeholder (`CLUSTER=<cluster-id>`) is in bash en zsh een
-syntaxfout, en zonder `unset` bleef dan een waarde uit een eerdere run staan. `token_ophalen` roept
+`unset CLUSTER NS`, en de placeholders staan tussen enkele aanhalingstekens
+(`CLUSTER='<cluster-id>'`): zonder quotes is `<` een redirect en het blok een syntaxfout, en zsh
+met bracketed paste verwerpt dan het hele geplakte blok, zodat een waarde uit een eerdere run
+blijft staan. Een niet ingevulde placeholder vangt het schrijfblok (`NS`) of `token_ophalen`
+(`CLUSTER`). `functl cluster token` gebruikt het cluster-id niet (`cluster_token.go`: "accepted for
+compatibility"), dus `token_ophalen` controleert zelf dat `CLUSTER` een id is: alleen hexadecimale
+tekens en `-`, want de API valideert cluster-id's als UUID (`buf.validate` `uuid: true` in
+`organization-api/pkg/proto/v1/cluster.proto`). Daarna roept het
 `functl cluster token "$CLUSTER" | jq -er '.status.token | select(type == "string" and length > 0)'`
-aan, alleen als `CLUSTER` gezet is. `CA` is expliciet leeg, zodat een CA uit een eerdere run in
-dezelfde shell niet meekomt. Omdat het token een blijvende API-sleutel kan aanmaken (zie
-Context), adviseert de documentatie nooit een token van het eigen account, maar een apart account
-dat geen organisatiebeheerder is en alleen de nodige projectrol heeft (viewer het veiligst), en na
+aan. `CA` is expliciet leeg, zodat een CA uit een eerdere run in dezelfde shell niet meekomt.
+Omdat het token een blijvende API-sleutel kan aanmaken (zie Context), adviseert de documentatie
+nooit een token van het eigen account, maar een apart account dat geen organisatiebeheerder is en alleen de nodige projectrol heeft (viewer het veiligst), en na
 de sessie `functl apikey list` en `functl project member list`. Als projectbeheerder mag de
 Secret-driver van helm; dan kan Claude ook NetworkPolicies wijzigen, en houdt de afscherming uit
 het rechtenblok hem niet tegen.
 
 ## Verificatie
 
-- Testimage met de K8S-laag letterlijk uit de Dockerfile (Debian-basis, podman, amd64), na de
-  laatste Dockerfile-wijziging (alleen het sync-comment) opnieuw gebouwd:
+- Testimage met de K8S-laag letterlijk uit de Dockerfile (Debian-basis, podman, amd64). De
+  RUN-instructie in de image (`podman image history`) is gelijk aan die in de huidige Dockerfile;
+  de Dockerfile-wijzigingen daarna (sync-comment, `TODO(#205)`) raken alleen comments, en de
+  image is daarna niet opnieuw gebouwd:
   - `true`: `kubectl` v1.35.10 en `helm` v4.3.1 in `/usr/local/bin`; `/tmp`, `/var/tmp` schoon.
   - `false`: geen `kubectl` of `helm`.
   - Een ongeldige waarde (`ja`) laat de build falen.
@@ -248,16 +267,20 @@ het rechtenblok hem niet tegen.
 - Alle bash-blokken uit `docs/kubernetes.md` behalve `k3d cluster create` en `docker compose up`
   letterlijk geëxtraheerd en geplakt in `bash -i` en in `zsh -i` (zonder `interactivecomments`,
   gecontroleerd), als niet-root, tegen etcd plus kube-apiserver en kube-controller-manager
-  v1.35.10 (RBAC, PodSecurity, ResourceQuota, LimitRanger; geen scheduler of kubelet): 267
+  v1.35.10 (RBAC, PodSecurity, ResourceQuota, LimitRanger; geen scheduler of kubelet): 373
   controles groen, per shell een eigen namespace. De extractie faalt op `#` in een shellblok, en
   op een k3d-commando zonder `DenyServiceExternalIPs`. De API-server heet in de proef
   `api.proef.test` (via `/etc/hosts` op 127.0.0.1), met `k3d-fieldlab-server-0` in het
   certificaat.
-  - Rechtenblok als cluster-admin: twee runs na elkaar rc 0; Role, NetworkPolicy (Ingress en
-    Egress, DNS op 53), ResourceQuota (met aantallen en `ephemeral-storage`), LimitRange en
-    RoleBinding aanwezig; quota-status door de controller-manager gezet. Als namespace-admin
-    (ClusterRole `admin` in één namespace): rc ongelijk aan 0 bij de eerste stap, geen
-    RoleBinding. Na de Pod Security-terugval zet een nieuwe run `restricted` terug, rc 0.
+  - Rechtenblok als cluster-admin: twee runs na elkaar rc 0; namespace met label
+    `claude-sandbox=true`; Role, NetworkPolicy (Ingress en Egress, DNS op 53), ResourceQuota (met
+    aantallen en `ephemeral-storage`), LimitRange en RoleBinding aanwezig; quota-status door de
+    controller-manager gezet. Een bestaande namespace zonder label, met een ServiceAccount die
+    `cluster-admin` heeft: rc ongelijk aan 0 (`AlreadyExists`), geen ServiceAccount, RoleBinding
+    of NetworkPolicy `sandbox`, labels ongemoeid. `NS=default`: rc ongelijk aan 0, niets gezet.
+    Als namespace-admin (ClusterRole `admin` in één namespace): rc ongelijk aan 0 bij de eerste
+    stap, geen RoleBinding. Na de Pod Security-terugval zet een nieuwe run `restricted` terug,
+    rc 0.
   - `kubectl auth can-i` als de ServiceAccount: wel workloads, pods, services, ConfigMaps,
     ServiceAccounts, logs, events, port-forward, jobs, PDB's; niet Secrets (get/list/create),
     `serviceaccounts/token`, `impersonate` (users en serviceaccounts), `exec`, `attach`,
@@ -275,7 +298,9 @@ het rechtenblok hem niet tegen.
   - Charts- en gebruiken-blok als sandbox: `helm create/lint/template`; `helm upgrade --install`
     twee keer (revisie 2) met `HELM_DRIVER=configmap`, `kubectl get events` toont de
     Pod Security-weigering van de voorbeeldchart, er komen geen pods; de Secret-driver wordt
-    geweigerd; `helm uninstall` slaagt.
+    geweigerd. Na `baseline`: `kubectl auth can-i patch deployments.apps` is `yes`, het
+    herstart-blok als sandbox geeft rc 0 en zet `restartedAt`, en er komen pods (zonder kubelet
+    alleen als object). `helm uninstall` slaagt.
   - Kubeconfig-blok: vers (rc 0, `auth whoami` toont `system:serviceaccount:<ns>:sandbox`, CA
     als bestandspad ingebed, 644 in een nieuwe 700-map, token in geen argv, geen tijdelijk
     bestand achter), vernieuwen (zelfde inode), k3d-variabelen (`server:` het k3d-adres, whoami
@@ -283,31 +308,54 @@ het rechtenblok hem niet tegen.
     en geen tijdelijk bestand bij: naam uit `SERVER` niet in het certificaat, `create token`
     faalt of is leeg, ongeldig token, token van een ander cluster. Geweigerd zonder
     token-aanvraag: `SERVER` op `127.0.0.1:6550`, `localhost:6443`, `localhost`, `0.0.0.0:443`,
-    `[::1]:6443`, en de vergeten k3d-regel bij een beheer-kubeconfig op `127.0.0.1`; een
-    bestaande map met 755 (map ongemoeid); `F` direct in `$HOME` (`$HOME` ongemoeid); bestaand
-    beheerbestand; lege `F`, `NS` of `SERVER`. Lege beheer-kubeconfig: rc ongelijk aan 0.
+    `[::1]:6443`, `LOCALHOST:6550`, `HTTPS://127.0.0.1:6550`, `localhost.:6550`, `0:6550`, `0`,
+    `[::ffff:127.0.0.1]:6443`, `[0:0:0:0:0:0:0:1]:6443`, `[::]:6443`, en de vergeten k3d-regel
+    bij een beheer-kubeconfig op `127.0.0.1`; `SERVER` zonder `://` (`localhost:6550`,
+    `k3d-fieldlab-server-0:6443`); `NS` als niet ingevulde placeholder, `Team-A` of `team_a`;
+    een bestaande map met 755 (map ongemoeid); `F` direct in `$HOME` (`$HOME` ongemoeid);
+    bestaand beheerbestand; lege `F`, `NS` of `SERVER`. Lege beheer-kubeconfig: rc ongelijk aan
+    0. Met `noclobber` (bash `set -o`, zsh `setopt`): nieuw en vernieuwen rc 0, zelfde inode.
   - Fundament met een nep-`functl` en de proef-CA als systeem-CA: het voorblok roept
     `cluster list` en `cluster kubeconfig <id>` aan en schrijft `~/.kube/fundament.yaml`; ok
     (rc 0, whoami, geen CA, geen exec, token in geen argv); `fail`, lege string, `null` en een
     getal: rc ongelijk aan 0, bestand ongewijzigd, en `token_ophalen` zelf faalt. Lege
-    `CLUSTER`: `token_ophalen` faalt zonder `functl` aan te roepen. Vergeten placeholders (beide,
-    alleen `NS`, alleen `CLUSTER`) met oude `NS`/`CLUSTER` in de shell: `FOUT`, geen oude waarde
-    gebruikt. Het na-de-sessie-blok roept `functl apikey list` en
-    `functl project member list <id>` aan.
-  - Opruimen: `kubectl delete namespace` verwijdert de namespace, daarna weigert de apiserver het
-    token van `sandbox` en dat van een door de sandbox aangemaakte ServiceAccount.
+    `CLUSTER`: `token_ophalen` faalt zonder `functl` aan te roepen. Vergeten placeholders met
+    oude `NS`/`CLUSTER` in de shell: beide of alleen `NS` geeft `FOUT: NS (<namespace van je
+    project>)`, alleen `CLUSTER` geeft `FOUT: CLUSTER (<cluster-id>)`; in alle drie geen
+    `functl cluster token` en het bestand ongewijzigd. Het na-de-sessie-blok roept
+    `functl apikey list` en `functl project member list <id>` aan.
+  - Opruimen: verwijdert de eigen namespace, daarna weigert de apiserver het token van `sandbox`
+    en dat van een door de sandbox aangemaakte ServiceAccount. Een namespace zonder label,
+    `default` en een niet-bestaande namespace: rc ongelijk aan 0 met `FOUT`, namespace blijft.
+  - Plakproef op een pty (`paste.py`), in `bash -i` en `zsh -i`, met bracketed paste en regel
+    voor regel: rechtenblok op een nieuwe namespace (rc 0, label, RoleBinding) en een tweede run
+    (rc 0); een vreemde namespace met een `cluster-admin`-ServiceAccount en `default`: rc ongelijk
+    aan 0, geen ServiceAccount of RoleBinding. Fundament-blok ongevuld na oude waarden in de
+    shell: `FOUT`, `NS` en `CLUSTER` daarna de placeholders (het blok liep dus), geen bestand;
+    alleen `NS` of alleen `CLUSTER` ingevuld: `FOUT` voor de andere, geen `functl cluster token`;
+    beide ingevuld: rc 0 en whoami. `noclobber` met nieuw en vernieuwen: rc 0. `LOCALHOST`
+    geweigerd. Opruimen weigert de vreemde namespace en verwijdert de eigen; de shell leeft
+    daarna nog.
   - Dezelfde kube-apiserver met `--enable-admission-plugins=NodeRestriction,DenyServiceExternalIPs`
     (de waarde die k3s doorgeeft): een Service met `externalIPs` geweigerd, ook voor de
     beheerder; ClusterIP zonder `externalIPs` toegelaten.
-- Mutatiecheck op de recepten: 30 mutaties, 29 gevangen. Nieuw: `&&`-keten terug naar losse
-  regels (gevangen door de namespace-admin-run), namespace en RoleBinding niet idempotent,
-  loopback-check weg, zonder `exit`, zonder `localhost` of zonder `[::1]`, tijdelijk bestand
-  weg, whoami zonder `exit`, `--tls-server-name` weg, mapcontrole weg, `trap` weg,
-  `unset CLUSTER NS` weg, LimitRange zonder `ephemeral-storage`, quota zonder
-  `count/configmaps`, `kubectl get events` weg uit het gebruiken-blok, `DenyServiceExternalIPs`
-  weg. Plus twaalf van eerder; `chmod 700` bestaat niet meer, en whoami-na-een-fout is nu
-  whoami zonder `exit`. Niet gevangen:
-  `mkdir -m 700 -p` naar `mkdir -p`; onder `umask 077` krijgt de map toch 700.
+- Mutatiecheck op de recepten, per mutatie de proef (plakproef alleen met bracketed paste); elke
+  mutatie hoort minstens één controle rood te maken.
+  - Namespace-label en opruimen, NS- en CLUSTER-controle, `>|`, loopback en herstart: 26
+    mutaties, 25 gevangen (hoofdproef in bash, plakproef in bash en zsh met bracketed paste).
+    Gevangen: labelcontrole weg, `create` wordt `apply`, label niet gezet, namespace niet
+    idempotent, opruimbewaking weg, opruimen zonder `false`, NS-controle weg of zonder `exit`,
+    `[^…]` wordt `[!…]` (alleen in geplakte zsh), CLUSTER-controle weg, zonder `return` of met
+    lege `CLUSTER` toegestaan, placeholders zonder quotes, `>|` terug naar `>` (tijdelijk bestand
+    en `F` apart), kleine letters weg, schemacontrole weg, `localhost`, `localhost.`, `0`,
+    `[::]`, `[::ffff:127.…]` of `[0:0:0:0:0:0:0:1]` weg, tijdelijk bestand weg, herstartregel
+    weg. Niet gevangen: `unset CLUSTER NS` weg; met gequote placeholders lopen beide toewijzingen
+    altijd, dus de `unset` verandert niets meer.
+  - De overige mutaties (`&&`-keten, RoleBinding, loopback zonder `exit`, `[::1]`, whoami,
+    `--tls-server-name`, mapcontrole, `trap`, LimitRange, quota, events,
+    `DenyServiceExternalIPs`, lege-waardecontroles, `jq`, `--flatten`, NetworkPolicy, ingresses,
+    `$NS:` in zsh), hoofdproef in bash en zsh: 25 mutaties, 24 gevangen. Niet gevangen:
+    `mkdir -m 700 -p` naar `mkdir -p`; onder `umask 077` krijgt de map toch 700.
 - Eerder gemeten met de vorige versie van de rol, nu niet herhaald: Pod Security weigert onder
   `restricted` een pod zonder securityContext en een hostPath-pod; onder `baseline` met
   `warn=restricted` toegelaten met waarschuwing, hostPath nog steeds geweigerd.
