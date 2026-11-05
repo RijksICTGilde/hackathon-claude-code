@@ -91,3 +91,33 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     expired_at: 2027-01-28
     statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
+
+  # De drie hieronder zitten in de officiële release-binaries van kubectl en
+  # helm (alleen bij INSTALL_K8S=true), gescand door build-k8s-variant. Er is
+  # geen release met de fix: kubectl v1.35.10 is de laatste patch van de
+  # gepinde minor, helm v4.3.1 de laatste v4. Zelf bouwen met een nieuwere Go
+  # of nieuwere modules zou de pin op de officiële binary vervangen door een
+  # eigen build. check-upstream.yml opent een PR bij een nieuwe patch of
+  # release; haal dan de regel weg die die release oplost. Het pad bindt elke
+  # regel aan die ene binary.
+  - id: CVE-2026-111943
+    paths:
+      - "usr/local/bin/helm"
+    expired_at: 2026-12-31
+    statement: |
+      Go-stdlib crypto/x509 (helm gebouwd met Go 1.27.2, fix in 1.27.3): MITM
+      via onbetrouwbare tussencertificaten. Relevant: helm gebruikt TLS naar
+      chart-repositories, OCI-registries en de API-server. Geen helm-release
+      met de fix; de regel moet weg met de eerstvolgende helm-bump.
+
+  - id: CVE-2026-78669
+    paths:
+      - "usr/local/bin/kubectl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.56.0 in kubectl — DoS via een overmaat aan HTTP/2 SETTINGS-frames; treft kubectl alleen tegenover een vijandige API-server. Fix in 0.60.0, nog in geen kubectl 1.35-release.
+
+  - id: CVE-2026-56851
+    paths:
+      - "usr/local/bin/kubectl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/text 0.39.0 in kubectl — DoS door een out-of-bounds slice in het Nickname-profiel; een crash van kubectl op vijandige invoer. Fix in 0.41.0, nog in geen kubectl 1.35-release.

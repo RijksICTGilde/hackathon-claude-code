@@ -411,23 +411,27 @@ RUN test ! -e /home/claude/.ssh-host
 # De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
 # een flip zou anders alle lagen hierboven opnieuw laten bouwen.
 #
-# TODO(#205): wekelijkse tracking van deze pins en een CI-build van de
-# INSTALL_K8S=true-variant.
+# check-upstream.yml volgt de pins wekelijks (jobs kubectl-version en
+# helm-version). Elke tool heeft een eigen blok, met regels ertussen die geen
+# van beide jobs wijzigt: bij aangrenzende regels conflicteren hun auto-PR's.
 ARG INSTALL_K8S=false
 RUN case "$INSTALL_K8S" in \
-      true) KUBECTL_VERSION=v1.35.10 && \
-            HELM_VERSION=v4.3.1 && \
-            ARCH=$(dpkg --print-architecture) && \
+      true) ARCH=$(dpkg --print-architecture) && \
+            KUBECTL_VERSION=v1.35.10 && \
             case "$ARCH" in \
-              amd64) KUBECTL_SHA=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327; \
-                     HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
-              arm64) KUBECTL_SHA=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5; \
-                     HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
-              *) echo "FOUT: kubectl en helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+              amd64) KUBECTL_SHA=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327 ;; \
+              arm64) KUBECTL_SHA=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5 ;; \
+              *) echo "FOUT: kubectl niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /tmp/kubectl && \
             echo "$KUBECTL_SHA  /tmp/kubectl" | sha256sum -c - && \
             install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
+            HELM_VERSION=v4.3.1 && \
+            case "$ARCH" in \
+              amd64) HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
+              arm64) HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
+              *) echo "FOUT: helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz && \
             echo "$HELM_SHA  /tmp/helm.tar.gz" | sha256sum -c - && \
             mkdir /tmp/helm && \
