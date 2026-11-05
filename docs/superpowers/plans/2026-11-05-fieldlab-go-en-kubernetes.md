@@ -14,7 +14,7 @@ fixtures de pins uit de Dockerfile lezen.
 | 1 | `feat/go-functl` | `INSTALL_GO`: Go-toolchain en `functl`, documentatie inclusief de benodigde Go-domeinen | Refs #204 |
 | 2 | `chore/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures; CI-build met `INSTALL_GO=true` | Closes #204 |
 | 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `helm` en `kubectl`, kubeconfig-mount, documentatie over koppelen en rechten | Refs #205 |
-| 4 | `ci/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
+| 4 | `chore/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
 
 #205 blijft open: deployen naar een cluster op de host en op afstand is hier niet live te testen.
 
