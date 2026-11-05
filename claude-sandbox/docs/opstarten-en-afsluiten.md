@@ -24,6 +24,7 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 | `INSTALL_PODMAN`               | `false` | Rootless podman voor Testcontainers ín de sandbox; vereist een platform-override — zie [podman/README.md](../podman/README.md) |
 | `PODMAN_MULTIUID`              | `false` | subuid/subgid-range voor `claude`, nodig voor DB-images die naar een tweede uid chownen; vereist `compose.override.podman-multiuid.yml` |
 | `INSTALL_SSHD`                 | `false` | OpenSSH-server (gehard) voor de Kepler-remote-opzet; default uit — zie README 'Kepler (SSH-remote)' |
+| `INSTALL_GO`                   | `false` | Go en `functl` voor plug-ins op het Fundament-platform — zie [Fundament-plug-ins](#fundament-plug-ins-na-install_gotrue) |
 
 Zet de waardes in `.env` of op de commandline:
 ```
@@ -46,6 +47,27 @@ Naast de build-time toggles kent de container deze runtime-env-vars:
 #### Voorbeeld: `sdk install java` na `INSTALL_JVM=true`
 
 Na een build met `INSTALL_JVM=true` is SDKman aanwezig — installeer een JDK met `sdk install java` (zie ook [Na installatie](#na-installatie)).
+
+#### Fundament-plug-ins na `INSTALL_GO=true`
+
+Met `INSTALL_GO=true` bevat de image Go en [`functl`](https://github.com/fundament-oss/fundament/tree/master/functl), het hulpprogramma waarmee je plug-ins voor het [Fundament-platform](https://docs.fundament-poc.nl/docs/developer/plugins) opzet. Beide staan buiten `claude-home`: na het flippen van deze toggle volstaan een rebuild en een nieuwe container, het volume hoeft niet opnieuw.
+
+Een plug-in opzetten, bouwen en testen:
+
+```bash
+sdk=$(go list -m -f '{{.Version}}' "github.com/fundament-oss/fundament@$(functl version | cut -d- -f1)")
+functl plugin create mijn-plugin --template minimal --console none --sdk-version "$sdk"
+cd mijn-plugin
+go mod tidy
+go build -o mijn-plugin-plugin . && go test ./...
+```
+
+De `--sdk-version` is nodig: zonder die vlag pint `functl` de SDK op een revisie die upstream niet meer bestaat, en dan faalt `go mod tidy` met `unknown revision`. De regel hierboven neemt de SDK van dezelfde commit als de geïnstalleerde `functl`.
+
+- **Netwerk.** Bij `OPEN_HTTPS=false` zet de firewall `proxy.golang.org` en `sum.golang.org` er zelf bij. Een module die niet via die proxy te halen is (privé, een eigen mirror), voeg je toe aan `ALLOWED_DOMAINS`. De firewall resolvet domeinen eenmalig bij de start; verandert het adres van een Google-host daarna, dan helpt een herstart van de container.
+- **Modulecache.** Go bewaart downloads onder `~/go`, in het `claude-home`-volume; ze overleven een herstart.
+- **Versie.** `GOTOOLCHAIN=local` staat vast: vraagt een `go.mod` een nieuwere Go, dan faalt de build in plaats van dat Go stil een andere toolchain ophaalt.
+- **Wat niet kan.** De testomgeving van Fundament voor plug-ins (een lokaal Kubernetes-cluster, ruim 16 GiB geheugen) draait niet in de sandbox: kind en k3d hebben rechten nodig die de afscherming van de container ongedaan maken. Draai dat cluster op de host. `just`, `skaffold` en `k3d` uit de `mise.toml` van de scaffold zitten niet in de image; de `go`-commando's hierboven zijn wat `just build` en `just test` uitvoeren.
 
 Kopieer het `.env.sample` bestand naar `.env` en pas eventueel de projects directory aan:
 ```

@@ -18,6 +18,8 @@ services:
         # Optioneel, default false: OpenSSH-server voor de Kepler-remote-opzet
         # (zie compose.override.kepler.yml + README 'Kepler (SSH-remote)').
         INSTALL_SSHD: "${INSTALL_SSHD:-false}"
+        # Optioneel, default false: Go en functl voor Fundament-plug-ins.
+        INSTALL_GO: "${INSTALL_GO:-false}"
     container_name: claude-sandbox
     restart: unless-stopped
     # NET_ADMIN/NET_RAW nodig voor de firewall (iptables/ipset) — zonder

@@ -147,6 +147,15 @@ if [ "$OPEN_HTTPS" != "true" ]; then
             "docker.io"
         )
     fi
+    # Go-modules voor plug-inontwikkeling (INSTALL_GO=true): downloads lopen via
+    # de module-proxy, en de checksum database toetst ze. Zonder Go in de image
+    # verbreedt dit de whitelist niet.
+    if command -v go >/dev/null 2>&1; then
+        DOMAINS+=(
+            "proxy.golang.org"
+            "sum.golang.org"
+        )
+    fi
     if [ -n "${ALLOWED_DOMAINS:-}" ]; then
         IFS=',' read -ra EXTRA <<< "$ALLOWED_DOMAINS"
         DOMAINS+=("${EXTRA[@]}")
