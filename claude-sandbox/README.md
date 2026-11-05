@@ -246,8 +246,8 @@ De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en
 - een nieuwere `git-delta`-release beschikbaar is (idem)
 - een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL, `RTK_VERSION` en de vermelding hierboven samen bij)
 - een nieuwere `npm`-release binnen dezelfde major beschikbaar is (PR werkt `NPM_VERSION` bij; ook het moment om de npm-suppressies in `.trivyignore.yaml` na te lopen)
-- een nieuwere stabiele Go-release beschikbaar is (PR werkt `GO_VERSION` en de amd64/arm64-SHAs bij)
-- de rolling release `functl-latest` van Fundament op een nieuwe commit staat (PR werkt `FUNCTL_VERSION` en `FUNCTL_H1` bij, en meldt het als de `go`-regel in de go.mod van Fundament hoger is dan de gepinde Go-versie: met `GOTOOLCHAIN=local` faalt de build dan)
+- een nieuwere stabiele Go-release beschikbaar is (PR werkt `GO_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de Go-vermelding in de tools-tabel hierboven)
+- de rolling release `functl-latest` van Fundament op een nieuwe commit staat (PR werkt `FUNCTL_VERSION` en `FUNCTL_H1` bij, en meldt het als de `go`-regel in de go.mod van Fundament hoger is dan de gepinde Go-versie: met `GOTOOLCHAIN=local` faalt de build dan). Staat de release op een commit ouder dan 30 dagen terwijl master verder is, dan faalt de job: upstream ververst de rolling release dan niet meer
 - de gepubliceerde image fixbare CRITICAL/HIGH-CVE's in Debian-pakketten bevat, op amd64 of arm64 (PR bumpt `APT_UPGRADE_EPOCH` in de `Dockerfile`, zodat de `apt-get upgrade`-laag opnieuw draait in plaats van uit de layer cache te komen)
 - de `apt-get upgrade`-laag ouder is dan de drempel in `MAX_EPOCH_AGE_DAYS`, ook zonder bevindingen: MEDIUM- en LOW-updates komen alleen via een rebuild binnen
 

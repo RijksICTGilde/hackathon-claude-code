@@ -507,9 +507,7 @@ jobs:
             voor je merget.
 
   # Job 2d: Go — versie en beide architectuur-SHAs, uit de officiële feed van
-  # go.dev. De Go-versie moet minstens de `go`-regel in de go.mod van Fundament
-  # zijn: de image bouwt functl met GOTOOLCHAIN=local en haalt dus geen hogere
-  # toolchain op.
+  # go.dev. Bij een nieuwe minor verschuift de vermelding in de README mee.
   go-version:
     name: go-version
     runs-on: ubuntu-latest
@@ -524,8 +522,19 @@ jobs:
         run: |
           set -euo pipefail
           # Eén keer ophalen: versie en checksums komen zo uit dezelfde feed.
-          feed=$(curl -fsSL 'https://go.dev/dl/?mode=json' || true)
-          latest=$(jq -r '[.[] | select(.stable == true)] | first | .version // empty' <<<"$feed" 2>/dev/null || true)
+          if ! feed=$(curl -fsSL 'https://go.dev/dl/?mode=json'); then
+            echo "FOUT: kon de Go-feed van go.dev niet ophalen" >&2
+            exit 1
+          fi
+          # Numeriek sorteren: de volgorde van de feed is geen contract. Een
+          # misvormd versiedeel telt als -1 in plaats van jq te laten falen; is
+          # zo'n versie de hoogste, dan weigert de vormtoets hieronder hem.
+          if ! latest=$(jq -r '[.[] | select(.stable == true) | .version | strings]
+                | sort_by(ltrimstr("go") | split(".") | map(tonumber? // -1))
+                | last // empty' <<<"$feed"); then
+            echo "FOUT: de Go-feed is geen leesbare JSON-lijst van releases" >&2
+            exit 1
+          fi
           if [ -z "$latest" ]; then
             echo "FOUT: kon laatste stabiele Go-versie niet bepalen" >&2
             exit 1
@@ -564,6 +573,12 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Een lagere versie dan de pin wijst op een kapotte of teruggezette
+          # feed, niet op een gewenste downgrade.
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "FOUT: Go ${latest} uit de feed is lager dan de pin ${current}" >&2
+            exit 1
+          fi
           # De checksums uit de feed vertrouwen, zoals node-version de
           # SHASUMS256.txt van nodejs.org: zelf downloaden en hashen zegt niets
           # extra's over de herkomst. De build toetst de tarball ertegen.
@@ -583,6 +598,13 @@ jobs:
           "$vervang" Dockerfile "GO_VERSION=$current" "GO_VERSION=$latest" 1
           "$vervang" Dockerfile "GO_SHA=$current_amd64" "GO_SHA=$sha_amd64" 1
           "$vervang" Dockerfile "GO_SHA=$current_arm64" "GO_SHA=$sha_arm64" 1
+          # De tools-tabel in de README noemt alleen major.minor; zo verschuiven
+          # tabel en Dockerfile in dezelfde commit. vervang-pin.sh weigert een
+          # spatie, dus de minor staat hier los; precies één treffer bewaakt dat
+          # er niets anders meeverschuift.
+          if [ "${current%.*}" != "${latest%.*}" ]; then
+            "$vervang" README.md "${current%.*}" "${latest%.*}" 1
+          fi
           {
             echo "changed=true"
             echo "amd64=$sha_amd64"
@@ -595,11 +617,12 @@ jobs:
         with:
           branch: deps/go
           delete-branch: true
-          commit-message: "chore(deps): bump Go to ${{ steps.compare.outputs.latest }}"
-          title: "chore(deps): bump Go to ${{ steps.compare.outputs.latest }}"
+          commit-message: "chore(deps): bump Go naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump Go naar ${{ steps.compare.outputs.latest }}"
           labels: dependencies
           body: |
-            Nieuwe stabiele Go-release gedetecteerd op go.dev/dl.
+            Nieuwe stabiele Go-release gedetecteerd op go.dev/dl. Bij een nieuwe
+            minor-versie is ook de vermelding in `README.md` bijgewerkt.
 
             - **Oude versie:** `${{ steps.compare.outputs.current }}`
             - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
@@ -607,11 +630,9 @@ jobs:
             - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
             - **Release notes:** https://go.dev/doc/devel/release
 
-            De Go-versie mag niet lager zijn dan de `go`-regel in de `go.mod` van Fundament
-            op de gepinde `FUNCTL_VERSION`: de image bouwt `functl` met `GOTOOLCHAIN=local`
-            en faalt dan.
-
             Verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
 
   # Job 2e: functl — Fundament publiceert alleen de rolling release
   # `functl-latest`. De commit uit die release wordt een pseudo-versie, en de
@@ -632,8 +653,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          module=github.com/fundament-oss/fundament
-          body=$(gh api repos/fundament-oss/fundament/releases/tags/functl-latest --jq .body || true)
+          repo=fundament-oss/fundament
+          module="github.com/${repo}"
+          max_dagen=30
+          if ! body=$(gh api "repos/${repo}/releases/tags/functl-latest" --jq .body); then
+            echo "FOUT: kon de release functl-latest niet ophalen via de GitHub-API" >&2
+            exit 1
+          fi
           # Een release-body kan CRLF-regeleinden hebben; de `\r` zou anders
           # in de commit belanden en de toets hieronder laten falen.
           body=$(tr -d '\r' <<<"$body")
@@ -648,8 +674,32 @@ jobs:
             echo "FOUT: onverwachte commit '$commit' in functl-latest (verwacht: 40 hex-tekens)" >&2
             exit 1
           fi
-          info=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${commit}.info" || true)
-          latest=$(jq -r '.Version // empty' <<<"$info" 2>/dev/null || true)
+          # Stopt upstream met verversen van de rolling release, dan blijft
+          # deze job anders wekelijks groen op een verouderde pin. published_at
+          # helpt niet: die wordt bij verversen niet bijgewerkt.
+          if ! stand=$(gh api "repos/${repo}/compare/${commit}...master" \
+                 --jq '"\(.ahead_by) \(.base_commit.commit.committer.date)"'); then
+            echo "FOUT: kon commit ${commit} niet met master vergelijken via de GitHub-API" >&2
+            exit 1
+          fi
+          read -r voor datum <<<"$stand"
+          if ! [[ "$voor" =~ ^[0-9]+$ && "$datum" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "FOUT: onverwachte vergelijking van ${commit} met master ('${stand}')" >&2
+            exit 1
+          fi
+          dagen=$(( ($(date -u +%s) - $(date -u -d "$datum" +%s)) / 86400 ))
+          if [ "$voor" -gt 0 ] && [ "$dagen" -gt "$max_dagen" ]; then
+            echo "FOUT: functl-latest staat op ${commit} (${dagen} dagen oud) en master loopt ${voor} commits voor; upstream ververst de rolling release niet meer" >&2
+            exit 1
+          fi
+          if ! info=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${commit}.info"); then
+            echo "FOUT: kon de module-info van commit ${commit} niet ophalen via proxy.golang.org" >&2
+            exit 1
+          fi
+          if ! latest=$(jq -r '.Version // empty' <<<"$info"); then
+            echo "FOUT: de module-info van proxy.golang.org is geen leesbare JSON" >&2
+            exit 1
+          fi
           if [ -z "$latest" ]; then
             echo "FOUT: kon de pseudo-versie van commit ${commit} niet bepalen via proxy.golang.org" >&2
             exit 1
@@ -690,6 +740,13 @@ jobs:
           if [ "$current" = "$latest" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # Een oudere commit dan de pin is geen bump maar een teruggezette of
+          # vervalste release. Beide versies zijn op vorm getoetst, dus het
+          # tijdstempel staat op een vaste plek en vergelijkt als tekst.
+          if [[ "${latest:7:14}" < "${current:7:14}" ]]; then
+            echo "FOUT: pseudo-versie '$latest' is ouder dan de pin '$current'" >&2
+            exit 1
           fi
           lookup=$(curl -fsSL "https://sum.golang.org/lookup/${module}@${latest}" || true)
           h1=$(awk -v m="$module" -v v="$latest" '$1 == m && $2 == v {print $3}' <<<"$lookup")
@@ -733,8 +790,8 @@ jobs:
         with:
           branch: deps/functl
           delete-branch: true
-          commit-message: "chore(deps): bump functl to ${{ steps.compare.outputs.latest }}"
-          title: "chore(deps): bump functl to ${{ steps.compare.outputs.latest }}"
+          commit-message: "chore(deps): bump functl naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump functl naar ${{ steps.compare.outputs.latest }}"
           labels: dependencies
           body: |
             Nieuwe commit achter de rolling release `functl-latest` van Fundament.
@@ -749,6 +806,8 @@ jobs:
 
             `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
             en verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
 
   # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
   # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
