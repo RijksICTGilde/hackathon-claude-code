@@ -12,7 +12,7 @@ fixtures de pins uit de Dockerfile lezen.
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
 | 1 | `feat/go-functl` | `INSTALL_GO`: Go-toolchain en `functl`, firewall-domeinen, documentatie | Refs #204 |
-| 2 | `ci/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures | Closes #204 |
+| 2 | `ci/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures; CI-build met `INSTALL_GO=true` | Closes #204 |
 | 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `helm` en `kubectl`, kubeconfig-mount, documentatie over koppelen en rechten | Refs #205 |
 | 4 | `ci/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
 
@@ -23,12 +23,15 @@ fixtures de pins uit de Dockerfile lezen.
 **Eén toggle voor Go en functl.** Het issue vraagt om één optie voor plug-inontwikkeling, en
 `functl` bouwen kan alleen met Go. `INSTALL_GO=true` installeert dus beide.
 
-**functl vanaf de bron op een gepinde commit.** Upstream publiceert alleen de rolling pre-release
-`functl-latest`, waarvan de assets bij elke push naar master vervangen worden. Een SHA-pin op die
-assets breekt de image-build bij elke upstream-push, tot de wekelijkse job een PR opent. Een
-`go install …/functl/cmd/functl@<commit>` is reproduceerbaar: de commit ligt vast, en Go controleert
-de module en alle dependencies tegen `sum.golang.org` en de `go.sum` van upstream. De
-`-X …/functl/pkg/cli.version`-stempel volgt het formaat van de upstream-release.
+**functl vanaf de bron op een gepinde pseudo-versie.** Upstream publiceert alleen de rolling
+pre-release `functl-latest`, waarvan de assets bij elke push naar master vervangen worden. Een
+SHA-pin op die assets breekt de image-build bij elke upstream-push, tot de wekelijkse job een PR
+opent. `go install …/functl/cmd/functl@<pseudo-versie>` legt de commit vast. De Dockerfile pint
+daarnaast de h1-hash van de module en controleert die in de buildinfo (`go version -m`). Die
+hash dekt ook de `go.sum`, en daarmee alle dependencies. De versie-stempel
+(`-X …/functl/pkg/cli.version`) is de pseudo-versie, zodat `functl version` direct als
+`--sdk-version` bruikbaar is. De versiecontrole draait als `nobody`: als root zou upstream-code
+in die laag bestanden kunnen wijzigen die bij elke start als root draaien.
 
 **Go via de officiële tarball** van `go.dev/dl`, versie plus SHA-256 per architectuur, net als
 Node.js. De versie volgt de `go`-regel in de `go.mod` van Fundament en het `golang:`-image in de
@@ -36,26 +39,38 @@ plug-in-scaffold (nu beide 1.27.3).
 
 **Symlinks in `/usr/local/bin`** voor `go` en `gofmt`. De root-fase van de entrypoint en
 non-interactieve SSH-sessies hebben een eigen PATH; via `/usr/local/bin` vinden ze Go zonder extra
-PATH-regels, ook `init-firewall.sh`.
+PATH-regels.
 
-**`GOTOOLCHAIN=local`.** Zonder deze waarde haalt Go bij een hogere `go`-regel in een `go.mod`
-stilletjes een andere toolchain op, buiten de pin en de tracking om.
+**`GOTOOLCHAIN=local` in `$GOROOT/go.env`**, niet als `ENV`: een SSH-sessie erft de Docker-`ENV`
+niet. Zonder deze waarde haalt Go bij een hogere `go`-regel in een `go.mod` stil een andere
+toolchain op, buiten de pin en de tracking om.
 
-**Firewall:** bij `command -v go` voegt `init-firewall.sh` `proxy.golang.org` en `sum.golang.org`
-toe, zoals bij podman de registries. Gemeten met `go mod tidy -x` op een gescaffolde plug-in: alle
-downloads lopen via `proxy.golang.org`, zonder redirect naar een andere host.
+**Firewall: geen automatische Go-domeinen.** Go heeft bij `OPEN_HTTPS=false` drie domeinen nodig:
+`proxy.golang.org`, `sum.golang.org` en `storage.googleapis.com`. Het laatste is nodig omdat de
+proxy grote module-zips, waaronder Fundament, doorstuurt naar Cloud Storage. Dat is live gemeten
+met de firewall in een testcontainer. Daarmee wordt Cloud Storage bereikbaar. Omdat de firewall op
+IP filtert, gaan via de gedeelde Google-frontends ook andere Google-diensten open. Bovendien haalt
+de proxy modules op van elke host. Wie `OPEN_HTTPS=false` kiest, kiest bewust voor een smalle
+whitelist. De documentatie noemt de drie domeinen daarom met die waarschuwing erbij, en de
+gebruiker zet ze zelf in `ALLOWED_DOMAINS`.
+
+**ARG direct boven de laag.** Elke `RUN` na een `ARG`-declaratie krijgt die mee. Een `ARG`
+bovenaan laat een flip dus de hele image opnieuw bouwen.
+
+**CI-build van de Go-variant.** De PR-build gebruikt de defaults en raakt de Go-laag dus nooit. PR 2
+voegt een build met `INSTALL_GO=true` toe, met een Trivy-scan op de Go-binaries.
 
 **Modulecache in `claude-home`.** `GOPATH` blijft op de default `~/go`, en dat valt onder het volume.
 
 **SDK-versie van de scaffold.** `functl plugin create` pint de SDK standaard op een revisie die
 upstream niet meer bestaat (`unknown revision 454dc6e5d341`). De documentatie geeft de werkende
-aanroep met `--sdk-version`, afgeleid van de gepinde `functl`-commit.
+aanroep: `--sdk-version "$(functl version)"`.
 
 ## Verificatie per PR
 
 - PR 1: lokale proef met Go 1.27.3 buiten de image (`go install` van `functl`, `functl plugin
-  create`, `go mod tidy`, `go build`, `go test`); shellcheck op `init-firewall.sh`; image-build met
-  de toggle aan en uit, lokaal of in CI.
+  create`, `go mod tidy`, `go build`, `go test`); de Go-laag in een testimage met de toggle aan,
+  uit en ongeldig; de firewall live met de Go-domeinen in `ALLOWED_DOMAINS`.
 - PR 2 en 4: `.github/scripts/test-check-upstream-jobs.sh`, actionlint, mutatiecheck op de nieuwe
   fixtures.
 - PR 3: `helm lint` en `helm template` op een voorbeeldchart; image-build met de toggle aan en uit.

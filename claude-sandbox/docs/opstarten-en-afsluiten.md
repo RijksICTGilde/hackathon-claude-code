@@ -32,7 +32,7 @@ INSTALL_JVM=false docker compose build
 ```
 (`compose.yml` geeft alle waardes via `${INSTALL_X:?}`-interpolatie door als build-args; ontbrekende of lege waardes laten de build vroegtijdig falen.)
 
-> **Let op — volume-recreate vereist:** plugins, skills, rtk en SDKman komen alle terecht onder `/home/claude`, een pad dat onder het `claude-home` volume valt. Het flippen van *elke* toggle vereist daarom **altijd** een image-rebuild **én** volume-recreate, anders blijft de oude inhoud staan (zie [Devcontainer volume-gedrag](#devcontainer-volume-gedrag)). De `cap_add` (NET_ADMIN, NET_RAW) blijven nodig voor de firewall.
+> **Let op — volume-recreate vereist:** plugins, skills, rtk en SDKman komen alle terecht onder `/home/claude`, een pad dat onder het `claude-home` volume valt. Het flippen van zo'n toggle vereist daarom een image-rebuild **én** volume-recreate, anders blijft de oude inhoud staan (zie [Devcontainer volume-gedrag](#devcontainer-volume-gedrag)). De `cap_add` (NET_ADMIN, NET_RAW) blijven nodig voor de firewall.
 
 #### Runtime-toggles
 
@@ -55,19 +55,26 @@ Met `INSTALL_GO=true` bevat de image Go en [`functl`](https://github.com/fundame
 Een plug-in opzetten, bouwen en testen:
 
 ```bash
-sdk=$(go list -m -f '{{.Version}}' "github.com/fundament-oss/fundament@$(functl version | cut -d- -f1)")
-functl plugin create mijn-plugin --template minimal --console none --sdk-version "$sdk"
+functl plugin create mijn-plugin --template minimal --console none --sdk-version "$(functl version)"
 cd mijn-plugin
 go mod tidy
-go build -o mijn-plugin-plugin . && go test ./...
+go build -o mijn-plugin-plugin . && go test ./... -count=1
 ```
 
-De `--sdk-version` is nodig: zonder die vlag pint `functl` de SDK op een revisie die upstream niet meer bestaat, en dan faalt `go mod tidy` met `unknown revision`. De regel hierboven neemt de SDK van dezelfde commit als de geïnstalleerde `functl`.
+De `--sdk-version` is nodig: zonder die vlag pint `functl` de SDK op een revisie die upstream niet meer bestaat, en dan faalt `go mod tidy` met `unknown revision`. `functl version` geeft de versie van Fundament waaruit `functl` gebouwd is, dus de SDK komt van dezelfde commit.
 
-- **Netwerk.** Bij `OPEN_HTTPS=false` zet de firewall `proxy.golang.org` en `sum.golang.org` er zelf bij. Een module die niet via die proxy te halen is (privé, een eigen mirror), voeg je toe aan `ALLOWED_DOMAINS`. De firewall resolvet domeinen eenmalig bij de start; verandert het adres van een Google-host daarna, dan helpt een herstart van de container.
+- **Netwerk.** Met `OPEN_HTTPS=false` heeft Go `proxy.golang.org`, `sum.golang.org` en `storage.googleapis.com` in `ALLOWED_DOMAINS` nodig; grote modules, waaronder Fundament zelf, stuurt de proxy door naar Cloud Storage. De firewall zet ze er bewust niet zelf bij, want ze verruimen de whitelist meer dan hun naam doet vermoeden:
+  - `storage.googleapis.com` is Google Cloud Storage: elke bucket is dan bereikbaar, ook een van een ander.
+  - De firewall filtert op IP-adres, en deze domeinen zijn gedeelde adressen van Google. Daarmee worden ook andere Google-diensten bereikbaar, zoals Drive en Apps Script.
+  - De proxy haalt op verzoek modules op van elke host. Een modulepad komt dus bij een willekeurige server terecht.
+
+  Google wisselt deze adressen geregeld, en de firewall resolvet ze alleen bij de start. Loopt een download vast op een timeout, herstart dan de container. Voor een privémodule zet je de host in `ALLOWED_DOMAINS` en het modulepad in `GOPRIVATE` (`go env -w GOPRIVATE=<pad>`), anders zoekt Go hem op in de publieke checksum database. Een publieke module op GitHub die de proxy niet kent, haalt Go rechtstreeks met git; GitHub staat al open.
 - **Modulecache.** Go bewaart downloads onder `~/go`, in het `claude-home`-volume; ze overleven een herstart.
-- **Versie.** `GOTOOLCHAIN=local` staat vast: vraagt een `go.mod` een nieuwere Go, dan faalt de build in plaats van dat Go stil een andere toolchain ophaalt.
-- **Wat niet kan.** De testomgeving van Fundament voor plug-ins (een lokaal Kubernetes-cluster, ruim 16 GiB geheugen) draait niet in de sandbox: kind en k3d hebben rechten nodig die de afscherming van de container ongedaan maken. Draai dat cluster op de host. `just`, `skaffold` en `k3d` uit de `mise.toml` van de scaffold zitten niet in de image; de `go`-commando's hierboven zijn wat `just build` en `just test` uitvoeren.
+- **Versie.** `GOTOOLCHAIN=local` staat in de Go-installatie zelf, dus ook in SSH-sessies: vraagt een `go.mod` een nieuwere Go, dan faalt de build in plaats van dat Go stil een andere toolchain ophaalt.
+- **Licentie.** Fundament valt onder AGPL-3.0, en daarmee ook `functl` en de plug-in-SDK (zie [`LICENSES/`](https://github.com/fundament-oss/fundament/tree/master/LICENSES)). Een plug-in die de SDK linkt, valt onder de voorwaarden van de AGPL. De scaffold schrijft standaard een Apache-2.0-`LICENSE`; ga na welke licentie je plug-in daarmee kan hebben en kies die met `--license`. Verspreid je zelf een image met `INSTALL_GO=true`, dan zit daar een AGPL-binary in.
+- **Wat niet kan.** De testomgeving van Fundament voor plug-ins (een lokaal k3d-cluster, 16 tot 24 GiB geheugen) draait niet in de sandbox: k3d heeft rechten nodig die de afscherming van de container ongedaan maken. Draai dat cluster op de host. `just`, `skaffold` en `kubectl` uit de `mise.toml` van de scaffold zitten niet in de image; de `go`-commando's hierboven zijn wat `just build` en `just test` uitvoeren.
+
+#### Eerste start
 
 Kopieer het `.env.sample` bestand naar `.env` en pas eventueel de projects directory aan:
 ```
