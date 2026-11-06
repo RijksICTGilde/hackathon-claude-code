@@ -653,5 +653,630 @@ toets "epoch: geen geïnstalleerde pakketten wordt rood" 1 "niet te stellen" "$u
 rm -f /tmp/trivy-amd64.json /tmp/trivy-arm64.json /tmp/os-all.json \
       /tmp/rest-all.json /tmp/geinstalleerd.json /tmp/policy.txt
 
+# ── kubectl en helm ──
+kubectl_nu="$(lees_pin KUBECTL_VERSION)"
+helm_nu="$(lees_pin HELM_VERSION)"
+if [ -z "${kubectl_nu}" ] || [ -z "${helm_nu}" ]; then
+  echo "FOUT: kon KUBECTL_VERSION of HELM_VERSION niet uit de Dockerfile lezen"
+  exit 1
+fi
+for job in kubectl-version helm-version; do
+  yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
+  if [ ! -s "${werkmap}/${job}.sh" ] \
+     || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne 1 ]; then
+    echo "FOUT: verwacht precies 1 run-blok in ${job}"
+    exit 1
+  fi
+done
+
+sha_a="$(printf 'a%.0s' $(seq 64))"
+sha_b="$(printf 'b%.0s' $(seq 64))"
+kubectl_minor="${kubectl_nu%.*}"
+kubectl_patch="${kubectl_minor}.$(( ${kubectl_nu##*.} + 1 ))"
+helm_major="${helm_nu%%.*}"
+helm_patch="${helm_nu%.*}.$(( ${helm_nu##*.} + 1 ))"
+# major.minor zonder v, zoals de README en docs/kubernetes.md hem noemen.
+helm_mm="${helm_nu#v}"; helm_mm="${helm_mm%.*}"
+helm_volgende="v$(( ${helm_major#v} + 1 )).0.0"
+# Een minor die n stappen voor de gepinde ligt, voor de supportgrens.
+kubectl_plus() { # n -> vX.Y.2
+  echo "${kubectl_minor%%.*}.$(( 10#${kubectl_minor#*.} + $1 )).2"
+}
+
+# De huidige SHA-pins: bij gelijke versie toetst de job ze tegen upstream, dus
+# de stubs leveren voor de gepinde versie deze waarden.
+lees_sha() { # arch naam
+  grep -oP "$1\)\s*$2=\K[a-f0-9]{64}" "${wortel}/claude-sandbox/Dockerfile"
+}
+kubectl_sha_amd64="$(lees_sha amd64 KUBECTL_SHA)"
+kubectl_sha_arm64="$(lees_sha arm64 KUBECTL_SHA)"
+helm_sha_amd64="$(lees_sha amd64 HELM_SHA)"
+helm_sha_arm64="$(lees_sha arm64 HELM_SHA)"
+for waarde in "${kubectl_sha_amd64}" "${kubectl_sha_arm64}" "${helm_sha_amd64}" "${helm_sha_arm64}"; do
+  if [ "${#waarde}" -ne 64 ]; then
+    echo "FOUT: kon de SHA-pins van kubectl en helm niet uit de Dockerfile lezen"
+    exit 1
+  fi
+done
+
+# Een kopie met ook docs/kubernetes.md: de helm-job bumpt de vermelding daarin.
+k8s_map() {
+  local d; d="$(nieuwe_map)"
+  mkdir -p "$d/ws/claude-sandbox/docs"
+  cp "${wortel}/claude-sandbox/docs/kubernetes.md" "$d/ws/claude-sandbox/docs/"
+  echo "$d"
+}
+
+# Zet een pin in de kopie op een vaste waarde, voor gevallen die een bepaalde
+# verhouding tot de pin nodig hebben.
+zet_pin() { # map naam waarde
+  sed -i -E "s/$2=v[0-9]+\.[0-9]+\.[0-9]+/$2=$3/" "$1/ws/claude-sandbox/Dockerfile"
+}
+
+# Alleen regels met deze naam mogen veranderd zijn, en precies zoveel.
+alleen_gewijzigd() { # naam map patroon aantal
+  local nieuw anders
+  nieuw="$(diff "${wortel}/claude-sandbox/Dockerfile" "$2/ws/claude-sandbox/Dockerfile" | grep -c '^>')"
+  anders="$(diff "${wortel}/claude-sandbox/Dockerfile" "$2/ws/claude-sandbox/Dockerfile" | grep '^>' | grep -vc "$3")"
+  [ "${nieuw}" -eq "$4" ] && [ "${anders}" -eq 0 ]
+  controle "$1" $?
+}
+
+# De zin die de PR-body bij een melding toont, ingevuld met de outputs van een
+# geval: de format()-expressie draait hier niet mee, zo is ook de volgorde van
+# de argumenten getoetst.
+pr_melding() { # job uitvoerbestand
+  local body formule sjabloon naam0 naam1 arg0 arg1 zin
+  body="$(yq ".jobs.\"$1\".steps[] | select(.with.body != null) | .with.body" "${workflow}")"
+  formule="$(grep -oE "format\('[^']*', steps\.compare\.outputs\.[a-z_]+, steps\.compare\.outputs\.[a-z_]+\)" <<<"${body}")"
+  sjabloon="$(sed -E "s/^format\('([^']*)'.*/\1/" <<<"${formule}")"
+  naam0="$(sed -E 's/.*outputs\.([a-z_]+), .*/\1/' <<<"${formule}")"
+  naam1="$(sed -E 's/.*outputs\.([a-z_]+)\)$/\1/' <<<"${formule}")"
+  arg0="$(sed -n "s/^${naam0}=//p" "$2")"
+  arg1="$(sed -n "s/^${naam1}=//p" "$2")"
+  zin="${sjabloon//\{0\}/${arg0}}"; zin="${zin//\{1\}/${arg1}}"
+  printf '%s\n' "${zin}"
+}
+
+# De stub antwoordt alleen op de echte URL's en schrijft zijn argumenten weg.
+# Een ontbrekend antwoordbestand is een mislukte download. Een checksum komt
+# uit sha-<arch>-<versie>.txt als dat er is (standaard: de gepinde versie met
+# de echte pins), anders uit sha-<arch>.txt.
+kubectl_geval() { # map stable-<minor> stable sha-amd64 sha-arm64
+  printf '%s' "$2" > "$1/stable-minor.txt"
+  printf '%s' "$3" > "$1/stable.txt"
+  printf '%s' "$4" > "$1/sha-amd64.txt"
+  printf '%s' "$5" > "$1/sha-arm64.txt"
+  printf '%s' "${kubectl_sha_amd64}" > "$1/sha-amd64-${kubectl_nu}.txt"
+  printf '%s' "${kubectl_sha_arm64}" > "$1/sha-arm64-${kubectl_nu}.txt"
+  stub "$1" curl "printf '%s\n' \"\$@\" >> '$1/curl-argumenten.txt'
+for arg in \"\$@\"; do case \"\$arg\" in
+  https://dl.k8s.io/release/stable-${kubectl_minor#v}.txt) bron='$1/stable-minor.txt';;
+  https://dl.k8s.io/release/stable.txt) bron='$1/stable.txt';;
+  https://dl.k8s.io/release/*/bin/linux/amd64/kubectl.sha256|https://dl.k8s.io/release/*/bin/linux/arm64/kubectl.sha256)
+    v=\"\${arg#https://dl.k8s.io/release/}\"; a=\"\${v#*/bin/linux/}\"; a=\"\${a%%/*}\"; v=\"\${v%%/*}\"
+    bron=\"$1/sha-\$a-\$v.txt\"; [ -e \"\$bron\" ] || bron=\"$1/sha-\$a.txt\";;
+  *) continue;;
+esac; [ -e \"\$bron\" ] || exit 22; cat \"\$bron\"; exit 0; done
+exit 22"
+}
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: patch-bump verzet versie en beide SHAs" 0 "KUBECTL_VERSION=${kubectl_nu} -> KUBECTL_VERSION=${kubectl_patch}" "$uit" "$rc"
+geopend "kubectl: bump zet changed=true" "$d"
+vervangingen "kubectl: drie vervangingen" "$uit" 3
+grep -q "amd64) KUBECTL_SHA=${sha_a} ;;" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) KUBECTL_SHA=${sha_b} ;;" "$d/ws/claude-sandbox/Dockerfile"
+controle "kubectl: elke architectuur krijgt zijn eigen SHA" $?
+alleen_gewijzigd "kubectl: alleen de drie kubectl-regels gewijzigd" "$d" KUBECTL_ 3
+cmp -s "${wortel}/claude-sandbox/README.md" "$d/ws/claude-sandbox/README.md" \
+  && cmp -s "${wortel}/claude-sandbox/docs/kubernetes.md" "$d/ws/claude-sandbox/docs/kubernetes.md"
+controle "kubectl: patch-bump laat README en docs ongemoeid" $?
+printf 'current=%s\nlatest=%s\nminor=%s\nstable=%s\nnieuwere_minor=false\nchanged=true\namd64=%s\narm64=%s\n' \
+  "$kubectl_nu" "$kubectl_patch" "$kubectl_minor" "$kubectl_patch" "$sha_a" "$sha_b" | cmp -s - "$d/uitvoer"
+controle "kubectl: outputs voor de PR-body exact" $?
+grep -qxF "https://dl.k8s.io/release/stable-${kubectl_minor#v}.txt" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://dl.k8s.io/release/stable.txt" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://dl.k8s.io/release/${kubectl_patch}/bin/linux/amd64/kubectl.sha256" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://dl.k8s.io/release/${kubectl_patch}/bin/linux/arm64/kubectl.sha256" "$d/curl-argumenten.txt"
+controle "kubectl: stable-<minor>, stable.txt en de checksums van de nieuwe versie opgehaald" $?
+! grep -q 'nieuwere minor' <<<"$uit"
+controle "kubectl: gelijke minor in stable.txt geeft geen melding" $?
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$kubectl_nu" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "kubectl: changed=false bij gelijke versie" $?
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "kubectl: gelijke versie laat de Dockerfile ongemoeid" $?
+grep -qxF "https://dl.k8s.io/release/${kubectl_nu}/bin/linux/amd64/kubectl.sha256" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://dl.k8s.io/release/${kubectl_nu}/bin/linux/arm64/kubectl.sha256" "$d/curl-argumenten.txt"
+controle "kubectl: gelijke versie haalt de checksums van de gepinde versie op" $?
+
+# Een gewijzigde upstream-checksum of een verkeerd overgenomen pin valt ook
+# zonder nieuwe patch op.
+for arch in amd64 arm64; do
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$kubectl_nu" "$sha_a" "$sha_b"
+  printf '%s' "$sha_a" > "$d/sha-${arch}-${kubectl_nu}.txt"
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: afwijkende ${arch}-SHA bij gelijke versie wordt rood" 1 "de ${arch}-SHA-pin van kubectl ${kubectl_nu} wijkt af van upstream (${sha_a})" "$uit" "$rc"
+  ! grep -q '^changed=' "$d/uitvoer"
+  controle "kubectl: afwijkende ${arch}-SHA zet geen changed" $?
+
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$kubectl_nu" "$sha_a" "$sha_b"
+  rm "$d/sha-${arch}-${kubectl_nu}.txt" "$d/sha-${arch}.txt"
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: mislukte ${arch}-checksum bij gelijke versie wordt rood" 1 "kon de ${arch}-checksum van kubectl ${kubectl_nu} niet ophalen" "$uit" "$rc"
+done
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$kubectl_nu" "$sha_a" "$sha_b"
+printf '%s  kubectl' "$kubectl_sha_amd64" > "$d/sha-amd64-${kubectl_nu}.txt"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: checksum met aanhangsel bij gelijke versie wordt rood" 1 "geen sha256 uit kubectl.sha256 voor amd64 ${kubectl_nu}" "$uit" "$rc"
+
+# Een nieuwere minor wordt gemeld, nooit gebumpt; ook zonder patch.
+plus2="$(kubectl_plus 2)"
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$plus2" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: twee minors achter geeft een waarschuwing" 0 "::warning::stable.txt staat op ${plus2}, een nieuwere minor dan de gepinde ${kubectl_minor}" "$uit" "$rc"
+grep -qx 'nieuwere_minor=true' "$d/uitvoer" && grep -qx "stable=${plus2}" "$d/uitvoer" \
+  && grep -qx "latest=${kubectl_patch}" "$d/uitvoer"
+controle "kubectl: nieuwere minor zet nieuwere_minor=true en bumpt binnen de pin" $?
+zin="$(pr_melding kubectl-version "$d/uitvoer")"
+grep -qF "\`stable.txt\` staat op ${plus2}, een nieuwere minor dan de gepinde ${kubectl_minor}." <<<"${zin}" \
+  && grep -qF "Deze PR blijft binnen ${kubectl_minor};" <<<"${zin}" \
+  && yq '.jobs."kubectl-version".steps[] | select(.with.body != null) | .with.body' "${workflow}" \
+     | grep -qF "steps.compare.outputs.nieuwere_minor == 'true' && format("
+controle "kubectl: de PR-body meldt de nieuwere minor met stable en pin op hun plek" $?
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$(kubectl_plus 1)" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: nieuwere minor zonder patch waarschuwt ook" 0 "::warning::stable.txt staat op $(kubectl_plus 1)" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "kubectl: nieuwere minor zonder patch opent niets" $?
+
+# Buiten de drie ondersteunde minors komt er geen patch-PR meer; dan moet de
+# run zelf rood worden, ook als er nog een patch klaarstaat.
+for stable in "$(kubectl_plus 3)" "$(kubectl_plus 65)" v2.0.0; do
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$stable" "$sha_a" "$sha_b"
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: stable ${stable} ligt buiten de support van de pin en wordt rood" 1 "stable.txt staat op ${stable}; de gepinde minor ${kubectl_minor} valt buiten de drie ondersteunde minors" "$uit" "$rc"
+  cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile" && ! grep -q '^changed=' "$d/uitvoer" 2>/dev/null
+  controle "kubectl: stable ${stable} buiten de support bumpt niets" $?
+done
+
+# Numeriek: als tekst is v1.9 hoger dan v1.35.
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" v1.9.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: lagere minor in stable.txt" 0 "" "$uit" "$rc"
+grep -qx 'nieuwere_minor=false' "$d/uitvoer" && ! grep -q '::warning::' <<<"$uit"
+controle "kubectl: lagere minor in stable.txt geeft geen melding" $?
+
+# Numeriek: als tekst is v1.35.9 hoger dan v1.35.10.
+d="$(k8s_map)"; kubectl_geval "$d" "${kubectl_minor}.9" "${kubectl_minor}.9" "$sha_a" "$sha_b"
+zet_pin "$d" KUBECTL_VERSION "${kubectl_minor}.10"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: lagere patch dan de pin wordt rood" 1 "lager dan de pin ${kubectl_minor}.10" "$uit" "$rc"
+grep -q "KUBECTL_VERSION=${kubectl_minor}.10 " "$d/ws/claude-sandbox/Dockerfile"
+controle "kubectl: lagere patch laat de pin staan" $?
+
+d="$(k8s_map)"; kubectl_geval "$d" "${kubectl_minor}.10" "${kubectl_minor}.10" "$sha_a" "$sha_b"
+rm -f "$d"/sha-*-"${kubectl_minor}".10.txt
+zet_pin "$d" KUBECTL_VERSION "${kubectl_minor}.9"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: patch 10 na pin 9 is een bump" 0 "KUBECTL_VERSION=${kubectl_minor}.9 -> KUBECTL_VERSION=${kubectl_minor}.10" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" v1.999.0 v1.999.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: stable-<minor> met een andere minor wordt rood" 1 "buiten de gepinde minor ${kubectl_minor}" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "${kubectl_patch}; rm -rf /" "$kubectl_patch" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: vijandige versie geweigerd" 1 "onverwachte kubectl-versie '${kubectl_patch}; rm -rf /' in stable-" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$(printf '%s\n%s' "$kubectl_patch" "$kubectl_patch")" "$kubectl_patch" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: versie over twee regels geweigerd" 1 "onverwachte kubectl-versie" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "${kubectl_minor#v}.11" "$kubectl_patch" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: versie zonder v geweigerd" 1 "onverwachte kubectl-versie" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "" "$kubectl_patch" "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: lege stable-<minor> wordt rood" 1 "onverwachte kubectl-versie '' in stable-" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"; rm "$d/stable-minor.txt"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: mislukte download van stable-<minor> wordt rood" 1 "kon stable-${kubectl_minor#v}.txt niet ophalen" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"; rm "$d/stable.txt"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: mislukte download van stable.txt wordt rood" 1 "kon stable.txt niet ophalen" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" 'v1.999.0 && curl kwaad' "$sha_a" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: vijandige stable.txt geweigerd" 1 "onverwachte kubectl-versie 'v1.999.0 && curl kwaad' in stable.txt" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" geen-sha "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: amd64-checksum die geen sha256 is wordt rood" 1 "'geen-sha' is geen sha256 uit kubectl.sha256 voor amd64" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "${sha_b}  kubectl"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: arm64-checksum met aanhangsel wordt rood" 1 "geen sha256 uit kubectl.sha256 voor arm64" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "x${sha_a}" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: amd64-checksum met voorvoegsel wordt rood" 1 "geen sha256 uit kubectl.sha256 voor amd64" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "" "$sha_b"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: lege checksum wordt rood" 1 "'' is geen sha256" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"; rm "$d/sha-arm64.txt"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: mislukte checksum-download wordt rood" 1 "kon de arm64-checksum van kubectl ${kubectl_patch} niet ophalen" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "kubectl: mislukte checksum-download laat de Dockerfile ongemoeid" $?
+
+for arch in amd64 arm64; do
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+  sed -i "s|      ${arch}) KUBECTL_SHA=|      ${arch})   KUBECTL_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  grep -q "${arch})   KUBECTL_SHA=" "$d/ws/claude-sandbox/Dockerfile"
+  controle "kubectl: fixture hertabelleert de ${arch}-regel" $?
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: hertabelleerde ${arch}-regel blijft werken" 0 "" "$uit" "$rc"
+  vervangingen "kubectl: hertabelleerde ${arch}-regel geeft drie vervangingen" "$uit" 3
+
+  # 65 hextekens: zonder grens op de telling zou de bump er één laten staan.
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+  sed -i "s|${arch}) KUBECTL_SHA=\([a-f0-9]*\)|${arch}) KUBECTL_SHA=\1a|" "$d/ws/claude-sandbox/Dockerfile"
+  grep -qE "${arch}\) KUBECTL_SHA=[a-f0-9]{65} " "$d/ws/claude-sandbox/Dockerfile"
+  controle "kubectl: fixture verlengt de ${arch}-pin" $?
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: ${arch}-pin van 65 tekens wordt rood" 1 "precies één ${arch}-SHA-pin voor kubectl" "$uit" "$rc"
+
+  # Ook zonder nieuwe patch: anders valt een verdwenen pin pas op bij de
+  # eerstvolgende bump.
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_nu" "$kubectl_nu" "$sha_a" "$sha_b"
+  sed -i "s|      ${arch}) KUBECTL_SHA=[a-f0-9]*|      ${arch}) KUBECTL_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: ontbrekende ${arch}-pin wordt ook zonder bump rood" 1 "precies één ${arch}-SHA-pin voor kubectl" "$uit" "$rc"
+
+  d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+  dubbele_pin "$d" "              ${arch}) KUBECTL_SHA=" "              ${arch}) KUBECTL_SHA=${sha_b} ;; \\\\"
+  uit="$(draai "$d" kubectl-version)"; rc=$?
+  toets "kubectl: tweede ${arch}-pin wordt rood" 1 "precies één ${arch}-SHA-pin voor kubectl" "$uit" "$rc"
+done
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+dubbele_pin "$d" '            KUBECTL_VERSION=' '            KUBECTL_VERSION=v1.0.0 && \\'
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: tweede versiepin wordt rood" 1 "precies één KUBECTL_VERSION-pin" "$uit" "$rc"
+
+d="$(k8s_map)"; kubectl_geval "$d" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+sed -i "s|KUBECTL_VERSION=${kubectl_nu}|KUBECTL_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" kubectl-version)"; rc=$?
+toets "kubectl: onleesbare versiepin wordt rood" 1 "kon huidige KUBECTL_VERSION niet" "$uit" "$rc"
+
+# Releases zoals de API ze levert: nieuwste eerst, v3 en v4 door elkaar, met
+# een pre-release en een concept ertussen.
+helm_release() { # tag [draft] [prerelease]
+  jq -nc --arg t "$1" --argjson d "${2:-false}" --argjson p "${3:-false}" \
+    '{tag_name: $t, draft: $d, prerelease: $p, name: ("Helm " + $t)}'
+}
+helm_geval() { # map sha-amd64 sha-arm64 release-json...
+  local d="$1" a="$2" b="$3"; shift 3
+  # Eén pagina; `gh api --paginate` zet pagina's als losse lijsten achter elkaar.
+  printf '%s\n' "$@" | jq -s . > "$d/releases.json"
+  # De checksum-bestanden noemen de tarball; die naam hangt aan de versie die
+  # de job kiest, dus de stub vult hem in vanuit de URL. Zoals bij kubectl:
+  # sum-<arch>-<versie>.txt gaat voor, standaard de echte pins van de pin.
+  printf '%s' "$a" > "$d/sum-amd64.txt"
+  printf '%s' "$b" > "$d/sum-arm64.txt"
+  printf '%s' "${helm_sha_amd64}" > "$d/sum-amd64-${helm_nu}.txt"
+  printf '%s' "${helm_sha_arm64}" > "$d/sum-arm64-${helm_nu}.txt"
+  stub "$d" gh "printf '%s\n' \"\$@\" >> '$d/gh-argumenten.txt'
+[ \"\$*\" = 'api --paginate repos/helm/helm/releases?per_page=100' ] || exit 1
+cat '$d/releases.json'"
+  stub "$d" curl "printf '%s\n' \"\$@\" >> '$d/curl-argumenten.txt'
+for arg in \"\$@\"; do case \"\$arg\" in
+  https://get.helm.sh/helm-*-linux-amd64.tar.gz.sha256sum|https://get.helm.sh/helm-*-linux-arm64.tar.gz.sha256sum)
+    naam=\"\${arg#https://get.helm.sh/}\"; naam=\"\${naam%.sha256sum}\"
+    v=\"\${naam#helm-}\"; v=\"\${v%-linux-*}\"; a=\"\${naam#*-linux-}\"; a=\"\${a%.tar.gz}\"
+    bron=\"$d/sum-\$a-\$v.txt\"; [ -e \"\$bron\" ] || bron=\"$d/sum-\$a.txt\";;
+  *) continue;;
+esac; [ -e \"\$bron\" ] || exit 22
+printf '%s  %s\n' \"\$(cat \"\$bron\")\" \"\$naam\"; exit 0; done
+exit 22"
+}
+helm_standaard() { # map nieuwste-v4 [extra release-json...]
+  local d="$1" v="$2"; shift 2
+  helm_geval "$d" "$sha_a" "$sha_b" \
+    "$(helm_release "${helm_major}.999.0" false true)" \
+    "$(helm_release "${helm_major}.998.0" true false)" \
+    "$(helm_release v3.999.9)" \
+    "$(helm_release "$v")" \
+    "$(helm_release v3.22.1)" \
+    "$(helm_release "${helm_nu}")" \
+    "$@"
+}
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: minor-sprong verzet versie en beide SHAs" 0 "HELM_VERSION=${helm_nu} -> HELM_VERSION=${helm_major}.99.0" "$uit" "$rc"
+geopend "helm: bump zet changed=true" "$d"
+vervangingen "helm: minor-sprong geeft vijf vervangingen" "$uit" 5
+grep -q "amd64) HELM_SHA=${sha_a} ;;" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) HELM_SHA=${sha_b} ;;" "$d/ws/claude-sandbox/Dockerfile"
+controle "helm: elke architectuur krijgt zijn eigen SHA" $?
+alleen_gewijzigd "helm: alleen de drie helm-regels in de Dockerfile gewijzigd" "$d" HELM_ 3
+grep -qF "helm ${helm_major#v}.99 (" "$d/ws/claude-sandbox/README.md" \
+  && ! grep -qF "helm ${helm_mm} " "$d/ws/claude-sandbox/README.md" \
+  && grep -qF "\`helm\` (${helm_major#v}.99)" "$d/ws/claude-sandbox/docs/kubernetes.md" \
+  && ! grep -qF "\`helm\` (${helm_mm})" "$d/ws/claude-sandbox/docs/kubernetes.md"
+controle "helm: minor-sprong verzet de vermelding in README en docs/kubernetes.md" $?
+printf 'current=%s\nlatest=%s\nmajor=%s\nhoogste=%s\nnieuwe_major=false\nchanged=true\namd64=%s\narm64=%s\n' \
+  "$helm_nu" "${helm_major}.99.0" "$helm_major" "${helm_major}.99.0" "$sha_a" "$sha_b" | cmp -s - "$d/uitvoer"
+controle "helm: outputs voor de PR-body exact" $?
+grep -qxF "https://get.helm.sh/helm-${helm_major}.99.0-linux-amd64.tar.gz.sha256sum" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://get.helm.sh/helm-${helm_major}.99.0-linux-arm64.tar.gz.sha256sum" "$d/curl-argumenten.txt"
+controle "helm: checksums van de nieuwe versie opgehaald" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: patch-bump" 0 "HELM_VERSION=${helm_nu} -> HELM_VERSION=${helm_patch}" "$uit" "$rc"
+vervangingen "helm: patch-bump geeft drie vervangingen" "$uit" 3
+cmp -s "${wortel}/claude-sandbox/README.md" "$d/ws/claude-sandbox/README.md" \
+  && cmp -s "${wortel}/claude-sandbox/docs/kubernetes.md" "$d/ws/claude-sandbox/docs/kubernetes.md"
+controle "helm: patch-bump laat README en docs ongemoeid" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer" && ! grep -q '::warning::' <<<"$uit"
+controle "helm: changed=false en geen melding bij gelijke versie" $?
+
+# De volgorde van de API is geen contract: v4.10 is hoger dan v4.9, ook als
+# v4.9 eerst staat en als tekst hoger sorteert.
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.9.0" "$(helm_release "${helm_major}.10.0")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: hoogste versie numeriek gekozen" 0 "HELM_VERSION=${helm_nu} -> HELM_VERSION=${helm_major}.10.0" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}" "$(helm_release "${helm_volgende}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: nieuwe major geeft een waarschuwing" 0 "::warning::helm ${helm_volgende} is uit, een nieuwere major dan de gepinde ${helm_major}" "$uit" "$rc"
+grep -qx 'nieuwe_major=true' "$d/uitvoer" && grep -qx "hoogste=${helm_volgende}" "$d/uitvoer" \
+  && grep -qx "latest=${helm_patch}" "$d/uitvoer"
+controle "helm: nieuwe major zet nieuwe_major=true en bumpt binnen de pin" $?
+zin="$(pr_melding helm-version "$d/uitvoer")"
+grep -qF "helm ${helm_volgende} is uit, een nieuwere major dan de gepinde ${helm_major}." <<<"${zin}" \
+  && grep -qF "Deze PR blijft binnen ${helm_major};" <<<"${zin}" \
+  && yq '.jobs."helm-version".steps[] | select(.with.body != null) | .with.body' "${workflow}" \
+     | grep -qF "steps.compare.outputs.nieuwe_major == 'true' && format("
+controle "helm: de PR-body meldt de nieuwe major met release en pin op hun plek" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}" "$(helm_release "${helm_volgende}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: nieuwe major zonder bump waarschuwt ook" 0 "::warning::helm ${helm_volgende} is uit" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "helm: nieuwe major zonder bump opent niets" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}" "$(helm_release "${helm_volgende}-rc.1" false true)" "$(helm_release "${helm_volgende}" true false)"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: pre-release of concept van een nieuwe major" 0 "" "$uit" "$rc"
+grep -qx 'nieuwe_major=false' "$d/uitvoer" && ! grep -q '::warning::' <<<"$uit"
+controle "helm: pre-release of concept van een nieuwe major geeft geen melding" $?
+
+# Een lijst zonder de pin is onvolledig of teruggezet; "niets nieuwers" zegt
+# dan niets. Numeriek: als tekst is v4.9.0 hoger dan v4.10.0.
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release "${helm_major}.9.0")"
+zet_pin "$d" HELM_VERSION "${helm_major}.10.0"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: lijst met alleen een lagere versie dan de pin wordt rood" 1 "de gepinde helm ${helm_major}.10.0 staat niet tussen de stabiele releases" "$uit" "$rc"
+grep -q "HELM_VERSION=${helm_major}.10.0 " "$d/ws/claude-sandbox/Dockerfile"
+controle "helm: lagere versie laat de pin staan" $?
+
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}" false true)"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: pin die alleen als pre-release in de lijst staat wordt rood" 1 "de gepinde helm ${helm_nu} staat niet tussen" "$uit" "$rc"
+
+# Meerdere pagina's: de nieuwste v4 en de pin staan pas op de tweede.
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release v3.999.9)"
+jq -c . "$d/releases.json" > "$d/pagina1.json"
+jq -nc --argjson a "$(helm_release "${helm_major}.99.0")" --argjson b "$(helm_release "${helm_nu}")" '[$a, $b]' \
+  | cat "$d/pagina1.json" - > "$d/releases.json"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: release op de tweede pagina wordt gevonden" 0 "HELM_VERSION=${helm_nu} -> HELM_VERSION=${helm_major}.99.0" "$uit" "$rc"
+grep -qxF -- '--paginate' "$d/gh-argumenten.txt"
+controle "helm: de releases worden met --paginate opgehaald" $?
+
+# Zie kubectl: de pins van de gepinde versie worden ook zonder bump getoetst.
+d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}"
+draai "$d" helm-version >/dev/null
+grep -qxF "https://get.helm.sh/helm-${helm_nu}-linux-amd64.tar.gz.sha256sum" "$d/curl-argumenten.txt" \
+  && grep -qxF "https://get.helm.sh/helm-${helm_nu}-linux-arm64.tar.gz.sha256sum" "$d/curl-argumenten.txt"
+controle "helm: gelijke versie haalt de checksums van de gepinde versie op" $?
+for arch in amd64 arm64; do
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}"
+  printf '%s' "$sha_b" > "$d/sum-${arch}-${helm_nu}.txt"
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: afwijkende ${arch}-SHA bij gelijke versie wordt rood" 1 "de ${arch}-SHA-pin van helm ${helm_nu} wijkt af van upstream (${sha_b})" "$uit" "$rc"
+
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}"
+  rm "$d/sum-${arch}-${helm_nu}.txt" "$d/sum-${arch}.txt"
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: mislukte ${arch}-checksum bij gelijke versie wordt rood" 1 "kon de checksum van helm-${helm_nu}-linux-${arch}.tar.gz niet ophalen" "$uit" "$rc"
+done
+
+# Ongeldige tags vallen weg in plaats van in curl of sed te belanden; de
+# geldige release ernaast wordt gewoon gekozen.
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}" \
+  "$(helm_release "${helm_major}.99.0; rm -rf /")" \
+  "$(helm_release "$(printf 'x\n%s.99.1' "${helm_major}")")" \
+  "$(helm_release "${helm_major}.99.2"$'\n')" \
+  "$(helm_release "${helm_major#v}.99.3")" \
+  "$(jq -nc '{tag_name: null, draft: false, prerelease: false}')"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: vijandige en misvormde tags vallen weg" 0 "HELM_VERSION=${helm_nu} -> HELM_VERSION=${helm_patch}" "$uit" "$rc"
+grep -qx "latest=${helm_patch}" "$d/uitvoer"; controle "helm: alleen de geldige tag gekozen" $?
+
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release "${helm_major}.99.0; rm -rf /")" "$(helm_release v3.99.0)"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: geen geldige release binnen de major wordt rood" 1 "geen stabiele helm-release binnen major ${helm_major}" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: lege releaselijst wordt rood" 1 "geen stabiele helm-release binnen major" "$uit" "$rc"
+
+for kapot in '<html>proxy</html>' '{"message":"Not Found"}' 'null'; do
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"; printf '%s\n' "$kapot" > "$d/releases.json"
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: releases '${kapot}' wordt rood" 1 "geen leesbare JSON-lijst" "$uit" "$rc"
+done
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+stub "$d" gh 'echo "HTTP 403: rate limit" >&2; exit 1'
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: mislukte API-aanvraag wordt rood" 1 "kon de releases van helm/helm niet ophalen" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" geen-sha "$sha_b" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: checksum die geen sha256 is wordt rood" 1 "'geen-sha' is geen sha256 uit helm-${helm_patch}-linux-amd64.tar.gz.sha256sum" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" "x${sha_a}" "$sha_b" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: checksum met voorvoegsel wordt rood" 1 "'x${sha_a}' is geen sha256" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}")"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: lege checksum wordt rood" 1 "'' is geen sha256 uit helm-${helm_patch}-linux-arm64" "$uit" "$rc"
+
+# Een checksum-bestand van een andere tarball mag niet als deze gepind worden.
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}")"
+stub "$d" curl "printf '%s  helm-v0.0.1-linux-amd64.tar.gz\n' '${sha_a}'"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: checksum van een andere tarball wordt rood" 1 "is geen sha256 uit helm-${helm_patch}-linux-amd64" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_geval "$d" "$sha_a" "$sha_b" "$(helm_release "${helm_patch}")" "$(helm_release "${helm_nu}")"; rm "$d/sum-arm64.txt"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: mislukte checksum-download wordt rood" 1 "kon de checksum van helm-${helm_patch}-linux-arm64.tar.gz niet ophalen" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "helm: mislukte checksum-download laat de Dockerfile ongemoeid" $?
+
+for arch in amd64 arm64; do
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+  sed -i "s|      ${arch}) HELM_SHA=|      ${arch})   HELM_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  grep -q "${arch})   HELM_SHA=" "$d/ws/claude-sandbox/Dockerfile"
+  controle "helm: fixture hertabelleert de ${arch}-regel" $?
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: hertabelleerde ${arch}-regel blijft werken" 0 "" "$uit" "$rc"
+  vervangingen "helm: hertabelleerde ${arch}-regel geeft drie vervangingen" "$uit" 3
+
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+  sed -i "s|${arch}) HELM_SHA=\([a-f0-9]*\)|${arch}) HELM_SHA=\1a|" "$d/ws/claude-sandbox/Dockerfile"
+  grep -qE "${arch}\) HELM_SHA=[a-f0-9]{65} " "$d/ws/claude-sandbox/Dockerfile"
+  controle "helm: fixture verlengt de ${arch}-pin" $?
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: ${arch}-pin van 65 tekens wordt rood" 1 "precies één ${arch}-SHA-pin voor helm" "$uit" "$rc"
+
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_nu}"
+  sed -i "s|      ${arch}) HELM_SHA=[a-f0-9]*|      ${arch}) HELM_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: ontbrekende ${arch}-pin wordt ook zonder bump rood" 1 "precies één ${arch}-SHA-pin voor helm" "$uit" "$rc"
+
+  d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+  dubbele_pin "$d" "              ${arch}) HELM_SHA=" "              ${arch}) HELM_SHA=${sha_b} ;; \\\\"
+  uit="$(draai "$d" helm-version)"; rc=$?
+  toets "helm: tweede ${arch}-pin wordt rood" 1 "precies één ${arch}-SHA-pin voor helm" "$uit" "$rc"
+done
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+dubbele_pin "$d" '            HELM_VERSION=' '            HELM_VERSION=v4.0.0 && \\'
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: tweede versiepin wordt rood" 1 "precies één HELM_VERSION-pin" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_patch}"
+sed -i "s|HELM_VERSION=${helm_nu}|HELM_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: onleesbare versiepin wordt rood" 1 "kon huidige HELM_VERSION niet" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+sed -i "s|helm ${helm_mm} (|helm 0.0 (|" "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: README-vermelding achtergebleven wordt rood" 1 "'helm ${helm_mm} (' komt 0× voor in README.md" "$uit" "$rc"
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+sed -i "s|\`helm\` (${helm_mm})|\`helm\` (0.0)|" "$d/ws/claude-sandbox/docs/kubernetes.md"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: vermelding in docs/kubernetes.md achtergebleven wordt rood" 1 "'\`helm\` (${helm_mm})' komt 0× voor in docs/kubernetes.md" "$uit" "$rc"
+
+# Alleen de helm-vermelding verschuift: hetzelfde getal elders blijft staan,
+# en zonder vermelding wordt de run rood in plaats van een ander getal te raken.
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+printf 'Python 3.%s\n' "${helm_mm}" >> "$d/ws/claude-sandbox/README.md"
+printf 'Zie ook versie %s.\n' "${helm_mm}" >> "$d/ws/claude-sandbox/docs/kubernetes.md"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: ander voorkomen van ${helm_mm} houdt de minor-sprong niet tegen" 0 "" "$uit" "$rc"
+grep -qxF "Python 3.${helm_mm}" "$d/ws/claude-sandbox/README.md" \
+  && grep -qF "helm ${helm_major#v}.99 (" "$d/ws/claude-sandbox/README.md" \
+  && grep -qxF "Zie ook versie ${helm_mm}." "$d/ws/claude-sandbox/docs/kubernetes.md" \
+  && grep -qF "\`helm\` (${helm_major#v}.99)" "$d/ws/claude-sandbox/docs/kubernetes.md"
+controle "helm: alleen de helm-vermelding verschoven" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+sed -i "s|helm ${helm_mm} (|helm (|" "$d/ws/claude-sandbox/README.md"
+printf 'Python 3.%s\n' "${helm_mm}" >> "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: zonder vermelding blijft een ander getal staan" 1 "'helm ${helm_mm} (' komt 0× voor in README.md" "$uit" "$rc"
+grep -qxF "Python 3.${helm_mm}" "$d/ws/claude-sandbox/README.md"
+controle "helm: zonder vermelding is het andere getal ongemoeid" $?
+
+d="$(k8s_map)"; helm_standaard "$d" "${helm_major}.99.0"
+printf 'Ook helm %s (tweede vermelding).\n' "${helm_mm}" >> "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" helm-version)"; rc=$?
+toets "helm: dubbele README-vermelding wordt rood" 1 "'helm ${helm_mm} (' komt 2× voor in README.md" "$uit" "$rc"
+
+# Elke tool heeft een eigen blok in de Dockerfile. Raken de bumps aangrenzende
+# regels, dan conflicteren hun auto-PR's bij de tweede merge.
+dk="$(k8s_map)"; kubectl_geval "$dk" "$kubectl_patch" "$kubectl_patch" "$sha_a" "$sha_b"
+draai "$dk" kubectl-version >/dev/null
+dh="$(k8s_map)"; helm_standaard "$dh" "${helm_major}.99.0"
+draai "$dh" helm-version >/dev/null
+for bestand in Dockerfile README.md docs/kubernetes.md; do
+  samen="$(diff3 -m "$dk/ws/claude-sandbox/${bestand}" "${wortel}/claude-sandbox/${bestand}" "$dh/ws/claude-sandbox/${bestand}")"
+  [ $? -eq 0 ] && ! grep -q '^<<<<<<<' <<<"${samen}"
+  controle "kubectl- en helm-bump mergen zonder conflict in ${bestand}" $?
+done
+grep -qF "KUBECTL_VERSION=${kubectl_patch}" "$dk/ws/claude-sandbox/Dockerfile" \
+  && grep -qF "HELM_VERSION=${helm_major}.99.0" "$dh/ws/claude-sandbox/Dockerfile"
+controle "conflictproef: beide bumps zijn echt uitgevoerd" $?
+
+# De vaste delen van beide PR's: de poort op changed, branch, commit, titel,
+# de SHA-regels, de suppressie-oproep en de waarschuwing dat een PR van
+# GITHUB_TOKEN geen checks start.
+for tool in kubectl helm; do
+  job=".jobs.\"${tool}-version\""
+  stap="${job}.steps[] | select(.with.body != null)"
+  body="$(yq "${stap} | .with.body" "${workflow}")"
+  r=1
+  if [ "$(yq "${stap} | .if" "${workflow}")" = "steps.compare.outputs.changed == 'true'" ] \
+     && [ "$(yq "${job}.steps[] | select(has(\"run\")) | .id" "${workflow}")" = "compare" ]; then r=0; fi
+  controle "${tool}: de PR-stap hangt aan changed van de compare-stap" "$r"
+  r=1
+  if [ "$(yq "${stap} | .with.branch" "${workflow}")" = "deps/${tool}" ] \
+     && [ "$(yq "${stap} | .with.title" "${workflow}")" = "chore(deps): bump ${tool} naar \${{ steps.compare.outputs.latest }}" ] \
+     && [ "$(yq "${stap} | .with.commit-message" "${workflow}")" = "chore(deps): bump ${tool} naar \${{ steps.compare.outputs.latest }}" ]; then r=0; fi
+  controle "${tool}: branch, titel en commit-message van de PR" "$r"
+  grep -qxF -- "- **SHA amd64:** \`\${{ steps.compare.outputs.amd64 }}\`" <<<"${body}" \
+    && grep -qxF -- "- **SHA arm64:** \`\${{ steps.compare.outputs.arm64 }}\`" <<<"${body}"
+  controle "${tool}: de SHA-regels in de PR-body wijzen naar hun eigen architectuur" $?
+  tr '\n' ' ' <<<"${body}" | grep -qF "suppressie op \`usr/local/bin/${tool}\` die deze release oplost, haal die dan weg" \
+    && tr '\n' ' ' <<<"${body}" | grep -qF 'door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs'
+  controle "${tool}: suppressie-oproep en GITHUB_TOKEN-zin in de PR-body" $?
+  [ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ]
+  controle "${tool}: de checkout bewaart geen credentials" $?
+done
+
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]

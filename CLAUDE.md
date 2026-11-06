@@ -60,6 +60,8 @@ Twee mechanismen, allebei gericht op reproduceerbaarheid en een gereviewde upgra
 
 `.github/workflows/check-upstream.yml` draait wekelijks en opent een PR per gedetecteerde wijziging. Kies per afhankelijkheid het juiste mechanisme: een ongeversioneerde upstream-URL wordt gevolgd via sha256-vergelijking; een per-tag gevendord script vereist een eigen release-tracking-job, omdat een tag-URL inhoudelijk nooit wijzigt.
 
+Een pin die bewust op een minor of major vastligt (`kubectl`, `helm`), volgt alleen releases binnen die lijn: de sprong naar een nieuwere lijn is een eigen afweging en geen auto-PR. Ziet de job een nieuwere lijn, dan meldt hij die. Pins die door verschillende jobs gebumpt worden, staan niet op aangrenzende regels, anders conflicteren hun auto-PR's.
+
 GitHub Actions worden op commit-SHA gepind, met de versie als comment erachter. Dependabot dekt Docker, GitHub Actions en pip — een GitHub-release-binary valt in geen enkel ecosysteem en heeft dus eigen tracking nodig.
 
 Externe input in een workflow (tagnamen, API-velden) valideren voor hij in `curl`-, `sed`- of shell-argumenten belandt.
