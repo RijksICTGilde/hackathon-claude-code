@@ -24,6 +24,7 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 | `INSTALL_PODMAN`               | `false` | Rootless podman voor Testcontainers ín de sandbox; vereist een platform-override — zie [podman/README.md](../podman/README.md) |
 | `PODMAN_MULTIUID`              | `false` | subuid/subgid-range voor `claude`, nodig voor DB-images die naar een tweede uid chownen; vereist `compose.override.podman-multiuid.yml` |
 | `INSTALL_SSHD`                 | `false` | OpenSSH-server (gehard) voor de Kepler-remote-opzet; default uit — zie README 'Kepler (SSH-remote)' |
+| `INSTALL_K8S`                  | `false` | `kubectl` en `helm` voor Helm-charts en een cluster buiten de container — zie [kubernetes.md](kubernetes.md) |
 | `INSTALL_GO`                   | `false` | Go en `functl` voor plug-ins op het Fundament-platform — zie [Fundament-plug-ins](#fundament-plug-ins-na-install_gotrue) |
 
 Zet de waardes in `.env` of op de commandline:
@@ -72,7 +73,7 @@ De `--sdk-version` is nodig: zonder die vlag pint `functl` de SDK op een revisie
 - **Modulecache.** Go bewaart downloads onder `~/go`, in het `claude-home`-volume; ze overleven een herstart.
 - **Versie.** `GOTOOLCHAIN=local` staat in de Go-installatie zelf, dus ook in SSH-sessies: vraagt een `go.mod` een nieuwere Go, dan faalt de build in plaats van dat Go stil een andere toolchain ophaalt.
 - **Licentie.** Fundament valt onder AGPL-3.0, en daarmee ook `functl` en de plug-in-SDK (zie [`LICENSES/`](https://github.com/fundament-oss/fundament/tree/master/LICENSES)). Een plug-in die de SDK linkt, valt onder de voorwaarden van de AGPL, inclusief de netwerkclausule: draait je plug-in als dienst voor anderen, dan bied je hun de broncode aan. De scaffold schrijft standaard een Apache-2.0-`LICENSE`; de NeRDS-richtlijn voor overheidscode is EUPL-1.2 (`--license EUPL-1.2`). Laat bij twijfel toetsen welke licentie je plug-in naast de AGPL kan hebben. Verspreid je zelf een image met `INSTALL_GO=true`, dan zit daar een AGPL-binary in.
-- **Wat niet kan.** De testomgeving van Fundament voor plug-ins (een lokaal k3d-cluster; minstens 16 GiB geheugen, 24 GiB aanbevolen) draait niet in de sandbox: k3d heeft rechten nodig die de afscherming van de container ongedaan maken. Draai dat cluster op de host. `just`, `skaffold` en `kubectl` uit de `mise.toml` van de scaffold zitten niet in de image; de `go`-commando's hierboven zijn wat `just build` en `just test` uitvoeren.
+- **Wat niet kan.** De testomgeving van Fundament voor plug-ins (een lokaal k3d-cluster; minstens 16 GiB geheugen, 24 GiB aanbevolen) draait niet in de sandbox: k3d heeft rechten nodig die de afscherming van de container ongedaan maken. Draai dat cluster op de host; hoe de sandbox het dan bereikt, staat in [kubernetes.md](kubernetes.md). `just` en `skaffold` uit de `mise.toml` van de scaffold zitten niet in de image, `kubectl` alleen bij `INSTALL_K8S=true`; de `go`-commando's hierboven zijn wat `just build` en `just test` uitvoeren.
 
 ### Eerste start
 
@@ -86,15 +87,6 @@ Er is gekozen voor een externe volume, deze dien je eerst aan te maken:
 ```
 docker volume create claude-home
 ```
-
-### Devcontainer volume-gedrag
-> Het `claude-home` volume mount de volledige home directory (`/home/claude`). Bij de allereerste start (met een leeg volume) wordt de inhoud vanuit de image gekopieerd. Bij volgende starts heeft de inhoud van het volume voorrang op de image — dit is standaard devcontainer-gedrag en zorgt ervoor dat je instellingen, auth tokens, shell history en geinstalleerde tools behouden blijven tussen herstarts en rebuilds. Keerzijde: nieuwe plugins, skills, rtk-patches of SDKman-installs die je via toggles toevoegt, verschijnen pas na het verwijderen en opnieuw aanmaken van het volume:
-> ```
-> docker compose down
-> docker volume rm claude-home && docker volume create claude-home
-> docker compose up --build --detach
-> ```
-> Het is aan de gebruiker om te bepalen wanneer je dit wil doen. Sommige upgrades kunnen ook met de hand toegevoegd worden.
 
 Start daarna de container met docker compose
 ```
@@ -116,6 +108,15 @@ Als je voor de variant met de shell kiest kun je zelf eerst naar je project-dire
 je meer controle over de historie van Claude (die wordt onthouden voor de directory waarin Claude gestart is).
 
 Voor beide shells wordt er een alias `claude-danger` aangemaakt, daarmee wordt claude gestart met de vlag `--dangerously-skip-permissions`.
+
+### Devcontainer volume-gedrag
+> Het `claude-home` volume mount de volledige home directory (`/home/claude`). Bij de allereerste start (met een leeg volume) wordt de inhoud vanuit de image gekopieerd. Bij volgende starts heeft de inhoud van het volume voorrang op de image — dit is standaard devcontainer-gedrag en zorgt ervoor dat je instellingen, auth tokens, shell history en geinstalleerde tools behouden blijven tussen herstarts en rebuilds. Keerzijde: nieuwe plugins, skills, rtk-patches of SDKman-installs die je via toggles toevoegt, verschijnen pas na het verwijderen en opnieuw aanmaken van het volume:
+> ```
+> docker compose down
+> docker volume rm claude-home && docker volume create claude-home
+> docker compose up --build --detach
+> ```
+> Het is aan de gebruiker om te bepalen wanneer je dit wil doen. Sommige upgrades kunnen ook met de hand toegevoegd worden.
 
 ## Na installatie
 Eenmaal in de container kun je de volgende tools configureren:
@@ -162,6 +163,9 @@ python3 --version
 pip3 --version
 python3 -m venv .venv && source .venv/bin/activate
 ```
+
+### Kubernetes (kubectl en helm)
+Met `INSTALL_K8S=true` zijn `kubectl` en `helm` beschikbaar. Charts controleren (`helm lint`, `helm template`) kan meteen, zonder cluster. Een cluster buiten de container koppelen, en welke rechten je Claude daarbij geeft, staat in [kubernetes.md](kubernetes.md). Lees dat eerst: met toegang tot een cluster kan Claude alles wat de toegangsgegevens toestaan.
 
 ## Afsluiten
 ```
