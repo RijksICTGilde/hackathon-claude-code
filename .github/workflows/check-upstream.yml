@@ -185,7 +185,7 @@ jobs:
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NODE_VERSION=$current" "NODE_VERSION=$latest" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_amd64" "$sha_amd64" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_arm64" "$sha_arm64" 1
-          # De README tools-tabel noemt de major-versie ('Node.js 24 LTS'); bij een
+          # De README tools-tabel noemt de major-versie ('Node.js <major> LTS'); bij een
           # major-bump gaat die mee in dezelfde PR. vervang-pin.sh weigert spaties,
           # dus hier een eigen telling vóór en na. Beide majors zijn hierboven al
           # als cijfers gevalideerd.
