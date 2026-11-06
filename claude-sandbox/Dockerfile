@@ -16,10 +16,10 @@ ARG INSTALL_CAVEMAN=true
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
 #
-# De expansie van APT_UPGRADE_EPOCH hieronder is het cache-busting-mechanisme en
-# mag niet weg: zonder wijziging in dit commando komt `apt-get upgrade` uit de
-# layer cache en blijft hij op oude pakketversies staan, terwijl de digest-pin op
-# de base image Debians rebuilds niet volgt. De job apt-security-refresh in
+# APT_UPGRADE_EPOCH is het cache-busting-mechanisme: een nieuwe waarde
+# invalideert deze laag en elke RUN erna, zodat `apt-get upgrade` niet uit de
+# layer cache komt terwijl de digest-pin op de base image Debians rebuilds niet
+# volgt. De echo zet de epoch in de build-log. De job apt-security-refresh in
 # check-upstream.yml bumpt de waarde.
 #
 # De upgrade zit bewust in deze eerste apt-laag en niet in een eigen laag
@@ -264,6 +264,9 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 # betekent staat in ADR 0001 §2.2.2 "Single-uid default, multi-uid opt-in".
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
+#
+# De ARG's staan direct boven deze laag: een build-arg invalideert elke RUN na
+# zijn declaratie, dus zo bouwt een flip alleen deze laag en wat erna komt opnieuw.
 ARG INSTALL_PODMAN=false
 ARG PODMAN_MULTIUID=false
 RUN case "$INSTALL_PODMAN" in \
@@ -287,10 +290,9 @@ RUN case "$INSTALL_PODMAN" in \
 # waarvoor hieronder een workaround staat: README-sectie "Kepler (SSH-remote)".
 # Let op: houd de README-tools-tabel + Kepler-sectie in sync.
 #
-# De ARG staat direct boven deze laag, en de laag achter de podman-installatie:
-# een build-arg invalideert elke RUN na zijn declaratie, dus zo laat een flip van
-# INSTALL_SSHD de apt-laag van INSTALL_PODMAN en alles daarvoor in de cache. De
-# laag staat vóór de setuid-strip, zodat die ook over de openssh-bestanden gaat.
+# Na de podman-laag, met de ARG direct erboven (zie daar), zodat een flip van
+# INSTALL_SSHD de podman-laag in de cache laat. Vóór de setuid-strip, zodat die
+# ook over de openssh-bestanden gaat.
 #
 # Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
 # eerste start op het volume. De `rm` is nodig omdat Debians
