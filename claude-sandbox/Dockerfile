@@ -12,9 +12,6 @@ ARG INSTALL_OVERHEID_ZAD_ACTIONS=false
 ARG INSTALL_ANTHROPIC_PLUGINS=true
 ARG INSTALL_LOCAL_SKILLS=true
 ARG INSTALL_CAVEMAN=true
-ARG INSTALL_PODMAN=false
-ARG PODMAN_MULTIUID=false
-ARG INSTALL_SSHD=false
 
 # Basis development tools en netwerk/security tools (geïnspireerd op de officiële devcontainer)
 # Let op: houd de tools-lijst in de README in sync bij wijzigingen
@@ -267,6 +264,8 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 # betekent staat in ADR 0001 §2.2.2 "Single-uid default, multi-uid opt-in".
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
+ARG INSTALL_PODMAN=false
+ARG PODMAN_MULTIUID=false
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
@@ -288,9 +287,10 @@ RUN case "$INSTALL_PODMAN" in \
 # waarvoor hieronder een workaround staat: README-sectie "Kepler (SSH-remote)".
 # Let op: houd de README-tools-tabel + Kepler-sectie in sync.
 #
-# Staat achter de podman-installatie zodat een flip van INSTALL_SSHD niet de
-# apt-laag van INSTALL_PODMAN invalideert, en vóór de setuid-strip zodat die ook
-# over de openssh-bestanden gaat.
+# De ARG staat direct boven deze laag, en de laag achter de podman-installatie:
+# een build-arg invalideert elke RUN na zijn declaratie, dus zo laat een flip van
+# INSTALL_SSHD de apt-laag van INSTALL_PODMAN en alles daarvoor in de cache. De
+# laag staat vóór de setuid-strip, zodat die ook over de openssh-bestanden gaat.
 #
 # Geen host-keys in de image (ADR 0001 §2.3.4); entrypoint-root.sh maakt ze bij
 # eerste start op het volume. De `rm` is nodig omdat Debians
@@ -323,6 +323,7 @@ RUN case "$INSTALL_PODMAN" in \
 # HostKey-pad — met `sshd -h` erlangs zou sshd de config-HostKey er alleen bij
 # nemen en per aanroep een ERROR-regel over de ontbrekende sleutel printen. De
 # wegwerpsleutel verdwijnt weer in dezelfde laag.
+ARG INSTALL_SSHD=false
 RUN case "$INSTALL_SSHD" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends openssh-server && \
