@@ -34,5 +34,9 @@ jobs:
       - name: Fixtures van de wekelijkse versiejobs
         run: .github/scripts/test-check-upstream-jobs.sh
 
+      # kubectl en jq staan op ubuntu-latest; de fixtures falen als ze ontbreken.
+      - name: Fixtures van de kubeconfig-controle
+        run: .github/scripts/test-controleer-kubeconfig.sh
+
       - name: Sleutels in .trivyignore.yaml afdwingen
         run: .github/scripts/valideer-trivyignore.sh

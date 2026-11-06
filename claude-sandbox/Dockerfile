@@ -485,7 +485,8 @@ USER root
 # COPY landt sowieso als root:root; de chmod doen we expliciet.
 COPY entrypoint-root.sh /opt/entrypoint-root.sh
 COPY entrypoint.sh /opt/entrypoint.sh
-RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh
+COPY controleer-kubeconfig.sh /opt/controleer-kubeconfig.sh
+RUN chmod 0755 /opt/entrypoint-root.sh /opt/entrypoint.sh /opt/controleer-kubeconfig.sh
 
 # Vangnet tegen de footgun hierboven: wie per ongeluk als root de container in
 # exec't, krijgt het te zien in plaats van ongemerkt als root te werken en
