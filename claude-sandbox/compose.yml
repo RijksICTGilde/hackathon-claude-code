@@ -18,6 +18,8 @@ services:
         # Optioneel, default false: OpenSSH-server voor de Kepler-remote-opzet
         # (zie compose.override.kepler.yml + README 'Kepler (SSH-remote)').
         INSTALL_SSHD: "${INSTALL_SSHD:-false}"
+        # Optioneel, default false: Go en functl voor Fundament-plug-ins.
+        INSTALL_GO: "${INSTALL_GO:-false}"
         # Optioneel, default false: kubectl en helm; een cluster koppelen gaat
         # via compose.override.kubeconfig.yml.
         INSTALL_K8S: "${INSTALL_K8S:-false}"
