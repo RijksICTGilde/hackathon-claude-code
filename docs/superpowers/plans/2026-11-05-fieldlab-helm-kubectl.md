@@ -383,14 +383,27 @@ Docker Engine, arm64, en de volledige image-build.
 
 **kubectl volgt `stable-<minor>.txt`.** De minor komt uit de pin, dus de job bumpt alleen
 patches. Noemt dat bestand een andere minor, dan faalt de job. Een nieuwere minor in `stable.txt`
-geeft altijd een `::warning::` in de run, ook zonder patch, en een zin in de PR-body als er een
-PR komt. Zo blijft de melding zichtbaar als de gepinde minor geen patches meer krijgt.
+geeft een `::warning::` in de run, ook zonder patch, en een zin in de PR-body als er een PR
+komt. Ligt `stable.txt` drie of meer minors voor (of een andere major), dan valt de gepinde
+minor buiten de drie die upstream ondersteunt: dan faalt de job. Er komen dan geen patches en
+dus geen auto-PR meer; een waarschuwing in een groene geplande run ziet niemand, een rode run
+geeft een mail.
+
+**SHA's ook bij gelijke versie tegen upstream.** Zonder nieuwe release haalt de job de
+checksums van de gepinde versie op en vergelijkt ze met de pins. Een verkeerd overgenomen of
+upstream gewijzigde checksum valt zo binnen een week op; CI bouwt de K8S-laag niet op arm64.
+De telling van de pins weigert een hash van meer dan 64 tekens (`(?![a-f0-9])`).
 
 **helm kiest zelf uit de releaselijst.** helm brengt v3 en v4 naast elkaar uit (v4.3.1 en
-v3.22.1 staan direct na elkaar in de lijst), dus `releases/latest` kan een v3-patch zijn. De job haalt één pagina (`per_page=100`) en houdt alleen tags over die geen concept
-en geen pre-release zijn en exact `vX.Y.Z` zijn (`\A…\z`: `$` laat in jq een afsluitende newline
-door). Daarna sorteert hij numeriek en kiest hij binnen de gepinde major. Een hogere major
-wordt gemeld, net als bij kubectl.
+v3.22.1 staan direct na elkaar in de lijst), dus `releases/latest` kan een v3-patch zijn. De job
+haalt alle pagina's (`gh api --paginate`, samengevoegd met `jq -s`) en houdt alleen tags over
+die geen concept en geen pre-release zijn en exact `vX.Y.Z` zijn (`\A…\z`: `$` laat in jq een
+afsluitende newline door). Daarna sorteert hij numeriek en kiest hij binnen de gepinde major.
+Staat de gepinde versie zelf niet in die lijst, dan faalt de job: de lijst is dan onvolledig of
+teruggezet. Daarmee is een lagere `latest` dan de pin onmogelijk en vervalt de aparte
+downgradecontrole. Een hogere major wordt gemeld, net als bij kubectl, maar laat de job niet
+falen: een nieuwe helm-major maakt de vorige niet meteen onveilig, en er is geen
+supportbeleid dat een vaste grens geeft.
 
 **Gepubliceerde checksums, niet zelf hashen.** `kubectl.sha256` van `dl.k8s.io` en
 `.sha256sum` van `get.helm.sh` komen van dezelfde host als de binary. Zelf downloaden en hashen
@@ -405,9 +418,15 @@ helm-auto-PR conflicteerden daardoor altijd. Nu heeft elke tool een eigen `case`
 ertussen die geen van beide jobs wijzigt. Beide `case`-blokken weigeren een onbekende
 architectuur.
 
-**README en `docs/kubernetes.md` verschuiven mee bij een helm-minor.** Beide noemen `4.3`.
-`vervang-pin.sh` weigert een spatie, dus de job vervangt `4.3` met precies één treffer per
-bestand. Bij kubectl verandert de minor nooit via de job.
+**README en `docs/kubernetes.md` verschuiven mee bij een helm-minor.** De job vervangt de
+vermelding met de omringende tekst (`helm 4.3 (` en `` `helm` (4.3) ``), met precies één treffer
+per bestand, zodat een ander getal met dezelfde cijfers blijft staan. `vervang-pin.sh` weigert
+spaties en haakjes, dus dit gaat via `perl` met `\Q…\E`. Bij kubectl verandert de minor nooit
+via de job.
+
+**Suppressies opruimen.** De PR-bodies van beide jobs vragen de reviewer de suppressies op die
+binary in `.trivyignore.yaml` na te lopen, zoals `npm-version` al doet. Een overbodige
+suppressie maakt niets rood en zou anders blijven staan tot `expired_at`.
 
 **Plaats in de bestanden.** De jobs en fixtures staan achteraan, en de variant-build ook. PR 2
 (#211) voegt zijn jobs in na `rtk-version` en voor `build`. Zo voegt deze PR geen conflict
@@ -422,7 +441,9 @@ met #211 toe.
 De controlestap leest de pins uit de Dockerfile en draait `kubectl version --client -o json` en
 `helm version` als `claude`, met `env -i` en zonder netwerk. Elke `docker run` wordt eerst
 toegewezen, zodat een falende run telt. Trivy scant met `TRIVY_PKG_TYPES: library`; de
-os-pakketten scant `build-and-push` al.
+os-pakketten scant `build-and-push` al. De scan dekt alle language-pakketten, ook npm en pip van
+de default-image; de comment zegt dat nu. `skip-dirs` voor die paden is afgewezen: meer
+configuratie om een signaal weg te halen dat op main nergens anders binnenkomt.
 
 **Suppressies voor de huidige binaries.** Trivy (lokaal, `aquasec/trivy:latest`, `rootfs` op
 de twee binaries) vindt drie fixbare HIGH's:
@@ -433,9 +454,17 @@ de twee binaries) vindt drie fixbare HIGH's:
 
 Er is geen release met de fix: v1.35.10 is de laatste 1.35-patch, v4.3.1 de laatste v4. Zonder
 suppressie komt de nieuwe job rood binnen, zonder iets dat een PR kan verhelpen. De drie regels
-zijn gebonden aan het pad van de binary en verlopen op 2026-12-31. De helm-regel zegt eerlijk
-dat de bevinding relevant is: helm praat TLS met repositories, registries en de API-server.
-Zelf bouwen met een nieuwere Go is afgewezen, omdat dan de pin op de officiële binary vervalt.
+zijn gebonden aan het pad van de binary. Zelf bouwen met een nieuwere Go is afgewezen, omdat dan
+de pin op de officiële binary vervalt.
+
+- De helm-regel onderbouwt het risico: misbruik vraagt een positie op het netwerkpad én een
+  certificaat onder een gedenyliste tussen-CA; het raakt repo- en registry-verkeer, nauwelijks
+  de API-server met eigen CA. Hij verloopt op 2026-11-30, na de eerstvolgende helm-patchrelease.
+  `docs/kubernetes.md` meldt de CVE aan gebruikers tot de bump.
+- `x/text/secure/precis` komt in de kubectl-binary niet voor (0 treffers op de pakketnaam;
+  `bidirule` en `unicode/norm` wel): de kwetsbare code van CVE-2026-56851 is onbereikbaar.
+- CVE-2026-78669 treft kubectl tegenover elke vijandige HTTP/2-server, ook een URL bij `-f`.
+- De kubectl-regels verlopen op 2026-12-31.
 
 ### Verificatie
 
@@ -478,6 +507,23 @@ Zelf bouwen met een nieuwere Go is afgewezen, omdat dan de pin op de officiële 
   - rood bij een andere kubectl-pin, een andere helm-pin, een falende `docker run` en een
     onleesbare pin.
 - Trivy met de nieuwe `.trivyignore.yaml` op de twee binaries: 0 bevindingen, rc 0.
+
+Na reviewronde 1:
+
+- actionlint zonder shellcheck: schoon; shellcheck (ook style) op de losgetrokken run-blokken
+  van `kubectl-version`, `helm-version` en `build-k8s-variant`: schoon.
+- `test-check-upstream-jobs.sh` 230/0, `test-vervang-pin.sh` 20/0,
+  `test-valideer-trivyignore.sh` 30/0, `test-apt-upgrade-beschikbaar.sh` 22/0,
+  `valideer-trivyignore.sh` rc 0.
+- Mutatiecheck (`git archive`-kopie per mutatie): 38 mutaties, 36 gevangen. Niet gevangen, en
+  equivalent: de lookahead in de pin-extractie (de telling erboven dwingt hem al af) en
+  `checksum "$latest"` in plaats van `"$current"` in de tak waar die gelijk zijn.
+- Conflictproef in een scratch-repo: kubectl-patchbump en helm-minorbump, elk door de echte
+  compare-stap, mergen zonder conflict; met de blokken aangrenzend vangt de diff3-fixture het
+  conflict.
+- Tegen de echte upstream: beide jobs `changed=false`, de pins kloppen met de gepubliceerde
+  checksums, kubectl waarschuwt voor v1.37.2 (twee minors voor, dus nog geen fout), de helm-lijst
+  komt via `--paginate` binnen en bevat de pin.
 
 Niet geverifieerd:
 

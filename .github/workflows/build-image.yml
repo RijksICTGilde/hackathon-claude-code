@@ -366,7 +366,10 @@ jobs:
       # buildinfo uit de Go-binaries kubectl en helm, en ziet zo de
       # stdlib-versie en de modules die erin zitten. Die vallen buiten
       # Dependabot; zonder deze scan is er geen signaal op een kwetsbare
-      # dependency van een van beide.
+      # dependency van een van beide. De scan dekt alle language-pakketten van
+      # de image, ook de npm- en pip-pakketten van de default-image: een
+      # bevinding daarin maakt ook deze job rood, ook bij een push naar main,
+      # waar build-and-push niet scant.
       - name: Trivy image scan op de K8S-variant (CRITICAL/HIGH, language-pakketten)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
