@@ -46,6 +46,7 @@ actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .githu
 .github/scripts/test-vervang-pin.sh            # fixtures van de pin-vervanging
 .github/scripts/test-apt-upgrade-beschikbaar.sh # fixtures van de beschikbaarheidsvraag
 .github/scripts/test-check-upstream-jobs.sh    # fixtures van de wekelijkse versiejobs (vereist yq)
+.github/scripts/test-controleer-kubeconfig.sh  # fixtures van de kubeconfig-controle bij de start (vereist kubectl, jq)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.

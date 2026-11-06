@@ -298,7 +298,7 @@ EOF
 
 ### Gebruiken in de sandbox
 
-1. Zet in `.env` het pad uit `F`, als absoluut pad (`echo $HOME` toont het begin): `SANDBOX_KUBECONFIG=/home/jij/.kube/sandbox/config`.
+1. Zet in `.env` het pad uit `F`, als absoluut pad (`echo $HOME` toont het begin): `SANDBOX_KUBECONFIG=/home/jij/.kube/sandbox/config`. Nooit je eigen `~/.kube/config`: bevat het bestand meer dan één token, zoals een clientcertificaat, een exec-plugin of een tweede gebruiker, dan start de sandbox niet. `docker compose logs` toont waarom.
 2. Start de container met `compose.override.kubeconfig.yml`. Gebruik je een podman-override, zet die er met nog een `-f` bij.
    ```bash
    docker compose -f compose.yml -f compose.override.kubeconfig.yml up -d
