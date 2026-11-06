@@ -393,6 +393,83 @@ RUN case "$INSTALL_SSHD" in \
 # er stil weer privésleutelmateriaal in de image te staan.
 RUN test ! -e /home/claude/.ssh-host
 
+# Optioneel: Go en functl voor het ontwikkelen van Fundament-plug-ins. Default
+# uit. Let op: houd in sync: de tools-tabel in README.md, de toelichting bij
+# INSTALL_GO in .env.sample, en in docs/opstarten-en-afsluiten.md de tabel
+# 'Optionele componenten' en de sectie 'Fundament-plug-ins'.
+#
+# Go komt als officiële tarball op versie plus SHA-256 per architectuur. De
+# versie volgt de `go`-regel in de go.mod van Fundament. GOTOOLCHAIN=local staat
+# in $GOROOT/go.env en niet als ENV, zodat hij ook geldt in SSH-sessies; anders
+# haalt Go bij een hogere `go`-regel zelf een andere toolchain op, buiten deze
+# pin om. sed slaagt ook als het patroon ontbreekt, vandaar de controle erna.
+# Telemetry gaat uit vóór de eerste go-aanroep: elke aanroep start anders een
+# los proces dat na de opruiming nog in /root/.config kan schrijven.
+#
+# functl wordt vanaf de bron gebouwd. Upstream publiceert alleen een rolling
+# release waarvan de assets bij elke push vervangen worden; een SHA-pin daarop
+# breekt de build bij de eerstvolgende upstream-push. De pseudo-versie legt de
+# commit vast, de h1-hash de inhoud van de module. functl wordt gebouwd als
+# hoofdmodule met -mod=readonly: dan toetst Go elke dependency aan de go.sum
+# van Fundament, die onder die h1-hash valt. `go install pkg@versie` leest die
+# go.sum niet. De versie-stempel is de pseudo-versie, zodat `functl version`
+# direct als `--sdk-version` bruikbaar is.
+#
+# `functl version` draait als nobody, zonder capabilities en met no_new_privs:
+# het is upstream-code, en de setuid-strip komt pas na deze laag. Wat nobody in
+# /tmp of /var/tmp achterlaat, zou in de image belanden.
+#
+# Symlinks in /usr/local/bin in plaats van een ENV PATH: een non-interactieve
+# SSH-sessie erft de Docker-ENV niet.
+#
+# De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
+# een flip zou anders alle lagen hierboven opnieuw laten bouwen.
+ARG INSTALL_GO=false
+RUN case "$INSTALL_GO" in \
+      true) GO_VERSION=1.27.3 && \
+            FUNCTL_VERSION=v0.0.0-20261105173205-d80f3ad60d43 && \
+            FUNCTL_H1=h1:BDvOO5d4gY15XMsmVALmrHC1agAl+VnFHKxht/IWvn4= && \
+            ARCH=$(dpkg --print-architecture) && \
+            case "$ARCH" in \
+              amd64) GO_SHA=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;; \
+              arm64) GO_SHA=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;; \
+              *) echo "FOUT: Go niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
+            echo "$GO_SHA  /tmp/go.tar.gz" | sha256sum -c - && \
+            tar -xzf /tmp/go.tar.gz -C /usr/local && \
+            rm /tmp/go.tar.gz && \
+            sed -i -e 's/^GOTOOLCHAIN=auto$/GOTOOLCHAIN=local/' \
+                   -e 's/^# Automatically download newer toolchains as directed by go.mod files.$/# De sandbox pint Go; een andere toolchain ophalen staat uit./' \
+                   /usr/local/go/go.env && \
+            ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+            ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+            go telemetry off && \
+            actual=$(go env GOVERSION) && \
+            { [[ "$actual" == "go${GO_VERSION}" ]] || { echo "FOUT: go-versie '$actual' != verwacht 'go${GO_VERSION}'" >&2; exit 1; }; } && \
+            actual=$(env -u GOTOOLCHAIN go env GOTOOLCHAIN) && \
+            { [[ "$actual" == "local" ]] || { echo "FOUT: GOTOOLCHAIN in go.env is '$actual', verwacht 'local'" >&2; exit 1; }; } && \
+            export GOPATH=/tmp/gobuild GOCACHE=/tmp/gocache GOFLAGS=-modcacherw && \
+            info=$(cd /tmp && go mod download -json "github.com/fundament-oss/fundament@${FUNCTL_VERSION}") && \
+            actual=$(jq -r .Sum <<<"$info") && \
+            { [[ "$actual" == "${FUNCTL_H1}" ]] || { echo "FOUT: fundament ${FUNCTL_VERSION} heeft hash '$actual', verwacht '${FUNCTL_H1}'" >&2; exit 1; }; } && \
+            (cd "$(jq -r .Dir <<<"$info")" && \
+              go build -mod=readonly -trimpath \
+                -ldflags "-s -w -X github.com/fundament-oss/fundament/functl/pkg/cli.version=${FUNCTL_VERSION}" \
+                -o /usr/local/bin/functl ./functl/cmd/functl) && \
+            mkdir /tmp/functl-home && chown 65534:65534 /tmp/functl-home && \
+            actual=$(HOME=/tmp/functl-home setpriv --reuid=65534 --regid=65534 --clear-groups \
+                       --no-new-privs --inh-caps=-all --bounding-set=-all functl version) && \
+            { [[ "$actual" == "${FUNCTL_VERSION}" ]] || { echo "FOUT: functl-versie '$actual' != verwacht '${FUNCTL_VERSION}'" >&2; exit 1; }; } && \
+            rm -rf /tmp/gobuild /tmp/gocache /tmp/functl-home /root/.config/go && \
+            { [ ! -d /root/.config ] || rmdir --ignore-fail-on-non-empty /root/.config; } && \
+            { [ ! -e /root/.config/go ] || { echo "FOUT: Go-config blijft achter in /root/.config/go" >&2; exit 1; }; } && \
+            left=$(find /tmp /var/tmp -mindepth 1 -user 65534 -print -quit) && \
+            { [ -z "$left" ] || { echo "FOUT: functl liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
+      false) echo "INFO: INSTALL_GO=false — Go en functl overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_GO='$INSTALL_GO' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
 # heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
 # kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.
