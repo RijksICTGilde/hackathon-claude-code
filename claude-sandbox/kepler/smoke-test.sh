@@ -366,7 +366,12 @@ elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
 else
     # Ook listenaddress: die kan een eigen poort dragen, en sshd rapporteert hem
     # niet als `port`-regel. Een kaal IPv6-adres telt niet mee.
-    mapfile -t LISTEN_PORTS < <(awk '
+    # Een read-lus en geen `mapfile`: die builtin is bash 4+, en macOS levert
+    # bash 3.2 — daar zou het script hier afbreken, halverwege de secties.
+    LISTEN_PORTS=()
+    while IFS= read -r listen_entry; do
+        if [[ -n "$listen_entry" ]]; then LISTEN_PORTS+=("$listen_entry"); fi
+    done < <(awk '
         tolower($1) == "port" { print $2 }
         tolower($1) == "listenaddress" {
             a = $2
