@@ -32,10 +32,11 @@ env:
   IMAGE_NAME: rijksictgilde/claude-sandbox
 
 jobs:
-  # De optionele lagen voor sshd, Go, Podman en de opt-in Overheid-plugins (geo,
-  # zad-actions) bouwen alleen met hun toggle aan. Zonder deze job draaien die
-  # paden, de `sshd -t`/`sshd -T`-asserties op de hardening-drop-in en de scans
-  # op openssh, Podman en de Go-binaries nergens in CI. Alle opt-in-toggles in
+  # De optionele lagen voor sshd, Go, Podman, kubectl en helm en de opt-in
+  # Overheid-plugins (geo, zad-actions) bouwen alleen met hun toggle aan. Zonder
+  # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
+  # hardening-drop-in en de scans op openssh, Podman en de Go-binaries nergens
+  # in CI. Alle opt-in-toggles in
   # één build: de lagen raken elkaar niet, en zo kost het één extra image-build
   # per PR in plaats van een per toggle. Let op wat het niet zegt: komt een laag
   # uit de cache, dan zijn de controles in de Dockerfile niet opnieuw gedraaid —
@@ -72,6 +73,7 @@ jobs:
           build-args: |
             INSTALL_SSHD=true
             INSTALL_GO=true
+            INSTALL_K8S=true
             INSTALL_PODMAN=true
             INSTALL_OVERHEID_GEO=true
             INSTALL_OVERHEID_ZAD_ACTIONS=true
@@ -121,6 +123,41 @@ jobs:
           verwacht "functl version" "$functl_versie" "${functl_pin}"
           verwacht "go env GOTOOLCHAIN" "$toolchain" "local"
 
+      # Om dezelfde reden als hierboven: de Dockerfile controleert de versies
+      # alleen als de laag niet uit de cache komt.
+      - name: kubectl en helm in de image controleren
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          for pin in KUBECTL_VERSION HELM_VERSION; do
+            if [ "$(grep -oE "${pin}=" claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          kubectl_pin=$(grep -oE 'KUBECTL_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          helm_pin=$(grep -oE 'HELM_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          if [ -z "$kubectl_pin" ] || [ -z "$helm_pin" ]; then
+            echo "FOUT: kon KUBECTL_VERSION ('${kubectl_pin}') of HELM_VERSION ('${helm_pin}') niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          in_image() {
+            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
+              claude-sandbox:variants-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
+          }
+          verwacht() { # omschrijving werkelijk verwacht
+            if [ "$2" != "$3" ]; then
+              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
+              exit 1
+            fi
+            echo "ok: $1 = $2"
+          }
+          kubectl_json=$(in_image kubectl version --client -o json) || { echo "FOUT: kubectl version --client faalt in de image" >&2; exit 1; }
+          helm_versie=$(in_image helm version --template '{{.Version}}') || { echo "FOUT: helm version faalt in de image" >&2; exit 1; }
+          kubectl_versie=$(jq -r '.clientVersion.gitVersion // empty' <<<"$kubectl_json") || { echo "FOUT: kubectl version gaf geen leesbare JSON" >&2; exit 1; }
+          verwacht "kubectl version --client" "$kubectl_versie" "$kubectl_pin"
+          verwacht "helm version" "$helm_versie" "$helm_pin"
+
       # Gelijk aan de gate in build-and-push: de lijst gaat mee de language-scan in.
       - name: Sleutels in .trivyignore.yaml afdwingen
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -155,9 +192,9 @@ jobs:
           exit-code: '1'
 
       # Alleen language-pakketten: Trivy leest de buildinfo uit de Go-binaries,
-      # en ziet zo de stdlib-versie van de toolchain en de modules die in functl
-      # zitten. Die vallen buiten Dependabot; zonder deze scan is er geen signaal
-      # op een kwetsbare dependency van functl.
+      # en ziet zo de stdlib-versie van de toolchain en de modules die in functl,
+      # kubectl en helm zitten. Die vallen buiten Dependabot; zonder deze scan is
+      # er geen signaal op een kwetsbare dependency van een van die drie.
       - name: Trivy image scan, language-pakketten (CRITICAL/HIGH)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

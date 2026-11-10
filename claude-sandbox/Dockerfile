@@ -493,8 +493,7 @@ RUN case "$INSTALL_GO" in \
 # De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
 # een flip zou anders alle lagen hierboven opnieuw laten bouwen.
 #
-# TODO(#205): wekelijkse tracking van deze pins en een CI-build van de
-# INSTALL_K8S=true-variant.
+# TODO(#205): wekelijkse tracking van deze pins.
 ARG INSTALL_K8S=false
 RUN case "$INSTALL_K8S" in \
       true) KUBECTL_VERSION=v1.35.10 && \
