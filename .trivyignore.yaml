@@ -1,8 +1,9 @@
 # Trivy-suppressions. Elke uitzondering geldt alleen voor het pad waarvoor hij
 # is opgeschreven en verloopt vanzelf, zodat de lijst niet stil veroudert.
 #
-# Gelezen door .github/workflows/trivy.yml, de image-scan in build-image.yml en
-# apt-security-refresh in check-upstream.yml. Trivy vindt dit bestand niet uit
+# Gelezen door .github/workflows/trivy.yml, de image-scans in build-image.yml
+# (build-and-push en build-variants) en apt-security-refresh in
+# check-upstream.yml. Trivy vindt dit bestand niet uit
 # zichzelf — alleen `.trivyignore` wordt automatisch opgepikt — dus elke
 # scanstap geeft het expliciet mee, en lokaal draaien vraagt om
 # `--ignorefile .trivyignore.yaml`. Misconfig- en secret-scans worden verder
@@ -21,8 +22,8 @@
 
 misconfigurations:
   # De twee misconfig-uitzonderingen leggen een architectuurkeuze vast en niet
-  # een wachtstand; ze verlopen daarom een jaar later dan de CVE-regels, die
-  # aan een npm-release hangen.
+  # een wachtstand; ze verlopen daarom later dan de CVE-regels, die aan een
+  # release van de betreffende tool hangen.
   - id: DS-0026
     paths:
       - "claude-sandbox/Dockerfile"
@@ -72,8 +73,8 @@ vulnerabilities:
   # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
   # weg zodra npm de dependency bumpt; check-upstream.yml opent een PR bij een
   # nieuwe npm-release, wat het moment is om dat na te lopen. Verlopen deze
-  # regels, dan merkt de image-gate in build-image.yml dat als eerste, en die
-  # draait alleen op een pull request.
+  # regels, dan worden build-and-push (alleen op een pull request) en
+  # build-variants rood.
   - id: CVE-2026-109869
     paths:
       - "usr/local/lib/node_modules/npm/**"
@@ -91,3 +92,14 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     expired_at: 2027-01-28
     statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
+
+  # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
+  # INSTALL_GO=true), en gescand door build-variants. Zelf modules bumpen zou de
+  # build laten afwijken van de gepinde, op hash gecontroleerde upstream-module.
+  # check-upstream.yml opent een PR bij een nieuwe functl-commit; haal de regel
+  # dan weg als die commit de module bumpt.
+  - id: CVE-2026-78661
+    paths:
+      - "usr/local/bin/functl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.60.0 in functl — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in functl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0; Fundament main zit nog op 0.60.0.
