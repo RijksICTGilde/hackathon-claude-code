@@ -93,7 +93,7 @@ jobs:
 
       - name: Open auto-PR if upstream changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/script-${{ matrix.name }}
           delete-branch: true
@@ -200,7 +200,7 @@ jobs:
 
       - name: Open auto-PR if Node.js LTS changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/node
           delete-branch: true
@@ -276,7 +276,7 @@ jobs:
 
       - name: Open auto-PR if npm changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/npm
           delete-branch: true
@@ -386,7 +386,7 @@ jobs:
 
       - name: Open auto-PR if delta changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/delta
           delete-branch: true
@@ -486,7 +486,7 @@ jobs:
 
       - name: Open auto-PR if rtk changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/rtk
           delete-branch: true
@@ -1066,7 +1066,7 @@ jobs:
 
       - name: Open auto-PR if a bump is needed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/apt-security-refresh
           delete-branch: true
