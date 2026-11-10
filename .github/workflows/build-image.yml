@@ -36,11 +36,11 @@ jobs:
   # Overheid-plugins (geo, zad-actions) bouwen alleen met hun toggle aan. Zonder
   # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
   # hardening-drop-in en de scans op openssh, Podman en de Go-binaries nergens
-  # in CI. Alle opt-in-toggles in
-  # één build: de lagen raken elkaar niet, en zo kost het één extra image-build
-  # per PR in plaats van een per toggle. Let op wat het niet zegt: komt een laag
-  # uit de cache, dan zijn de controles in de Dockerfile niet opnieuw gedraaid —
-  # een openssh-update in Debian invalideert die laag niet.
+  # in CI. Alle opt-in-toggles in één build: de lagen raken elkaar niet, en zo
+  # kost het één extra image-build per PR in plaats van een per toggle. Let op
+  # wat het niet zegt: komt een laag uit de cache, dan zijn de controles in de
+  # Dockerfile niet opnieuw gedraaid — een openssh-update in Debian invalideert
+  # die laag niet.
   #
   # Een eigen job en niet een stap in build-and-push: daar zou een falende build
   # ná de push maar vóór het signen kunnen landen, precies de toestand
@@ -158,7 +158,7 @@ jobs:
           verwacht "kubectl version --client" "$kubectl_versie" "$kubectl_pin"
           verwacht "helm version" "$helm_versie" "$helm_pin"
 
-      # Gelijk aan de gate in build-and-push: de lijst gaat mee de language-scan in.
+      # Gelijk aan de gate in build-and-push: de lijst gaat mee beide scans in.
       - name: Sleutels in .trivyignore.yaml afdwingen
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: .github/scripts/valideer-trivyignore.sh
@@ -166,15 +166,13 @@ jobs:
       # De controles en scans draaien elk ook als een eerdere ervan faalt, zodat
       # een bevinding in de ene die in de andere niet verbergt.
       #
-      # De andere Trivy-runs zijn `scan-type: fs` en zien daarmee geen enkel
-      # apt-pakket. openssh-server en de Podman-pakketten komen ongepind uit apt
-      # en vallen buiten Dependabot, dus zonder deze scan is er geen enkel
-      # signaal op een kwetsbare sshd of Podman. ignore-unfixed houdt het
-      # actionable: alleen CVE's met een beschikbare fix blokkeren, en die fix is
-      # een rebuild.
+      # De image-scans in build-and-push en apt-security-refresh zien alleen de
+      # default-image. openssh-server en de Podman-pakketten zitten alleen in
+      # deze variant, komen ongepind uit apt en vallen buiten Dependabot; zonder
+      # deze scan is er geen signaal op een kwetsbare sshd of Podman.
+      # ignore-unfixed houdt het actionable: alleen CVE's met een beschikbare
+      # fix blokkeren, en die fix is een rebuild.
       #
-      # Alleen os-pakketten: de npm-modules die met de Node.js-tarball meekomen
-      # zitten net zo goed in de default-image, die hier niet gescand wordt.
       # TRIVY_PKG_TYPES i.p.v. een action-input, zodat het niet afhangt van welke
       # inputs deze versie van de action doorgeeft.
       - name: Trivy image scan, os-pakketten (CRITICAL/HIGH)
@@ -189,12 +187,14 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
-      # Alleen language-pakketten: Trivy leest de buildinfo uit de Go-binaries,
-      # en ziet zo de stdlib-versie van de toolchain en de modules die in functl,
-      # kubectl en helm zitten. Die vallen buiten Dependabot; zonder deze scan is
-      # er geen signaal op een kwetsbare dependency van een van die drie.
+      # Trivy leest de buildinfo uit de Go-binaries, en ziet zo de stdlib-versie
+      # van de toolchain en de modules die in functl, kubectl en helm zitten. Die
+      # vallen buiten Dependabot; zonder deze scan is er geen signaal op een
+      # kwetsbare dependency van een van die drie. De npm- en pip-pakketten van
+      # de default-image scant deze stap ook, ook bij een push naar main.
       - name: Trivy image scan, language-pakketten (CRITICAL/HIGH)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
