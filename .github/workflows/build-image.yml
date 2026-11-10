@@ -32,13 +32,14 @@ env:
   IMAGE_NAME: rijksictgilde/claude-sandbox
 
 jobs:
-  # De optionele lagen voor sshd en Go bouwen alleen met hun toggle aan. Zonder
-  # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
-  # hardening-drop-in en de scans op openssh en de Go-binaries nergens in CI.
-  # Beide toggles in één build: de lagen raken elkaar niet, en zo kost het één
-  # extra image-build per PR in plaats van een per toggle. Let op wat het niet
-  # zegt: komt een laag uit de cache, dan zijn de controles in de Dockerfile niet
-  # opnieuw gedraaid — een openssh-update in Debian invalideert die laag niet.
+  # De optionele lagen voor sshd, Go, Podman en de opt-in Overheid-plugins (geo,
+  # zad-actions) bouwen alleen met hun toggle aan. Zonder deze job draaien die
+  # paden, de `sshd -t`/`sshd -T`-asserties op de hardening-drop-in en de scans
+  # op openssh, Podman en de Go-binaries nergens in CI. Alle opt-in-toggles in
+  # één build: de lagen raken elkaar niet, en zo kost het één extra image-build
+  # per PR in plaats van een per toggle. Let op wat het niet zegt: komt een laag
+  # uit de cache, dan zijn de controles in de Dockerfile niet opnieuw gedraaid —
+  # een openssh-update in Debian invalideert die laag niet.
   #
   # Een eigen job en niet een stap in build-and-push: daar zou een falende build
   # ná de push maar vóór het signen kunnen landen, precies de toestand
@@ -58,7 +59,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build met INSTALL_SSHD=true en INSTALL_GO=true
+      - name: Build met alle opt-in-toggles aan
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -71,6 +72,9 @@ jobs:
           build-args: |
             INSTALL_SSHD=true
             INSTALL_GO=true
+            INSTALL_PODMAN=true
+            INSTALL_OVERHEID_GEO=true
+            INSTALL_OVERHEID_ZAD_ACTIONS=true
           cache-from: |
             type=gha,scope=variants
             type=gha
@@ -126,10 +130,11 @@ jobs:
       # een bevinding in de ene die in de andere niet verbergt.
       #
       # De andere Trivy-runs zijn `scan-type: fs` en zien daarmee geen enkel
-      # apt-pakket. openssh-server komt ongepind uit apt en valt buiten
-      # Dependabot, dus zonder deze scan is er geen enkel signaal op een
-      # kwetsbare sshd. ignore-unfixed houdt het actionable: alleen CVE's met
-      # een beschikbare fix blokkeren, en die fix is een rebuild.
+      # apt-pakket. openssh-server en de Podman-pakketten komen ongepind uit apt
+      # en vallen buiten Dependabot, dus zonder deze scan is er geen enkel
+      # signaal op een kwetsbare sshd of Podman. ignore-unfixed houdt het
+      # actionable: alleen CVE's met een beschikbare fix blokkeren, en die fix is
+      # een rebuild.
       #
       # Alleen os-pakketten: de npm-modules die met de Node.js-tarball meekomen
       # zitten net zo goed in de default-image, die hier niet gescand wordt.
