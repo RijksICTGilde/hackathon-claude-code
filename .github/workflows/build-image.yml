@@ -210,31 +210,33 @@ jobs:
           trivyignores: .trivyignore.yaml
           exit-code: '1'
 
-      # Een regel die niets meer raakt, houdt de scans hierboven groen, ook na
-      # expired_at; zonder deze stap blijft hij staan, met elke melding erover.
-      # Deze image bevat alles van de default-image en elke opt-in-laag, dus
-      # elke regel onder `vulnerabilities` hoort hier iets te raken. Daarom os-
-      # én language-pakketten, en dezelfde severity en ignore-unfixed als de
-      # gates. De DB komt uit de cache van de scans, zodat ze hetzelfde zien.
-      # Een expliciet leeg ignorefile: zonder vlag leest Trivy een `.trivyignore`
-      # uit de werkmap, en een lege waarde weigert hij.
-      - name: Trivy-rapport zonder suppressies
+      # Een regel die niets meer raakt, houdt elke scan groen, ook na expired_at.
+      # Deze image bevat alles van de default-image en elke opt-in-laag; de
+      # repo-scan dekt wat trivy.yml ziet. Samen raakt elke nog nodige regel
+      # onder `vulnerabilities` iets. Severity tot MEDIUM, zoals de SARIF-scan
+      # in trivy.yml. trivy staat op PATH via trivy-action hierboven, en de DB
+      # komt uit diens cache.
+      - name: Trivy-rapporten zonder suppressies
         id: rapport
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
+          # Zonder vlag leest Trivy een `.trivyignore` uit de werkmap, en een
+          # lege waarde weigert hij.
           : > "${RUNNER_TEMP}/geen-suppressies.yaml"
-          trivy image --cache-dir "${GITHUB_WORKSPACE}/.cache/trivy" \
-            --skip-db-update --skip-java-db-update \
-            --scanners vuln --pkg-types os,library \
-            --severity CRITICAL,HIGH --ignore-unfixed \
-            --ignorefile "${RUNNER_TEMP}/geen-suppressies.yaml" \
-            --format json --output trivy-zonder-suppressies.json \
-            claude-sandbox:variants-scan
+          gemeen=(--cache-dir "${GITHUB_WORKSPACE}/.cache/trivy" --skip-db-update
+                  --scanners vuln --severity "CRITICAL,HIGH,MEDIUM" --ignore-unfixed
+                  --ignorefile "${RUNNER_TEMP}/geen-suppressies.yaml" --format json)
+          trivy image "${gemeen[@]}" --pkg-types os,library \
+            --output "${RUNNER_TEMP}/trivy-image.json" claude-sandbox:variants-scan
+          trivy fs "${gemeen[@]}" --skip-dirs .cache \
+            --output "${RUNNER_TEMP}/trivy-repo.json" .
 
       - name: Verweesde suppressies in .trivyignore.yaml
         if: ${{ !cancelled() && steps.rapport.outcome == 'success' }}
-        run: .github/scripts/controleer-verweesde-suppressies.sh trivy-zonder-suppressies.json
+        run: >-
+          .github/scripts/controleer-verweesde-suppressies.sh .trivyignore.yaml
+          "${RUNNER_TEMP}/trivy-image.json" "${RUNNER_TEMP}/trivy-repo.json"
 
   build:
     name: build-and-push

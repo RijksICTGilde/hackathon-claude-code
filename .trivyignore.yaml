@@ -1,11 +1,12 @@
 # Trivy-suppressions. Elke uitzondering geldt alleen voor het pad waarvoor hij
-# is opgeschreven en verloopt vanzelf, zodat de lijst niet stil veroudert.
+# is opgeschreven en verloopt; build-variants meldt een regel die niets meer
+# raakt.
 #
 # Gelezen door .github/workflows/trivy.yml, de image-scans in build-image.yml
 # (build-and-push en build-variants) en apt-security-refresh in
-# check-upstream.yml. Trivy vindt dit bestand niet uit
-# zichzelf — alleen `.trivyignore` wordt automatisch opgepikt — dus elke
-# scanstap geeft het expliciet mee, en lokaal draaien vraagt om
+# check-upstream.yml. Trivy vindt dit bestand niet uit zichzelf — alleen
+# `.trivyignore` wordt automatisch opgepikt — dus elke scanstap geeft het
+# expliciet mee, en lokaal draaien vraagt om
 # `--ignorefile .trivyignore.yaml`. Misconfig- en secret-scans worden verder
 # ongefilterd gegated; bewuste uitzonderingen horen hier met reden te staan.
 #
@@ -17,9 +18,10 @@
 #
 # Een regel onder `vulnerabilities` die niets meer raakt, houdt elke gate
 # groen, ook na expired_at. Daarop faalt build-variants in build-image.yml.
-# Een melding in de documentatie over een gesuppreste CVE draagt een
-# HTML-comment `trivyignore: <id>`; scriptcontroles faalt zodra de regel weg
-# is en de melding niet.
+# Een melding in de documentatie over een gesuppreste CVE draagt
+# `<!-- trivyignore: <id> <pad-of-purl> -->`, met de binding van de regel;
+# scriptcontroles faalt zodra de regel weg is en de melding niet. Een regel
+# onder `vulnerabilities` bindt daarom aan precies één pad of purl.
 #
 # De vorm wordt afgedwongen door .github/scripts/valideer-trivyignore.sh, dat
 # in elke scanjob draait en in de workflow scriptcontroles: Trivy negeert een

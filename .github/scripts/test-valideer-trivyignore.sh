@@ -94,6 +94,17 @@ toets "expires_at in plaats van expired_at" 1 expiry-typo.yaml
 toets "tweede YAML-document"       1 twee-documenten.yaml
 toets "merge-key uit een anker"    1 anker.yaml
 
+# Een vulnerabilities-regel met twee bindingen blijft onderdrukken als één
+# ervan niets meer raakt; misconfig-regels vallen buiten die eis.
+printf 'vulnerabilities:\n  - id: CVE-1\n    paths: ["a", "b"]\n    expired_at: 2027-08-26\n    statement: reden\n' \
+  > "${werkmap}/twee-paden.yaml"
+printf 'vulnerabilities:\n  - id: CVE-1\n    paths: ["a"]\n    purls: ["pkg:npm/tar"]\n    expired_at: 2027-08-26\n    statement: reden\n' \
+  > "${werkmap}/pad-en-purl.yaml"
+regel '    paths: ["a", "b"]\n' > "${werkmap}/misconfig-twee-paden.yaml"
+toets "vulnerabilities: twee paden"   1 twee-paden.yaml
+toets "vulnerabilities: pad en purl"  1 pad-en-purl.yaml
+toets "misconfig: twee paden"         0 misconfig-twee-paden.yaml
+
 # Vormen waar Trivy zelf op struikelt of die niets doen.
 regel '    paths: "a"\n'                             > "${werkmap}/scalar-pad.yaml"
 printf 'misconfigurations:\n  - id: 12345\n    paths: ["a"]\n    expired_at: 2027-08-26\n    statement: reden\n' \
