@@ -32,8 +32,15 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
 
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
-| 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `kubectl` en `helm`, kubeconfig-override, documentatie over koppelen, netwerk en rechten | Refs #205 |
-| 4 | `chore/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures, CI-build van de K8S-variant | Refs #205 |
+| 3 | `feat/helm-kubectl` (op #219) | `INSTALL_K8S`: `kubectl` en `helm`, kubeconfig-override, documentatie over koppelen, netwerk en rechten, en de K8S-laag in `build-variants` | Refs #205 |
+| 4 | `chore/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures | Refs #205 |
+
+PR 3 staat op #219, dat de opt-in-varianten in één job `build-variants` bouwt en scant. Zo
+wordt de K8S-laag getest in de PR die hem introduceert: `INSTALL_K8S=true` gaat mee in die build,
+met een stap die `kubectl version --client` en `helm version` in de image tegen de pins toetst. De
+language-scan van `build-variants` ziet daarna kubectl en helm. De suppressies voor hun
+CVE's en de helm-melding in `docs/kubernetes.md` zitten daarom ook in PR 3. Een losse
+K8S-job zou een tweede image-build per PR kosten, voor een laag die de andere niet raakt.
 
 #205 blijft open: deployen naar een echt cluster (op de host en op afstand) is hier niet getest.
 
@@ -370,6 +377,11 @@ gedragsclaims over Fundament anders dan door het lezen van de broncode, Docker D
 Docker Engine, arm64, en de volledige image-build.
 
 ## PR 4: tracking en CI-build
+
+De job `build-k8s-variant` en de suppressies hieronder zijn naar PR 3 verhuisd, toen die op #219
+kwam te staan. De K8S-laag bouwt en scant nu mee in `build-variants`. PR 4 houdt de wekelijkse
+jobs, de fixtures en de aparte Dockerfile-blokken. Wat hieronder over `build-k8s-variant` staat,
+geldt nu voor de K8S-stap in `build-variants`.
 
 ### Stappen
 

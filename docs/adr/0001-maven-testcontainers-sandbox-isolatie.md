@@ -384,8 +384,8 @@ dat wel.
   privilege separation mogelijk maakt, en de bounding set van de daemon is
   verkleind zodat een lek de firewall niet kan flushen. De niet-root-variant is
   uitgewerkt en verworpen; zie §3. `openssh-server` komt ongepind uit apt en valt
-  buiten Dependabot; de `sshd-hardening`-job in `build-image.yml` scant de
-  os-pakketten van de gebouwde variant daarom met Trivy (`scan-type: image`),
+  buiten Dependabot; de `build-variants`-job in `build-image.yml` scant de
+  os-pakketten van een build met sshd aan daarom met Trivy (`scan-type: image`),
   zodat een kwetsbare sshd wél een signaal geeft. De fix is dan een rebuild — regelmatig herbouwen
   is hier een beveiligingseis, geen hygiëne. Draai deze opt-in
   bij voorkeur in een VM.

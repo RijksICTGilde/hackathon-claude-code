@@ -30,7 +30,7 @@ ARG INSTALL_SSHD=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-11-05
+ARG APT_UPGRADE_EPOCH=2026-11-09
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -92,7 +92,7 @@ RUN NODE_VERSION=v24.22.1 && \
 # Blijf op dezelfde major als de gebundelde npm: een major-bump hoort een eigen
 # afweging te zijn, niet een bijvangst van een security-fix.
 # Versie wordt wekelijks gemonitord door .github/workflows/check-upstream.yml.
-RUN NPM_VERSION=11.21.1 && \
+RUN NPM_VERSION=11.21.2 && \
     npm install -g "npm@${NPM_VERSION}" --no-audit --no-fund && \
     actual=$(npm --version) && \
     { [[ "$actual" == "${NPM_VERSION}" ]] || { echo "FOUT: npm-versie '$actual' != verwacht '${NPM_VERSION}'" >&2; exit 1; }; }
@@ -217,14 +217,14 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.1.0/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.2.0/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
 # RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
 # image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
 # het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
-      true) RTK_VERSION=v1.1.0 sh /tmp/rtk-install.sh && \
+      true) RTK_VERSION=v1.2.0 sh /tmp/rtk-install.sh && \
             rm /tmp/rtk-install.sh && \
             command -v rtk >/dev/null && \
             rtk init -g --auto-patch ;; \
@@ -398,8 +398,13 @@ RUN test ! -e /home/claude/.ssh-host
 # INSTALL_GO in .env.sample, en in docs/opstarten-en-afsluiten.md de tabel
 # 'Optionele componenten' en de sectie 'Fundament-plug-ins'.
 #
+# Go en functl worden wekelijks gemonitord door .github/workflows/check-upstream.yml
+# (jobs go-version en functl-version). De functl-pins staan na de
+# architectuurkeuze en niet naast GO_VERSION: aangrenzende regels laten de twee
+# auto-PR's met elkaar conflicteren.
+#
 # Go komt als officiële tarball op versie plus SHA-256 per architectuur. De
-# versie volgt de `go`-regel in de go.mod van Fundament. GOTOOLCHAIN=local staat
+# versie is minstens de `go`-regel in de go.mod van Fundament. GOTOOLCHAIN=local staat
 # in $GOROOT/go.env en niet als ENV, zodat hij ook geldt in SSH-sessies; anders
 # haalt Go bij een hogere `go`-regel zelf een andere toolchain op, buiten deze
 # pin om. sed slaagt ook als het patroon ontbreekt, vandaar de controle erna.
@@ -427,14 +432,14 @@ RUN test ! -e /home/claude/.ssh-host
 ARG INSTALL_GO=false
 RUN case "$INSTALL_GO" in \
       true) GO_VERSION=1.27.3 && \
-            FUNCTL_VERSION=v0.0.0-20261105173205-d80f3ad60d43 && \
-            FUNCTL_H1=h1:BDvOO5d4gY15XMsmVALmrHC1agAl+VnFHKxht/IWvn4= && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
               amd64) GO_SHA=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;; \
               arm64) GO_SHA=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;; \
               *) echo "FOUT: Go niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
+            FUNCTL_VERSION=v0.0.0-20261105173205-d80f3ad60d43 && \
+            FUNCTL_H1=h1:BDvOO5d4gY15XMsmVALmrHC1agAl+VnFHKxht/IWvn4= && \
             curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
             echo "$GO_SHA  /tmp/go.tar.gz" | sha256sum -c - && \
             tar -xzf /tmp/go.tar.gz -C /usr/local && \

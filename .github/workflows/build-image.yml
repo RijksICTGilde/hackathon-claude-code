@@ -32,18 +32,24 @@ env:
   IMAGE_NAME: rijksictgilde/claude-sandbox
 
 jobs:
-  # De sshd-laag bouwt alleen bij INSTALL_SSHD=true, en juist daarin zitten de
-  # `sshd -t`/`sshd -T`-asserties op de hardening-drop-in. Zonder deze job draait
-  # dat pad nergens in CI. Let op wat het niet zegt: komt de laag uit de cache,
-  # dan zijn de asserties niet opnieuw gedraaid — een openssh-update in Debian
-  # invalideert die laag niet.
+  # De optionele lagen voor sshd, Go, Podman, kubectl en helm en de opt-in
+  # Overheid-plugins (geo, zad-actions) bouwen alleen met hun toggle aan. Zonder
+  # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
+  # hardening-drop-in en de scans op openssh, Podman en de Go-binaries nergens
+  # in CI. Alle opt-in-toggles in
+  # één build: de lagen raken elkaar niet, en zo kost het één extra image-build
+  # per PR in plaats van een per toggle. Let op wat het niet zegt: komt een laag
+  # uit de cache, dan zijn de controles in de Dockerfile niet opnieuw gedraaid —
+  # een openssh-update in Debian invalideert die laag niet.
   #
   # Een eigen job en niet een stap in build-and-push: daar zou een falende build
   # ná de push maar vóór het signen kunnen landen, precies de toestand
   # 'gepusht maar onverifieerbaar' die die job uitsluit. Bouwt niets dat gepusht
   # wordt — dit is een controle, geen artefact.
-  sshd-hardening:
-    name: build-sshd-variant
+  variants:
+    name: build-variants
+    # Niet op tags: dat vult een tag-scoped cache voor een variant die niets publiceert.
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -52,47 +58,156 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build met INSTALL_SSHD=true
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - name: Build met alle opt-in-toggles aan
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: claude-sandbox
           file: claude-sandbox/Dockerfile
           platforms: linux/amd64
           push: false
           load: true
-          tags: claude-sandbox:sshd-scan
-          build-args: INSTALL_SSHD=true
+          tags: claude-sandbox:variants-scan
+          build-args: |
+            INSTALL_SSHD=true
+            INSTALL_GO=true
+            INSTALL_K8S=true
+            INSTALL_PODMAN=true
+            INSTALL_OVERHEID_GEO=true
+            INSTALL_OVERHEID_ZAD_ACTIONS=true
           cache-from: |
-            type=gha,scope=sshd
+            type=gha,scope=variants
             type=gha
-          cache-to: type=gha,mode=min,scope=sshd
+          cache-to: type=gha,mode=min,scope=variants
           provenance: false
           sbom: false
 
+      # De Dockerfile controleert dit al, maar alleen als de laag niet uit de
+      # cache komt. Hier draait het altijd, en zonder de Docker-ENV: zo ziet
+      # een non-interactieve SSH-sessie de image.
+      - name: Go, functl en GOTOOLCHAIN in de image controleren
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          for pin in GO_VERSION FUNCTL_VERSION; do
+            if [ "$(grep -oE "${pin}=" claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          go_pin=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          functl_pin=$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          if [ -z "$go_pin" ] || [ -z "$functl_pin" ]; then
+            echo "FOUT: kon GO_VERSION ('${go_pin}') of FUNCTL_VERSION ('${functl_pin}') niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          in_image() {
+            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
+              claude-sandbox:variants-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
+          }
+          verwacht() { # omschrijving werkelijk verwacht
+            if [ "$2" != "$3" ]; then
+              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
+              exit 1
+            fi
+            echo "ok: $1 = $2"
+          }
+          # Eerst toewijzen: als argument van verwacht gaat de exitcode van
+          # docker run verloren.
+          go_versie=$(in_image go version) || { echo "FOUT: go version faalt in de image" >&2; exit 1; }
+          functl_versie=$(in_image functl version) || { echo "FOUT: functl version faalt in de image" >&2; exit 1; }
+          toolchain=$(in_image go env GOTOOLCHAIN) || { echo "FOUT: go env GOTOOLCHAIN faalt in de image" >&2; exit 1; }
+          verwacht "go version" "$go_versie" "go version go${go_pin} linux/amd64"
+          verwacht "functl version" "$functl_versie" "${functl_pin}"
+          verwacht "go env GOTOOLCHAIN" "$toolchain" "local"
+
+      # Om dezelfde reden als hierboven: de Dockerfile controleert de versies
+      # alleen als de laag niet uit de cache komt.
+      - name: kubectl en helm in de image controleren
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          for pin in KUBECTL_VERSION HELM_VERSION; do
+            if [ "$(grep -oE "${pin}=" claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          kubectl_pin=$(grep -oE 'KUBECTL_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          helm_pin=$(grep -oE 'HELM_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          if [ -z "$kubectl_pin" ] || [ -z "$helm_pin" ]; then
+            echo "FOUT: kon KUBECTL_VERSION ('${kubectl_pin}') of HELM_VERSION ('${helm_pin}') niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          in_image() {
+            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
+              claude-sandbox:variants-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
+          }
+          verwacht() { # omschrijving werkelijk verwacht
+            if [ "$2" != "$3" ]; then
+              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
+              exit 1
+            fi
+            echo "ok: $1 = $2"
+          }
+          kubectl_json=$(in_image kubectl version --client -o json) || { echo "FOUT: kubectl version --client faalt in de image" >&2; exit 1; }
+          helm_versie=$(in_image helm version --template '{{.Version}}') || { echo "FOUT: helm version faalt in de image" >&2; exit 1; }
+          kubectl_versie=$(jq -r '.clientVersion.gitVersion // empty' <<<"$kubectl_json") || { echo "FOUT: kubectl version gaf geen leesbare JSON" >&2; exit 1; }
+          verwacht "kubectl version --client" "$kubectl_versie" "$kubectl_pin"
+          verwacht "helm version" "$helm_versie" "$helm_pin"
+
+      # Gelijk aan de gate in build-and-push: de lijst gaat mee de language-scan in.
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: .github/scripts/valideer-trivyignore.sh
+
+      # De controles en scans draaien elk ook als een eerdere ervan faalt, zodat
+      # een bevinding in de ene die in de andere niet verbergt.
+      #
       # De andere Trivy-runs zijn `scan-type: fs` en zien daarmee geen enkel
-      # apt-pakket. openssh-server komt ongepind uit apt en valt buiten
-      # Dependabot, dus zonder deze scan is er geen enkel signaal op een
-      # kwetsbare sshd. ignore-unfixed houdt het actionable: alleen CVE's met
-      # een beschikbare fix blokkeren, en die fix is een rebuild.
+      # apt-pakket. openssh-server en de Podman-pakketten komen ongepind uit apt
+      # en vallen buiten Dependabot, dus zonder deze scan is er geen enkel
+      # signaal op een kwetsbare sshd of Podman. ignore-unfixed houdt het
+      # actionable: alleen CVE's met een beschikbare fix blokkeren, en die fix is
+      # een rebuild.
       #
       # Alleen os-pakketten: de npm-modules die met de Node.js-tarball meekomen
-      # zitten net zo goed in de default-image, die hier niet gescand wordt. Die
-      # in déze job gaten laten schieten zou de sshd-PR blokkeren op iets dat er
-      # los van staat. TRIVY_PKG_TYPES i.p.v. een action-input, zodat het niet
-      # afhangt van welke inputs deze versie van de action doorgeeft.
-      - name: Trivy image scan op de sshd-variant (CRITICAL/HIGH, os-pakketten)
+      # zitten net zo goed in de default-image, die hier niet gescand wordt.
+      # TRIVY_PKG_TYPES i.p.v. een action-input, zodat het niet afhangt van welke
+      # inputs deze versie van de action doorgeeft.
+      - name: Trivy image scan, os-pakketten (CRITICAL/HIGH)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PKG_TYPES: os
         with:
           scan-type: image
-          image-ref: claude-sandbox:sshd-scan
+          image-ref: claude-sandbox:variants-scan
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
+          exit-code: '1'
+
+      # Alleen language-pakketten: Trivy leest de buildinfo uit de Go-binaries,
+      # en ziet zo de stdlib-versie van de toolchain en de modules die in functl,
+      # kubectl en helm zitten. Die vallen buiten Dependabot; zonder deze scan is
+      # er geen signaal op een kwetsbare dependency van een van die drie.
+      - name: Trivy image scan, language-pakketten (CRITICAL/HIGH)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+        with:
+          scan-type: image
+          image-ref: claude-sandbox:variants-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
   build:
@@ -114,7 +229,7 @@ jobs:
 
       - name: Log in to GHCR
         if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -213,7 +328,7 @@ jobs:
 
       - name: Install cosign
         if: ${{ !contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # Keyless signing via OIDC: ondertekent de image-digest, niet per tag.
       # Alle tags die naar dezelfde digest wijzen erven daarmee de signature.
@@ -286,100 +401,3 @@ jobs:
 
           echo "cosign verify failed after ${attempts} attempts for ${REF}" >&2
           exit 1
-
-  # De K8S-laag bouwt alleen bij INSTALL_K8S=true; zonder deze job draait dat
-  # pad en de scan op kubectl en helm nergens in CI. Een eigen job om dezelfde
-  # reden als build-sshd-variant: bouwt niets dat gepusht wordt.
-  k8s-variant:
-    name: build-k8s-variant
-    # Niet op tags: dat vult een tag-scoped cache voor een variant die niets publiceert.
-    if: github.ref_type != 'tag'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build met INSTALL_K8S=true
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: claude-sandbox
-          file: claude-sandbox/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: claude-sandbox:k8s-scan
-          build-args: INSTALL_K8S=true
-          cache-from: |
-            type=gha,scope=k8s
-            type=gha
-          cache-to: type=gha,mode=min,scope=k8s
-          provenance: false
-          sbom: false
-
-      # De Dockerfile controleert dit al, maar alleen als de laag niet uit de
-      # cache komt. Hier draait het altijd, als claude en zonder de Docker-ENV.
-      - name: kubectl en helm in de image controleren
-        run: |
-          set -euo pipefail
-          for pin in KUBECTL_VERSION HELM_VERSION; do
-            if [ "$(grep -oE "${pin}=" claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
-              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
-              exit 1
-            fi
-          done
-          kubectl_pin=$(grep -oE 'KUBECTL_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
-          helm_pin=$(grep -oE 'HELM_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
-          if [ -z "$kubectl_pin" ] || [ -z "$helm_pin" ]; then
-            echo "FOUT: kon KUBECTL_VERSION ('${kubectl_pin}') of HELM_VERSION ('${helm_pin}') niet uit de Dockerfile lezen" >&2
-            exit 1
-          fi
-          in_image() {
-            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
-              claude-sandbox:k8s-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
-          }
-          verwacht() { # omschrijving werkelijk verwacht
-            if [ "$2" != "$3" ]; then
-              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
-              exit 1
-            fi
-            echo "ok: $1 = $2"
-          }
-          # Eerst toewijzen: als argument van verwacht gaat de exitcode van
-          # docker run verloren.
-          kubectl_json=$(in_image kubectl version --client -o json) || { echo "FOUT: kubectl version --client faalt in de image" >&2; exit 1; }
-          helm_versie=$(in_image helm version --template '{{.Version}}') || { echo "FOUT: helm version faalt in de image" >&2; exit 1; }
-          kubectl_versie=$(jq -r '.clientVersion.gitVersion // empty' <<<"$kubectl_json") || { echo "FOUT: kubectl version gaf geen leesbare JSON" >&2; exit 1; }
-          verwacht "kubectl version --client" "$kubectl_versie" "$kubectl_pin"
-          verwacht "helm version" "$helm_versie" "$helm_pin"
-
-      # Gelijk aan de gate in build-and-push: de lijst gaat mee de scan in.
-      - name: Sleutels in .trivyignore.yaml afdwingen
-        run: .github/scripts/valideer-trivyignore.sh
-
-      # Alleen language-pakketten: de os-pakketten zijn gelijk aan die van de
-      # default-image en worden in build-and-push gescand. Trivy leest de
-      # buildinfo uit de Go-binaries kubectl en helm, en ziet zo de
-      # stdlib-versie en de modules die erin zitten. Die vallen buiten
-      # Dependabot; zonder deze scan is er geen signaal op een kwetsbare
-      # dependency van een van beide. De scan dekt alle language-pakketten van
-      # de image, ook de npm- en pip-pakketten van de default-image: een
-      # bevinding daarin maakt ook deze job rood, ook bij een push naar main,
-      # waar build-and-push niet scant.
-      - name: Trivy image scan op de K8S-variant (CRITICAL/HIGH, language-pakketten)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PKG_TYPES: library
-        with:
-          scan-type: image
-          image-ref: claude-sandbox:k8s-scan
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          scanners: vuln
-          trivyignores: .trivyignore.yaml
-          exit-code: '1'

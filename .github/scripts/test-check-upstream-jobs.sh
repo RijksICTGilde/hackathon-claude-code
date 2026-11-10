@@ -31,17 +31,22 @@ lees_pin() { # variabelenaam
 rtk_nu="$(lees_pin RTK_VERSION)"
 delta_nu="$(lees_pin DELTA_VERSION)"
 node_nu="$(lees_pin NODE_VERSION)"
+node_major="${node_nu#v}"; node_major="${node_major%%.*}"
 npm_nu="$(lees_pin NPM_VERSION)"
 npm_major="${npm_nu%%.*}"
+go_nu="$(lees_pin GO_VERSION)"
+# Een pseudo-versie past niet in het X.Y.Z-patroon van lees_pin.
+functl_nu="$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' "${wortel}/claude-sandbox/Dockerfile" \
+  | head -1 | cut -d= -f2)"
 
-for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}"; do
+for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}" "${go_nu}" "${functl_nu}"; do
   if [ -z "${waarde}" ]; then
     echo "FOUT: kon niet alle pins uit de Dockerfile lezen"
     exit 1
   fi
 done
 
-for job in vendored-scripts rtk-version delta-version node-version npm-version apt-security-refresh; do
+for job in vendored-scripts rtk-version delta-version node-version npm-version go-version functl-version apt-security-refresh; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
   # Precies één run-blok: `yq` plakt er anders meerdere achter elkaar en dan
   # draait de fixture een script dat geen enkele stap zo uitvoert.
@@ -49,6 +54,7 @@ for job in vendored-scripts rtk-version delta-version node-version npm-version a
   # beslisstap los getoetst.
   verwacht_blokken=1
   [ "${job}" = apt-security-refresh ] && verwacht_blokken=3
+  [ "${job}" = node-version ] && verwacht_blokken=2
 
   if [ ! -s "${werkmap}/${job}.sh" ] \
      || [ "$(yq ".jobs.\"${job}\".steps | map(select(has(\"run\"))) | length" "${workflow}")" -ne "${verwacht_blokken}" ]; then
@@ -62,6 +68,16 @@ yq '.jobs."apt-security-refresh".steps[] | select(.id == "compare") | .run' "${w
   > "${werkmap}/epoch.sh"
 if [ ! -s "${werkmap}/epoch.sh" ]; then
   echo "FOUT: geen compare-stap gevonden in apt-security-refresh"
+  exit 1
+fi
+
+# node-version: versievergelijking en library-vergelijking los toetsen.
+yq '.jobs."node-version".steps[] | select(.id == "compare") | .run' "${workflow}" \
+  > "${werkmap}/node-version.sh"
+yq '.jobs."node-version".steps[] | select(.id == "libs") | .run' "${workflow}" \
+  > "${werkmap}/node-libs.sh"
+if [ ! -s "${werkmap}/node-version.sh" ] || [ ! -s "${werkmap}/node-libs.sh" ]; then
+  echo "FOUT: geen compare- of libs-stap gevonden in node-version"
   exit 1
 fi
 
@@ -246,7 +262,20 @@ d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: bump verzet versie en beide SHAs" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v99.0.0" "$uit" "$rc"
 geopend "node: bump zet changed=true" "$d"
-vervangingen "node: drie vervangingen" "$uit" 3
+vervangingen "node: drie pins plus README bij een major-bump" "$uit" 4
+grep -qF "Node.js 99 LTS" "$d/ws/claude-sandbox/README.md" \
+  && ! grep -qF "Node.js ${node_major} LTS" "$d/ws/claude-sandbox/README.md"
+controle "node: major-bump werkt de README tools-tabel bij" $?
+
+d="$(nieuwe_map)"; stub "$d" curl "${node_stub//v99.0.0/v${node_major}.99.0}"
+uit="$(draai "$d" node-version)"; rc=$?
+toets "node: bump binnen dezelfde major" 0 "NODE_VERSION=${node_nu} -> NODE_VERSION=v${node_major}.99.0" "$uit" "$rc"
+vervangingen "node: README ongemoeid binnen dezelfde major" "$uit" 3
+
+d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
+sed -i "s|Node.js ${node_major} LTS|Node.js ${node_major}|" "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" node-version)"; rc=$?
+toets "node: README zonder major-vermelding wordt rood" 1 "precies één 'Node.js ${node_major} LTS'" "$uit" "$rc"
 
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"
 sed -i 's|      amd64) NODE_ARCH=x64;   SHA=|      amd64) NODE_ARCH=x64; SHA=|' "$d/ws/claude-sandbox/Dockerfile"
@@ -282,6 +311,64 @@ sed -i '0,/      arm64) NODE_ARCH=arm64; SHA=[a-f0-9]*/s//      arm64) NODE_ARCH
 uit="$(draai "$d" node-version)"; rc=$?
 toets "node: ontbrekende arm64-pin wordt rood" 1 "NODE_ARCH=arm64" "$uit" "$rc"
 
+# ── node: gedeelde libraries ──
+# De tarballs bevatten een nep-binary waarvan de inhoud de NEEDED-lijst is;
+# readelf is gestubd en leest die terug. Zo is de stap zonder echte ELF te toetsen.
+libs_geval() { # map oude-needed nieuwe-needed (regels gescheiden door \n)
+  local d="$1" v a inhoud
+  for v in "${node_nu}" v99.0.0; do
+    inhoud="$2"; [ "$v" = v99.0.0 ] && inhoud="$3"
+    for a in x64 arm64; do
+      mkdir -p "$d/bouw/node-$v-linux-$a/bin" "$d/tar"
+      printf '%b' "$inhoud" > "$d/bouw/node-$v-linux-$a/bin/node"
+      tar -cJf "$d/tar/node-$v-linux-$a.tar.xz" -C "$d/bouw" "node-$v-linux-$a"
+    done
+  done
+  stub "$d" curl "uit=; url=
+while [ \$# -gt 0 ]; do case \"\$1\" in -o) shift; uit=\"\$1\";; http*) url=\"\$1\";; esac; shift; done
+cp \"$d/tar/\${url##*/}\" \"\$uit\""
+  stub "$d" readelf 'while read -r s; do echo " 0x0000000000000001 (NEEDED)             Shared library: [$s]"; done < "$2"'
+}
+
+sha_van() { sha256sum "$1/tar/$2" | awk '{print $1}'; }
+
+libs_draai() { # map [afwijkende nieuwe x64-sha]
+  local d="$1"
+  mkdir -p "$d/tmp"
+  ( cd "$d/ws/claude-sandbox" \
+      && PATH="$d/bin:$PATH" GITHUB_OUTPUT="$d/uitvoer" TMPDIR="$d/tmp" \
+         CURRENT="${node_nu}" LATEST=v99.0.0 \
+         CURRENT_X64="$(sha_van "$d" "node-${node_nu}-linux-x64.tar.xz")" \
+         CURRENT_ARM64="$(sha_van "$d" "node-${node_nu}-linux-arm64.tar.xz")" \
+         LATEST_X64="${2:-$(sha_van "$d" node-v99.0.0-linux-x64.tar.xz)}" \
+         LATEST_ARM64="$(sha_van "$d" node-v99.0.0-linux-arm64.tar.xz)" \
+         bash "${werkmap}/node-libs.sh" ) 2>&1
+}
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\nlibatomic.so.1\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: nieuwe library wordt gemeld" 0 "libatomic.so.1" "$uit" "$rc"
+grep -qxF 'nieuwe_libs=`libatomic.so.1` (x64), `libatomic.so.1` (arm64)' "$d/uitvoer"
+controle "node-libs: melding noemt beide architecturen" $?
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: gelijke libraries" 0 "nieuwe libraries: geen" "$uit" "$rc"
+grep -qx 'nieuwe_libs=' "$d/uitvoer"
+controle "node-libs: gelijke libraries geven een lege melding" $?
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\nlibm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d" "$(printf "a%.0s" $(seq 64))")"; rc=$?
+toets "node-libs: afwijkende checksum wordt rood" 1 "did NOT match" "$uit" "$rc"
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libm.so.6\n' 'libc.so.6\nlibm.so.6\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: lijst zonder libc wordt rood" 1 "geen libc.so.6" "$uit" "$rc"
+
+d="$(nieuwe_map)"; libs_geval "$d" 'libc.so.6\n' 'libc.so.6\nlib$(id).so\n'
+uit="$(libs_draai "$d")"; rc=$?
+toets "node-libs: vijandige soname geweigerd" 1 "onverwachte soname" "$uit" "$rc"
+
 d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'
 stub "$d" curl 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { shift; printf "<html>proxy</html>\n" > "$1"; }; shift; done'
 uit="$(draai "$d" delta-version)"; rc=$?
@@ -307,6 +394,399 @@ d="$(nieuwe_map)"; stub "$d" curl "$npm_stub"
 dubbele_pin "$d" 'RUN NPM_VERSION=' 'RUN NPM_VERSION=0.0.1 \\'
 uit="$(draai "$d" npm-version)"; rc=$?
 toets "npm: tweede pin wordt rood" 1 "precies één NPM_VERSION-pin" "$uit" "$rc"
+
+# ── Go ──
+sha_a="$(printf 'a%.0s' $(seq 64))"
+sha_b="$(printf 'b%.0s' $(seq 64))"
+go_feed_url='https://go.dev/dl/?mode=json'
+go_minor="${go_nu%.*}"
+go_patch_bump="${go_minor}.$(( ${go_nu##*.} + 1 ))"
+
+# Een feed zoals go.dev hem levert: een release candidate vooraan, die de job
+# moet overslaan, en per versie ook bestanden die geen Linux-archief zijn. Een
+# optionele stabiele versie zonder bestanden staat vóór de hoofdversie, zodat
+# een geval kan toetsen dat de job sorteert in plaats van de eerste te nemen.
+# De stub antwoordt alleen op de echte feed-URL.
+go_feed() { # map versie sha-amd64 sha-arm64 [stabiele-versie-ervoor]
+  jq -n --arg v "$2" --arg a "$3" --arg b "$4" --arg voor "${5:-}" '[
+    {version: "go999.0rc1", stable: false, files: []},
+    if $voor != "" then {version: $voor, stable: true, files: []} else empty end,
+    {version: $v, stable: true, files: [
+      {filename: ($v + ".src.tar.gz"), kind: "source", sha256: ("c" * 64)},
+      {filename: ($v + ".linux-amd64.tar.gz"), kind: "archive", sha256: $a},
+      {filename: ($v + ".linux-arm64.tar.gz"), kind: "archive", sha256: $b}
+    ]},
+    {version: "go1.0.0", stable: true, files: []}
+  ]' > "$1/feed.json"
+  stub "$1" curl "printf '%s\n' \"\$@\" >> '$1/curl-argumenten.txt'
+for arg in \"\$@\"; do [ \"\$arg\" = '${go_feed_url}' ] && { cat '$1/feed.json'; exit 0; }; done
+exit 22"
+}
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: bump verzet versie en beide SHAs" 0 "GO_VERSION=${go_nu} -> GO_VERSION=99.0.0" "$uit" "$rc"
+geopend "go: bump zet changed=true" "$d"
+vervangingen "go: minor-sprong geeft vier vervangingen" "$uit" 4
+grep -q "amd64) GO_SHA=${sha_a} ;;" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) GO_SHA=${sha_b} ;;" "$d/ws/claude-sandbox/Dockerfile"
+controle "go: elke architectuur krijgt zijn eigen SHA" $?
+grep -qF "Go 99.0 bij \`INSTALL_GO=true\`" "$d/ws/claude-sandbox/README.md" \
+  && ! grep -qF "Go ${go_minor} bij" "$d/ws/claude-sandbox/README.md"
+controle "go: minor-sprong verzet de README-vermelding" $?
+grep -qx "current=${go_nu}" "$d/uitvoer" && grep -qx 'latest=99.0.0' "$d/uitvoer" \
+  && grep -qx "amd64=${sha_a}" "$d/uitvoer" && grep -qx "arm64=${sha_b}" "$d/uitvoer"
+controle "go: outputs voor de PR-body" $?
+grep -qxF "${go_feed_url}" "$d/curl-argumenten.txt"
+controle "go: feed opgehaald van ${go_feed_url}" $?
+
+d="$(nieuwe_map)"; go_feed "$d" "go${go_patch_bump}" "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: patch-bump verzet versie en beide SHAs" 0 "GO_VERSION=${go_nu} -> GO_VERSION=${go_patch_bump}" "$uit" "$rc"
+vervangingen "go: patch-bump geeft drie vervangingen" "$uit" 3
+cmp -s "${wortel}/claude-sandbox/README.md" "$d/ws/claude-sandbox/README.md"
+controle "go: patch-bump laat de README ongemoeid" $?
+
+# De volgorde van de feed is geen contract; 99.10.0 is hoger dan 99.9.0, ook
+# als 99.9.0 eerst staat en als tekst hoger sorteert.
+d="$(nieuwe_map)"; go_feed "$d" go99.10.0 "$sha_a" "$sha_b" go99.9.0
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: hoogste versie numeriek gekozen" 0 "GO_VERSION=${go_nu} -> GO_VERSION=99.10.0" "$uit" "$rc"
+grep -qx 'latest=99.10.0' "$d/uitvoer"; controle "go: latest=99.10.0 ondanks de feedvolgorde" $?
+
+d="$(nieuwe_map)"; go_feed "$d" go1.0.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: feed-versie lager dan de pin wordt rood" 1 "lager dan de pin ${go_nu}" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "go: lagere feed-versie laat de Dockerfile ongemoeid" $?
+
+d="$(nieuwe_map)"; go_feed "$d" "go${go_nu}" "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "go: changed=false bij gelijke versie" $?
+
+d="$(nieuwe_map)"; go_feed "$d" 'go99.0.0; rm -rf /' "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: vijandige versie geweigerd" 1 "onverwachte Go-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0 "$sha_a" "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: versie zonder patch-nummer geweigerd" 1 "onverwachte Go-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; stub "$d" curl 'printf "[]\n"'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: lege feed wordt rood" 1 "kon laatste stabiele Go-versie niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; stub "$d" curl 'printf "<html>proxy</html>\n"'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: feed die geen JSON is wordt rood" 1 "geen leesbare JSON-lijst" "$uit" "$rc"
+
+d="$(nieuwe_map)"; stub "$d" curl 'exit 22'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: mislukte download van de feed wordt rood" 1 "kon de Go-feed van go.dev niet ophalen" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 geen-sha "$sha_b"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: checksum die geen sha256 is wordt rood" 1 "geen sha256" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+jq '(.[1].files) |= map(select(.filename | endswith("arm64.tar.gz") | not))' "$d/feed.json" > "$d/feed.tmp"
+mv "$d/feed.tmp" "$d/feed.json"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekend arm64-archief in de feed wordt rood" 1 "geen sha256" "$uit" "$rc"
+
+for arch in amd64 arm64; do
+  d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+  sed -i "s|      ${arch}) GO_SHA=|      ${arch})   GO_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  uit="$(draai "$d" go-version)"; rc=$?
+  toets "go: hertabelleerde ${arch}-regel blijft werken" 0 "" "$uit" "$rc"
+  vervangingen "go: hertabelleerde ${arch}-regel geeft vier vervangingen" "$uit" 4
+done
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i 's|      arm64) GO_SHA=[a-f0-9]*|      arm64) GO_SHA=|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende arm64-pin wordt rood" 1 "precies één arm64-SHA-pin voor Go" "$uit" "$rc"
+
+# Ook zonder nieuwe release: anders valt een verdwenen pin pas op bij de
+# eerstvolgende bump.
+d="$(nieuwe_map)"; go_feed "$d" "go${go_nu}" "$sha_a" "$sha_b"
+sed -i 's|      amd64) GO_SHA=[a-f0-9]*|      amd64) GO_SHA=|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende amd64-pin wordt ook zonder bump rood" 1 "precies één amd64-SHA-pin voor Go" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+dubbele_pin "$d" '              arm64) GO_SHA=' "              arm64) GO_SHA=${sha_b} ;; \\\\"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: tweede arm64-pin wordt rood" 1 "precies één arm64-SHA-pin voor Go" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+dubbele_pin "$d" '      true) GO_VERSION=' '            GO_VERSION=1.0.0 && \\'
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: tweede pin wordt rood" 1 "precies één GO_VERSION-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i "s|GO_VERSION=${go_nu}|GO_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: ontbrekende versiepin wordt rood" 1 "kon huidige GO_VERSION niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; go_feed "$d" go99.0.0 "$sha_a" "$sha_b"
+sed -i "s|Go ${go_minor} bij|Go 0.0 bij|" "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" go-version)"; rc=$?
+toets "go: README-vermelding achtergebleven wordt rood" 1 "komt 0× voor" "$uit" "$rc"
+
+# ── functl ──
+functl_commit="abcdef1234567890abcdef1234567890abcdef12"
+functl_versie="v0.0.0-20991231235959-abcdef123456"
+functl_h1="h1:$(printf 'A%.0s' $(seq 40))+/9="
+fundament=github.com/fundament-oss/fundament
+dagen_geleden() { date -u -d "-$1 days" +%Y-%m-%dT%H:%M:%SZ; }
+
+# De stubs schrijven hun argumenten weg, zodat een geval kan toetsen dat de
+# proxy naar de commit en de checksum-database naar de versie gevraagd is.
+# stand.txt is het antwoord op de vergelijking met master: aantal commits
+# voor, en de commitdatum van de release-commit.
+functl_geval() { # map commit versie h1 go-regel
+  printf 'Rolling build of functl from the latest push to master.\n\n- Version: `x-master-1`\n- Commit: %s\n\nSee functl/README.md.\n' \
+    "$2" > "$1/body.txt"
+  printf '3 %s\n' "$(dagen_geleden 1)" > "$1/stand.txt"
+  printf '{"Version":"%s","Time":"2099-12-31T23:59:59Z"}\n' "$3" > "$1/info.json"
+  printf '70856769\n%s %s %s\n%s %s/go.mod h1:0ik80wQK/R9m20shc5M8R4KbA/dhI6RcLIKNqjDVHjA=\n\ngo.sum database tree\n' \
+    "${fundament}" "$3" "$4" "${fundament}" "$3" > "$1/lookup.txt"
+  printf 'module %s\n\ngo %s\n\nrequire example.com/x v1.0.0\n' "${fundament}" "$5" > "$1/mod.txt"
+  stub "$1" gh "printf '%s\n' \"\$@\" >> '$1/gh-argumenten.txt'
+case \"\$2\" in
+  repos/fundament-oss/fundament/releases/tags/functl-latest) cat '$1/body.txt';;
+  repos/fundament-oss/fundament/compare/*...master) cat '$1/stand.txt';;
+  *) exit 1;;
+esac"
+  stub "$1" curl "printf '%s\n' \"\$@\" >> '$1/curl-argumenten.txt'
+for arg in \"\$@\"; do case \"\$arg\" in
+  https://proxy.golang.org/*.info) cat '$1/info.json'; exit;;
+  https://sum.golang.org/lookup/*) cat '$1/lookup.txt'; exit;;
+  https://proxy.golang.org/*.mod) cat '$1/mod.txt'; exit;;
+esac; done"
+}
+
+# De commit achter de huidige pin, aangevuld tot 40 tekens: alleen de eerste 12
+# staan in de pseudo-versie.
+functl_gelijk_commit="${functl_nu##*-}$(printf '0%.0s' $(seq 28))"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: bump verzet versie en h1" 0 "FUNCTL_VERSION=${functl_nu} -> FUNCTL_VERSION=${functl_versie}" "$uit" "$rc"
+geopend "functl: bump zet changed=true" "$d"
+vervangingen "functl: twee vervangingen" "$uit" 2
+grep -qF "FUNCTL_H1=${functl_h1} " "$d/ws/claude-sandbox/Dockerfile"
+controle "functl: de nieuwe h1 staat heel in de Dockerfile" $?
+grep -qx 'go_te_laag=false' "$d/uitvoer"; controle "functl: lagere go-regel geeft geen waarschuwing" $?
+grep -qx "commit=${functl_commit}" "$d/uitvoer" && grep -qx "old_commit=${functl_nu##*-}" "$d/uitvoer" \
+  && grep -qxF "h1=${functl_h1}" "$d/uitvoer" && grep -qx 'go_mod=1.20' "$d/uitvoer" \
+  && grep -qx "go_pin=${go_nu}" "$d/uitvoer"
+controle "functl: outputs voor de PR-body" $?
+grep -qx "https://proxy.golang.org/${fundament}/@v/${functl_commit}.info" "$d/curl-argumenten.txt" \
+  && grep -qx "https://sum.golang.org/lookup/${fundament}@${functl_versie}" "$d/curl-argumenten.txt" \
+  && grep -qx "https://proxy.golang.org/${fundament}/@v/${functl_versie}.mod" "$d/curl-argumenten.txt"
+controle "functl: proxy en checksum-database op commit en versie bevraagd" $?
+grep -qx "repos/fundament-oss/fundament/compare/${functl_commit}...master" "$d/gh-argumenten.txt"
+controle "functl: release-commit met master vergeleken" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i 's/$/\r/' "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release-body met CRLF blijft werken" 0 "" "$uit" "$rc"
+geopend "functl: release-body met CRLF zet changed=true" "$d"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_gelijk_commit" "${functl_nu}" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"; controle "functl: changed=false bij gelijke versie" $?
+
+# Een rolling release die upstream niet meer ververst: alleen rood als de
+# release-commit oud is én master verder is.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_gelijk_commit" "${functl_nu}" "$functl_h1" 1.20
+printf '0 %s\n' "$(dagen_geleden 40)" > "$d/stand.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: oude release zonder nieuwere master-commits blijft groen" 0 "" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_gelijk_commit" "${functl_nu}" "$functl_h1" 1.20
+printf '3 %s\n' "$(dagen_geleden 31)" > "$d/stand.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: oude release met nieuwere master-commits wordt rood" 1 "ververst de rolling release niet meer" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_gelijk_commit" "${functl_nu}" "$functl_h1" 1.20
+printf '3 %s\n' "$(dagen_geleden 30)" > "$d/stand.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release van precies 30 dagen met nieuwere master-commits blijft groen" 0 "" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf 'null null\n' > "$d/stand.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare vergelijking met master wordt rood" 1 "onverwachte vergelijking" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+stub "$d" gh 'case "$2" in */compare/*) exit 1;; *) cat "'"$d"'/body.txt";; esac'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: mislukte vergelijking met master wordt rood" 1 "niet met master vergelijken" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+stub "$d" gh 'echo "HTTP 404: Not Found" >&2; exit 1'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: mislukte release-aanvraag wordt als zodanig gemeld" 1 "kon de release functl-latest niet ophalen" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" 'abcdef123456; rm -rf /' "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige commit geweigerd" 1 "onverwachte commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" abcdef123456 "$functl_versie" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: verkorte commit geweigerd" 1 "onverwachte commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf 'Rolling build of functl.\n' > "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release zonder commit wordt rood" 1 "precies één '- Commit:'-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf -- '- Commit: %s\n' "$functl_commit" >> "$d/body.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: release met twee commits wordt rood" 1 "precies één '- Commit:'-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/info.json"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege proxy-info wordt rood" 1 "kon de pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf '<html>proxy</html>\n' > "$d/info.json"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: proxy-info die geen JSON is wordt rood" 1 "geen leesbare JSON" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+rm "$d/info.json"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: mislukte proxy-aanvraag wordt rood" 1 "kon de module-info van commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v1.2.3 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: getagde versie i.p.v. pseudo-versie geweigerd" 1 "onverwachte pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v0.1.1-0.20991231235959-abcdef123456 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: pseudo-versie na een tag geweigerd" 1 "onverwachte pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "${functl_versie}; rm -rf /" "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige pseudo-versie geweigerd" 1 "onverwachte pseudo-versie" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v0.0.0-20991231235959-000000000000 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: pseudo-versie van een andere commit geweigerd" 1 "hoort niet bij commit" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" v0.0.0-20000101000000-abcdef123456 "$functl_h1" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: pseudo-versie ouder dan de pin geweigerd" 1 "is ouder dan de pin" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "functl: oudere pseudo-versie laat de Dockerfile ongemoeid" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" 'h1:kort=' 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: ongeldige h1 geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "${functl_h1}; rm" 1.20
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: h1 met aanhangsel geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/lookup.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege checksum-lookup wordt rood" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+# Alleen de regel van de gevraagde versie telt; een h1 van een andere versie
+# mag niet als die van deze versie gepind worden.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+printf '1\n%s v0.0.0-20000101000000-abcdef123456 %s\n' "${fundament}" "$functl_h1" > "$d/lookup.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: h1 van een andere versie geweigerd" 1 "geen geldige h1-hash" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 99.0
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: hogere go-regel bumpt wel" 0 "::warning::go.mod van ${fundament}@${functl_versie} vraagt go 99.0" "$uit" "$rc"
+geopend "functl: hogere go-regel zet changed=true" "$d"
+grep -qx 'go_te_laag=true' "$d/uitvoer"; controle "functl: hogere go-regel zet go_te_laag=true" $?
+
+# De waarschuwingszin in de PR-body draait hier niet mee; vul de format()-
+# expressie in met de outputs van dit geval, zodat ook de volgorde van de
+# argumenten getoetst is.
+functl_body="$(yq '.jobs."functl-version".steps[] | select(has("uses")) | .with.body' "${workflow}")"
+formule="$(grep -oE "format\('[^']*', steps\.compare\.outputs\.[a-z_]+, steps\.compare\.outputs\.[a-z_]+\)" <<<"${functl_body}")"
+sjabloon="$(sed -E "s/^format\('([^']*)'.*/\1/" <<<"${formule}")"
+arg0="$(sed -n "s/^$(sed -E 's/.*outputs\.([a-z_]+), .*/\1/' <<<"${formule}")=//p" "$d/uitvoer")"
+arg1="$(sed -n "s/^$(sed -E 's/.*outputs\.([a-z_]+)\)$/\1/' <<<"${formule}")=//p" "$d/uitvoer")"
+zin="${sjabloon//\{0\}/${arg0}}"; zin="${zin//\{1\}/${arg1}}"
+grep -qF "de go.mod vraagt Go 99.0, de Dockerfile pint Go ${go_nu}." <<<"${zin}" \
+  && grep -qF "merge eerst een Go-bump naar minstens 99.0." <<<"${zin}" \
+  && grep -qF "steps.compare.outputs.go_te_laag == 'true' && ${formule}" <<<"${functl_body}"
+controle "functl: de PR-body meldt een te hoge go-regel met go.mod en pin op hun plek" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" "${go_nu}"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: go-regel gelijk aan de pin" 0 "" "$uit" "$rc"
+grep -qx 'go_te_laag=false' "$d/uitvoer"; controle "functl: go-regel gelijk aan de pin geeft geen waarschuwing" $?
+
+# Numeriek vergelijken: als tekst is 1.27.9 hoger dan 1.27.10.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.27.9
+sed -i "s|GO_VERSION=${go_nu}|GO_VERSION=1.27.10|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: pin 1.27.10 tegen go-regel 1.27.9" 0 "" "$uit" "$rc"
+grep -qx 'go_te_laag=false' "$d/uitvoer" && grep -qx 'go_pin=1.27.10' "$d/uitvoer"
+controle "functl: pin 1.27.10 tegen go-regel 1.27.9 geeft geen waarschuwing" $?
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+: > "$d/mod.txt"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: lege go.mod wordt rood" 1 "onverwachte go-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" '1.20; rm -rf /'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: vijandige go-regel geweigerd" 1 "onverwachte go-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.2.3.4
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: go-regel met vier delen geweigerd" 1 "onverwachte go-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i '/^            FUNCTL_H1=/d' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: ontbrekende h1-pin wordt rood" 1 "precies één FUNCTL_H1-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i 's|FUNCTL_H1=h1:[^ ]*|FUNCTL_H1=onbekend|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare h1-pin wordt rood" 1 "kon huidige FUNCTL_H1 niet" "$uit" "$rc"
+
+# Ook zonder nieuwe commit: anders valt een kapotte pin pas op bij de
+# eerstvolgende bump.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_gelijk_commit" "${functl_nu}" "$functl_h1" 1.20
+sed -i 's|FUNCTL_H1=h1:[^ ]*|FUNCTL_H1=onbekend|' "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare h1-pin wordt ook zonder bump rood" 1 "kon huidige FUNCTL_H1 niet" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+dubbele_pin "$d" '            FUNCTL_VERSION=' '            FUNCTL_VERSION=v0.0.0-20000101000000-000000000000 && \\'
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: tweede versiepin wordt rood" 1 "precies één FUNCTL_VERSION-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i "s|FUNCTL_VERSION=${functl_nu}|FUNCTL_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare versiepin wordt rood" 1 "kon huidige FUNCTL_VERSION niet" "$uit" "$rc"
+
+# Zonder Go-pin is de vergelijking met de go-regel geen meting.
+d="$(nieuwe_map)"; functl_geval "$d" "$functl_commit" "$functl_versie" "$functl_h1" 1.20
+sed -i "s|GO_VERSION=${go_nu}|GO_VERSION=latest|" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" functl-version)"; rc=$?
+toets "functl: onleesbare Go-pin wordt rood" 1 "kon huidige GO_VERSION niet" "$uit" "$rc"
 
 
 # ── apt-security-refresh: de beslissing om wel of niet te verversen ──

@@ -236,18 +236,22 @@ Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — 
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
-2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta en Go (achter `INSTALL_GO`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
-`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.1.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
+`functl` wordt vanaf de bron gebouwd, omdat upstream alleen een rolling release publiceert. De pin is een Go pseudo-versie (`FUNCTL_VERSION`, die de commit vastlegt) plus de h1-hash van de module (`FUNCTL_H1`).
+
+`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.2.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
 `kubectl` en `helm` (achter `INSTALL_K8S`) staan ook op versie plus SHA-256 per architectuur. `kubectl` ligt bewust vast op één minor-versie, die de clusterversies van Fundament volgt (zie [docs/kubernetes.md](docs/kubernetes.md)); `helm` op één major-versie.
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
-- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
+- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs en bij een major-bump de tools-tabel bij, en meldt gedeelde libraries die de nieuwe binary extra nodig heeft)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
 - een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL, `RTK_VERSION` en de vermelding hierboven samen bij)
 - een nieuwere `npm`-release binnen dezelfde major beschikbaar is (PR werkt `NPM_VERSION` bij; ook het moment om de npm-suppressies in `.trivyignore.yaml` na te lopen)
+- een nieuwere stabiele Go-release beschikbaar is (PR werkt `GO_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de Go-vermelding in de tools-tabel hierboven)
+- de rolling release `functl-latest` van Fundament op een nieuwe commit staat (PR werkt `FUNCTL_VERSION` en `FUNCTL_H1` bij, en meldt het als de `go`-regel in de go.mod van Fundament hoger is dan de gepinde Go-versie: met `GOTOOLCHAIN=local` faalt de build dan). Staat de release op een commit ouder dan 30 dagen terwijl master verder is, dan faalt de job: upstream ververst de rolling release dan niet meer
 - de gepubliceerde image fixbare CRITICAL/HIGH-CVE's in Debian-pakketten bevat, op amd64 of arm64 (PR bumpt `APT_UPGRADE_EPOCH` in de `Dockerfile`, zodat de `apt-get upgrade`-laag opnieuw draait in plaats van uit de layer cache te komen)
 - de `apt-get upgrade`-laag ouder is dan de drempel in `MAX_EPOCH_AGE_DAYS`, ook zonder bevindingen: MEDIUM- en LOW-updates komen alleen via een rebuild binnen
 - een nieuwere `kubectl`-patch binnen de gepinde minor-versie beschikbaar is, volgens `dl.k8s.io/release/stable-<minor>.txt` (PR werkt `KUBECTL_VERSION` en de amd64/arm64-SHAs bij). Een nieuwere minor in `stable.txt` wordt gemeld in de PR en als waarschuwing in de run, maar niet gebumpt; valt de gepinde minor buiten de drie minors die upstream ondersteunt, dan faalt de run
