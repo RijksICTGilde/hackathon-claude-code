@@ -30,7 +30,7 @@ ARG INSTALL_SSHD=false
 # alles hierna opnieuw bouwt — ook de plugin-installs, die niet gepind zijn en
 # dus opnieuw resolven — en dat elke gebruiker alles boven de base-laag opnieuw
 # ophaalt.
-ARG APT_UPGRADE_EPOCH=2026-11-05
+ARG APT_UPGRADE_EPOCH=2026-11-09
 RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -217,14 +217,14 @@ RUN case "$INSTALL_CAVEMAN" in \
     esac
 
 # rtk (reduce token use) via gevendord install-script (vendor/install-scripts/rtk.sh,
-# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.1.0/install.sh).
+# afkomstig van https://raw.githubusercontent.com/rtk-ai/rtk/v1.2.0/install.sh).
 # Updates komen via .github/workflows/check-upstream.yml (wekelijkse PR bij upstream-diff).
 # RTK_VERSION pint de binary; zonder pin volgt de installer 'latest' en is de
 # image niet reproduceerbaar. Geen losse SHA-pin zoals bij Node.js en git-delta:
 # het script verifieert de binary tegen de checksums.txt van dezelfde release.
 COPY --chown=claude:claude vendor/install-scripts/rtk.sh /tmp/rtk-install.sh
 RUN case "$INSTALL_RTK" in \
-      true) RTK_VERSION=v1.1.0 sh /tmp/rtk-install.sh && \
+      true) RTK_VERSION=v1.2.0 sh /tmp/rtk-install.sh && \
             rm /tmp/rtk-install.sh && \
             command -v rtk >/dev/null && \
             rtk init -g --auto-patch ;; \

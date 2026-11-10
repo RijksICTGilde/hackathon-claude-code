@@ -236,11 +236,11 @@ De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
 2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
-`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.1.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
+`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.2.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
-- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs bij)
+- een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs en bij een major-bump de tools-tabel bij, en meldt gedeelde libraries die de nieuwe binary extra nodig heeft)
 - een nieuwere `git-delta`-release beschikbaar is (idem)
 - een nieuwere `rtk`-release beschikbaar is (PR werkt het vendored script, de herkomst-URL, `RTK_VERSION` en de vermelding hierboven samen bij)
 - een nieuwere `npm`-release binnen dezelfde major beschikbaar is (PR werkt `NPM_VERSION` bij; ook het moment om de npm-suppressies in `.trivyignore.yaml` na te lopen)
