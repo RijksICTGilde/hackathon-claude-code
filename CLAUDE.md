@@ -56,7 +56,7 @@ Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aa
 Twee mechanismen, allebei gericht op reproduceerbaarheid en een gereviewde upgrade in plaats van een stille:
 
 - **Vendoring** voor install-scripts. De Dockerfile `COPY`t uit `vendor/install-scripts/`, nooit een `curl | sh` naar upstream. Gevendorde bestanden blijven byte-identiek aan hun bron; geen eigen patches, anders loopt de herkomstcontrole vast en overschrijft de wekelijkse job je wijziging.
-- **Versie-pinning** voor binaries: exacte versie plus SHA-256, tenzij het install-script de binary zelf tegen een checksum van dezelfde release verifieert.
+- **Versie-pinning** voor binaries: exacte versie plus SHA-256, tenzij het install-script de binary zelf tegen een checksum van dezelfde release verifieert. Een Go-module die vanaf de bron gebouwd wordt (`functl`) pint op (pseudo-)versie plus h1-hash.
 
 `.github/workflows/check-upstream.yml` draait wekelijks en opent een PR per gedetecteerde wijziging. Kies per afhankelijkheid het juiste mechanisme: een ongeversioneerde upstream-URL wordt gevolgd via sha256-vergelijking; een per-tag gevendord script vereist een eigen release-tracking-job, omdat een tag-URL inhoudelijk nooit wijzigt.
 

@@ -95,6 +95,102 @@ jobs:
           scanners: vuln
           exit-code: '1'
 
+  # De Go-laag bouwt alleen bij INSTALL_GO=true; zonder deze job draait dat pad
+  # en de scan op de Go-binaries nergens in CI. Een eigen job om dezelfde reden
+  # als build-sshd-variant: bouwt niets dat gepusht wordt.
+  go-variant:
+    name: build-go-variant
+    # Niet op tags: dat vult een tag-scoped cache voor een variant die niets publiceert.
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build met INSTALL_GO=true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: claude-sandbox
+          file: claude-sandbox/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: claude-sandbox:go-scan
+          build-args: INSTALL_GO=true
+          cache-from: |
+            type=gha,scope=go
+            type=gha
+          cache-to: type=gha,mode=min,scope=go
+          provenance: false
+          sbom: false
+
+      # De Dockerfile controleert dit al, maar alleen als de laag niet uit de
+      # cache komt. Hier draait het altijd, en zonder de Docker-ENV: zo ziet
+      # een non-interactieve SSH-sessie de image.
+      - name: Go, functl en GOTOOLCHAIN in de image controleren
+        run: |
+          set -euo pipefail
+          for pin in GO_VERSION FUNCTL_VERSION; do
+            if [ "$(grep -oE "${pin}=" claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          go_pin=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          functl_pin=$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          if [ -z "$go_pin" ] || [ -z "$functl_pin" ]; then
+            echo "FOUT: kon GO_VERSION ('${go_pin}') of FUNCTL_VERSION ('${functl_pin}') niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          in_image() {
+            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
+              claude-sandbox:go-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
+          }
+          verwacht() { # omschrijving werkelijk verwacht
+            if [ "$2" != "$3" ]; then
+              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
+              exit 1
+            fi
+            echo "ok: $1 = $2"
+          }
+          # Eerst toewijzen: als argument van verwacht gaat de exitcode van
+          # docker run verloren.
+          go_versie=$(in_image go version) || { echo "FOUT: go version faalt in de image" >&2; exit 1; }
+          functl_versie=$(in_image functl version) || { echo "FOUT: functl version faalt in de image" >&2; exit 1; }
+          toolchain=$(in_image go env GOTOOLCHAIN) || { echo "FOUT: go env GOTOOLCHAIN faalt in de image" >&2; exit 1; }
+          verwacht "go version" "$go_versie" "go version go${go_pin} linux/amd64"
+          verwacht "functl version" "$functl_versie" "${functl_pin}"
+          verwacht "go env GOTOOLCHAIN" "$toolchain" "local"
+
+      # Gelijk aan de gate in build-and-push: de lijst gaat mee de scan in.
+      - name: Sleutels in .trivyignore.yaml afdwingen
+        run: .github/scripts/valideer-trivyignore.sh
+
+      # Alleen language-pakketten: de os-pakketten zijn gelijk aan die van de
+      # default-image en worden in build-and-push gescand. Trivy leest de
+      # buildinfo uit de Go-binaries, en ziet zo de stdlib-versie van de
+      # toolchain en de modules die in functl zitten. Die vallen buiten
+      # Dependabot; zonder deze scan is er geen signaal op een kwetsbare
+      # dependency van functl.
+      - name: Trivy image scan op de Go-variant (CRITICAL/HIGH, language-pakketten)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+        with:
+          scan-type: image
+          image-ref: claude-sandbox:go-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          scanners: vuln
+          trivyignores: .trivyignore.yaml
+          exit-code: '1'
+
   build:
     name: build-and-push
     runs-on: ubuntu-latest
