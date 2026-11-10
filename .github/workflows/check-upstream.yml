@@ -879,6 +879,9 @@ jobs:
 
             ${{ steps.compare.outputs.go_te_laag == 'true' && format('**Let op:** de go.mod vraagt Go {0}, de Dockerfile pint Go {1}. Met `GOTOOLCHAIN=local` faalt de image-build; merge eerst een Go-bump naar minstens {0}.', steps.compare.outputs.go_mod, steps.compare.outputs.go_pin) || '' }}
 
+            Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/functl`
+            voor een module die deze commit bumpt, haal die dan weg.
+
             `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
             en verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en

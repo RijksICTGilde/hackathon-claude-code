@@ -388,7 +388,7 @@ geldt nu voor de K8S-stap in `build-variants`.
 1. Dockerfile: kubectl- en helm-pins in eigen blokken binnen de laag; `TODO(#205)` weg.
 2. `check-upstream.yml`: jobs `kubectl-version` en `helm-version`, achteraan in het bestand.
 3. Fixtures in `test-check-upstream-jobs.sh`, als eigen sectie aan het eind.
-4. `build-image.yml`: job `build-k8s-variant`, achteraan in het bestand.
+4. `build-image.yml`: de K8S-stap in `build-variants` (nu in PR 3).
 5. `.trivyignore.yaml`, README 'Dependency-onderhoud' en CLAUDE.md.
 
 ### Ontwerpkeuzes
@@ -438,13 +438,15 @@ via de job.
 
 **Suppressies opruimen.** De PR-bodies van beide jobs vragen de reviewer de suppressies op die
 binary in `.trivyignore.yaml` na te lopen, zoals `npm-version` al doet. Een overbodige
-suppressie maakt niets rood en zou anders blijven staan tot `expired_at`.
+suppressie maakt niets rood en zou anders blijven staan, ook na `expired_at`; #229 laat
+`build-variants` daarop falen.
 
 **Plaats in de bestanden.** De jobs en fixtures staan achteraan, en de variant-build ook. PR 2
 (#211) voegt zijn jobs in na `rtk-version` en voor `build`. Zo voegt deze PR geen conflict
 met #211 toe.
 
-**`build-k8s-variant`.** Opgezet als `build-sshd-variant` en de Go-variant uit #211:
+**K8S-stap (nu in `build-variants`, PR 3).** Oorspronkelijk opgezet als eigen job, naar het
+voorbeeld van `build-sshd-variant` en de Go-variant uit #211:
 
 - alleen amd64, geen push, niet op tags;
 - action-pins gelijk aan `build-and-push`;
@@ -454,7 +456,7 @@ De controlestap leest de pins uit de Dockerfile en draait `kubectl version --cli
 `helm version` als `claude`, met `env -i` en zonder netwerk. Elke `docker run` wordt eerst
 toegewezen, zodat een falende run telt. Trivy scant met `TRIVY_PKG_TYPES: library`; de
 os-pakketten scant `build-and-push` al. De scan dekt alle language-pakketten, ook npm en pip van
-de default-image; de comment zegt dat nu. `skip-dirs` voor die paden is afgewezen: meer
+de default-image; de comment bij de language-scan van `build-variants` zegt dat. `skip-dirs` voor die paden is afgewezen: meer
 configuratie om een signaal weg te halen dat op main nergens anders binnenkomt.
 
 **Suppressies voor de huidige binaries.** Trivy (lokaal, `aquasec/trivy:latest`, `rootfs` op
@@ -545,7 +547,7 @@ Na reviewronde 1:
 
 Niet geverifieerd:
 
-- **`build-k8s-variant` heeft nog niet in CI gedraaid.** De volledige image met
+- **De K8S-stap in `build-variants` heeft nog niet in CI gedraaid.** De volledige image met
   `INSTALL_K8S=true` is lokaal niet gebouwd (apt over poort 80). De Trivy-versie en -DB van
   `trivy-action` v0.36.0 kunnen afwijken van de lokale scan.
 - **De `create-pull-request`-stappen.** De PR-teksten zijn alleen statisch via yq getoetst,
