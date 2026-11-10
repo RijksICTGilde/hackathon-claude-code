@@ -465,6 +465,12 @@ de pin op de officiële binary vervalt.
   `bidirule` en `unicode/norm` wel): de kwetsbare code van CVE-2026-56851 is onbereikbaar.
 - CVE-2026-78669 treft kubectl tegenover elke vijandige HTTP/2-server, ook een URL bij `-f`.
 - De kubectl-regels verlopen op 2026-12-31.
+- CVE-2026-78661 in `golang.org/x/net` (fix in 0.62.0) zit in beide binaries: kubectl 0.56.0,
+  helm 0.60.0. Er is geen release met de fix: `release-1.35` van Kubernetes zit op 0.56.0,
+  `release-4.3` van helm op 0.60.0 en helm `main` op 0.61.0. Daarom één regel per binary, tot
+  2026-12-31. De kwetsbare parser (`addText`, `fosterParent`) is in geen van beide gelinkt: helm
+  bevat geen symbool uit `x/net/html`, kubectl alleen de `Tokenizer`. Er is geen
+  gebruikersmelding, net als bij de andere onbereikbare kubectl-CVE.
 
 ### Verificatie
 

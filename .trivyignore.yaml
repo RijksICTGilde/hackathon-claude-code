@@ -92,7 +92,7 @@ vulnerabilities:
     expired_at: 2027-01-28
     statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
 
-  # De drie hieronder zitten in de officiële release-binaries van kubectl en
+  # De regels hieronder zitten in de officiële release-binaries van kubectl en
   # helm (alleen bij INSTALL_K8S=true), gescand door build-k8s-variant. Een regel
   # geldt zolang de gepinde lijn geen release met de fix heeft. Zelf bouwen
   # met een nieuwere Go of nieuwere modules zou de pin op de officiële binary
@@ -125,3 +125,15 @@ vulnerabilities:
       - "usr/local/bin/kubectl"
     expired_at: 2026-12-31
     statement: golang.org/x/text 0.39.0 in kubectl — DoS door een out-of-bounds slice in het Nickname-profiel van x/text/secure/precis. Dat pakket is niet in kubectl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.41.0, nog in geen kubectl 1.35-release.
+
+  - id: CVE-2026-78661
+    paths:
+      - "usr/local/bin/kubectl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.56.0 in kubectl — DoS via HTML-invoer in de parser van x/net/html (addText, fosterParent). kubectl linkt van dat pakket alleen de Tokenizer, niet de parser; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen kubectl 1.35-release.
+
+  - id: CVE-2026-78661
+    paths:
+      - "usr/local/bin/helm"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.60.0 in helm — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in helm gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen helm 4.3-release; ook main zit op 0.61.0.
