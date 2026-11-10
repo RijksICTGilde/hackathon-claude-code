@@ -383,3 +383,26 @@ jobs:
           scanners: vuln
           trivyignores: .trivyignore.yaml
           exit-code: '1'
+
+      # Een regel die niets meer raakt, houdt de gate hierboven groen, ook na
+      # expired_at; zonder deze stap blijft hij staan, met elke melding erover.
+      # De K8S-variant bevat alles van de default-image, dus elke regel onder
+      # `vulnerabilities` hoort hier iets te raken. Daarom os- én
+      # language-pakketten, en dezelfde severity en ignore-unfixed als de gates.
+      # De DB komt uit de cache van de gate, zodat beide hetzelfde zien.
+      # Een expliciet leeg ignorefile: zonder vlag leest Trivy een `.trivyignore`
+      # uit de werkmap, en een lege waarde weigert hij.
+      - name: Trivy-rapport zonder suppressies
+        run: |
+          set -euo pipefail
+          : > "${RUNNER_TEMP}/geen-suppressies.yaml"
+          trivy image --cache-dir "${GITHUB_WORKSPACE}/.cache/trivy" \
+            --skip-db-update --skip-java-db-update \
+            --scanners vuln --pkg-types os,library \
+            --severity CRITICAL,HIGH --ignore-unfixed \
+            --ignorefile "${RUNNER_TEMP}/geen-suppressies.yaml" \
+            --format json --output trivy-zonder-suppressies.json \
+            claude-sandbox:k8s-scan
+
+      - name: Verweesde suppressies in .trivyignore.yaml
+        run: .github/scripts/controleer-verweesde-suppressies.sh trivy-zonder-suppressies.json

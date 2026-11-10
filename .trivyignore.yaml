@@ -8,11 +8,17 @@
 # `--ignorefile .trivyignore.yaml`. Misconfig- en secret-scans worden verder
 # ongefilterd gegated; bewuste uitzonderingen horen hier met reden te staan.
 #
-# Een verlopen regel maakt de gates in trivy.yml en build-image.yml rood. In
-# apt-security-refresh, dat met exit-code 0 draait om een PR te kunnen openen,
-# komt hij terug als waarschuwing in de joboutput. Zo'n rode gate of
-# waarschuwing is het moment om te kijken of de uitzondering nog klopt:
-# verlengen mag, maar dan met een nieuwe onderbouwing.
+# Een verlopen regel die nog iets raakt, maakt de gates in trivy.yml en
+# build-image.yml rood. In apt-security-refresh, dat met exit-code 0 draait om
+# een PR te kunnen openen, komt hij terug als waarschuwing in de joboutput.
+# Zo'n rode gate of waarschuwing is het moment om te kijken of de uitzondering
+# nog klopt: verlengen mag, maar dan met een nieuwe onderbouwing.
+#
+# Een regel onder `vulnerabilities` die niets meer raakt, houdt elke gate
+# groen, ook na expired_at. Daarop faalt build-k8s-variant in build-image.yml.
+# Een melding in de documentatie over een gesuppreste CVE draagt een
+# HTML-comment `trivyignore: <id>`; scriptcontroles faalt zodra de regel weg
+# is en de melding niet.
 #
 # De vorm wordt afgedwongen door .github/scripts/valideer-trivyignore.sh, dat
 # in elke scanjob draait en in de workflow scriptcontroles: Trivy negeert een
@@ -104,7 +110,7 @@ vulnerabilities:
       - "usr/local/bin/helm"
     # Kort: de risicoafweging hoort na de eerstvolgende helm-patchrelease
     # opnieuw gemaakt te worden. docs/kubernetes.md meldt deze CVE aan
-    # gebruikers; die melding gaat samen met deze regel weg.
+    # gebruikers, met een marker; die melding gaat samen met deze regel weg.
     expired_at: 2026-11-30
     statement: |
       Go-stdlib crypto/x509 (helm gebouwd met Go 1.27.2, fix in 1.27.3): MITM

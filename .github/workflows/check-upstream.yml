@@ -292,6 +292,7 @@ jobs:
             npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
             `ip-address`). Loop bij het reviewen `.trivyignore.yaml` na: staat er een
             suppressie voor een module die deze release bumpt, haal die dan weg.
+            `build-k8s-variant` faalt zolang hij blijft staan.
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
@@ -1254,7 +1255,7 @@ jobs:
             ${{ steps.compare.outputs.nieuwere_minor == 'true' && format('**Let op:** `stable.txt` staat op {0}, een nieuwere minor dan de gepinde {1}. Deze PR blijft binnen {1}; verzet de minor alleen bewust, als de clusterversies van Fundament dat vragen (zie de comment bij `INSTALL_K8S` in de Dockerfile).', steps.compare.outputs.stable, steps.compare.outputs.minor) || '' }}
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/kubectl`
-            die deze release oplost, haal die dan weg.
+            die deze release oplost, haal die dan weg. `build-k8s-variant` faalt zolang hij blijft staan.
 
             Verifieer lokaal met `INSTALL_K8S=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
@@ -1429,6 +1430,8 @@ jobs:
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/helm`
             die deze release oplost, haal die dan weg, met de melding erover in `docs/kubernetes.md`.
+            `build-k8s-variant` faalt zolang de suppressie blijft staan, en `scriptcontroles` zolang
+            de melding blijft staan.
 
             Verifieer lokaal met `INSTALL_K8S=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
