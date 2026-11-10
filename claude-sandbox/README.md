@@ -51,7 +51,7 @@ De image bevat de volgende tools:
 | Data & scripting    | jq                                                                                                                                    |
 | Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
 | Systeem             | procps                                                                                                                                |
-| Runtimes            | Node.js 24 LTS (nodejs.org officiële binary, SHA-pinned), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_GO=true`, zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
+| Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_GO=true`, zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Fundament           | functl, vanaf de bron op een vaste commit (alleen bij `INSTALL_GO=true`)                                                              |
 | Kubernetes          | kubectl 1.35, helm 4.3 (officiële release-binaries, SHA-pinned; alleen bij `INSTALL_K8S=true`, zie [docs/kubernetes.md](docs/kubernetes.md)) |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
