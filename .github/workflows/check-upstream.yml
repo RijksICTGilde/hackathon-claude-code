@@ -93,7 +93,7 @@ jobs:
 
       - name: Open auto-PR if upstream changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/script-${{ matrix.name }}
           delete-branch: true
@@ -185,22 +185,94 @@ jobs:
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "NODE_VERSION=$current" "NODE_VERSION=$latest" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_amd64" "$sha_amd64" 1
           "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "$current_arm64" "$sha_arm64" 1
-          # README tools-tabel verwijst naar 'Node.js 24 LTS' — als de major-versie
-          # verandert, log dat zodat de PR-reviewer de tabel kan bijwerken.
+          # De README tools-tabel noemt de major-versie ('Node.js <major> LTS'); bij een
+          # major-bump gaat die mee in dezelfde PR. vervang-pin.sh weigert spaties,
+          # dus hier een eigen telling vóór en na. Beide majors zijn hierboven al
+          # als cijfers gevalideerd.
           old_major=$(echo "$current" | sed -E 's/^v([0-9]+)\..*$/\1/')
           new_major=$(echo "$latest"  | sed -E 's/^v([0-9]+)\..*$/\1/')
+          if [ "$old_major" != "$new_major" ]; then
+            oud="Node.js ${old_major} LTS"
+            nieuw="Node.js ${new_major} LTS"
+            if [ "$(grep -oF -- "$oud" README.md | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één '$oud' in README.md" >&2
+              exit 1
+            fi
+            sed -i "s|Node\.js ${old_major} LTS|${nieuw}|" README.md
+            if grep -qF -- "$oud" README.md || [ "$(grep -oF -- "$nieuw" README.md | wc -l)" -ne 1 ]; then
+              echo "FOUT: README.md bevat na de vervanging niet precies één '$nieuw'" >&2
+              exit 1
+            fi
+            echo "README.md: $oud -> $nieuw (1×)"
+          fi
           {
             echo "changed=true"
             echo "amd64=$sha_amd64"
             echo "arm64=$sha_arm64"
+            echo "current_amd64=$current_amd64"
+            echo "current_arm64=$current_arm64"
             echo "major_change=$([ "$old_major" != "$new_major" ] && echo true || echo false)"
             echo "old_major=$old_major"
             echo "new_major=$new_major"
           } >> "$GITHUB_OUTPUT"
 
+      # Een nieuwe release kan een gedeelde library vereisen die niet in de
+      # slim-base zit; de build faalt dan pas op `node --version`. Deze stap
+      # vergelijkt de NEEDED-entries van de huidige en de nieuwe binary per
+      # architectuur en zet een nieuw vereiste library in de PR-beschrijving.
+      - name: Compare shared-library dependencies
+        id: libs
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.compare.outputs.current }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+          CURRENT_X64: ${{ steps.compare.outputs.current_amd64 }}
+          CURRENT_ARM64: ${{ steps.compare.outputs.current_arm64 }}
+          LATEST_X64: ${{ steps.compare.outputs.amd64 }}
+          LATEST_ARM64: ${{ steps.compare.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          needed() { # versie arch sha -> gesorteerde NEEDED-sonames op stdout
+            local v="$1" a="$2" sha="$3" t="${tmp}/node-$1-linux-$2.tar.xz"
+            curl -fsSL "https://nodejs.org/dist/${v}/node-${v}-linux-${a}.tar.xz" -o "$t"
+            echo "${sha}  ${t}" | sha256sum -c --quiet -
+            tar -xJf "$t" -C "$tmp" "node-${v}-linux-${a}/bin/node"
+            readelf -d "${tmp}/node-${v}-linux-${a}/bin/node" \
+              | sed -nE 's/.*\(NEEDED\).*\[(.+)\]$/\1/p' | sort -u
+          }
+          nieuwe_libs=""
+          for arch in x64 arm64; do
+            case "$arch" in
+              x64)   oud_sha="$CURRENT_X64";   nieuw_sha="$LATEST_X64" ;;
+              arm64) oud_sha="$CURRENT_ARM64"; nieuw_sha="$LATEST_ARM64" ;;
+            esac
+            needed "$CURRENT" "$arch" "$oud_sha" > "${tmp}/oud-${arch}.txt"
+            needed "$LATEST" "$arch" "$nieuw_sha" > "${tmp}/nieuw-${arch}.txt"
+            # Elke Node-binary linkt tegen libc; ontbreekt die, dan heeft het
+            # uitlezen gefaald en zou een lege lijst als "niets nieuws" lezen.
+            for lijst in "${tmp}/oud-${arch}.txt" "${tmp}/nieuw-${arch}.txt"; do
+              if ! grep -qx 'libc.so.6' "$lijst"; then
+                echo "FOUT: geen libc.so.6 in de NEEDED-lijst van $(basename "$lijst" .txt) (${arch})" >&2
+                exit 1
+              fi
+            done
+            while read -r soname; do
+              # De soname komt uit een gedownloade binary en belandt in de PR-tekst.
+              if ! [[ "$soname" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+                echo "FOUT: onverwachte soname '${soname}' in node ${LATEST} (${arch})" >&2
+                exit 1
+              fi
+              nieuwe_libs="${nieuwe_libs:+${nieuwe_libs}, }\`${soname}\` (${arch})"
+            done < <(comm -13 "${tmp}/oud-${arch}.txt" "${tmp}/nieuw-${arch}.txt")
+          done
+          echo "nieuwe libraries: ${nieuwe_libs:-geen}"
+          echo "nieuwe_libs=${nieuwe_libs}" >> "$GITHUB_OUTPUT"
+          rm -rf "$tmp"
+
       - name: Open auto-PR if Node.js LTS changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/node
           delete-branch: true
@@ -215,7 +287,9 @@ jobs:
             - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
             - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
 
-            ${{ steps.compare.outputs.major_change == 'true' && format('**Let op:** major-versie wijzigt van {0} naar {1}. Werk de README tools-tabel bij (`Node.js {0} LTS` → `Node.js {1} LTS`).', steps.compare.outputs.old_major, steps.compare.outputs.new_major) || '' }}
+            ${{ steps.compare.outputs.major_change == 'true' && format('**Let op:** major-versie wijzigt van {0} naar {1}. De README tools-tabel is meegenomen (`Node.js {0} LTS` → `Node.js {1} LTS`).', steps.compare.outputs.old_major, steps.compare.outputs.new_major) || '' }}
+
+            ${{ steps.libs.outputs.nieuwe_libs != '' && format('**Let op:** de nieuwe binary vereist gedeelde libraries die de huidige niet nodig heeft: {0}. Voeg het bijbehorende Debian-pakket toe aan de apt-laag van de Dockerfile en de README tools-tabel; zonder dat pakket faalt de build op `node --version`.', steps.libs.outputs.nieuwe_libs) || '' }}
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
@@ -276,7 +350,7 @@ jobs:
 
       - name: Open auto-PR if npm changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/npm
           delete-branch: true
@@ -386,7 +460,7 @@ jobs:
 
       - name: Open auto-PR if delta changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/delta
           delete-branch: true
@@ -486,7 +560,7 @@ jobs:
 
       - name: Open auto-PR if rtk changed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/rtk
           delete-branch: true
@@ -505,6 +579,309 @@ jobs:
             Bekijk de diff van `vendor/install-scripts/rtk.sh`: dat script draait tijdens
             de image-build. Verifieer daarna lokaal met `docker compose build --no-cache`
             voor je merget.
+
+  # Job 2d: Go — versie en beide architectuur-SHAs, uit de officiële feed van
+  # go.dev. Bij een nieuwe minor verschuift de vermelding in de README mee.
+  go-version:
+    name: go-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine latest stable Go release and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          # Eén keer ophalen: versie en checksums komen zo uit dezelfde feed.
+          if ! feed=$(curl -fsSL 'https://go.dev/dl/?mode=json'); then
+            echo "FOUT: kon de Go-feed van go.dev niet ophalen" >&2
+            exit 1
+          fi
+          # Numeriek sorteren: de volgorde van de feed is geen contract. Een
+          # misvormd versiedeel telt als -1 in plaats van jq te laten falen; is
+          # zo'n versie de hoogste, dan weigert de vormtoets hieronder hem.
+          if ! latest=$(jq -r '[.[] | select(.stable == true) | .version | strings]
+                | sort_by(ltrimstr("go") | split(".") | map(tonumber? // -1))
+                | last // empty' <<<"$feed"); then
+            echo "FOUT: de Go-feed is geen leesbare JSON-lijst van releases" >&2
+            exit 1
+          fi
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste stabiele Go-versie niet bepalen" >&2
+            exit 1
+          fi
+          # De versie komt van buiten en belandt in curl- en sed-argumenten;
+          # een `case`-patroon zou hier alles achter een spatie doorlaten.
+          if ! [[ "$latest" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte Go-versie '$latest' (verwacht: goX.Y.Z)" >&2
+            exit 1
+          fi
+          latest=${latest#go}
+          current=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige GO_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'GO_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één GO_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          # Ook bij gelijke versie: een verdwenen SHA-pin hoort niet pas bij de
+          # volgende release op te vallen. Eigen namen (GO_SHA), zodat de
+          # telling van de delta-job er niet over struikelt.
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*GO_SHA=[a-f0-9]{64}" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor Go in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Een lagere versie dan de pin wijst op een kapotte of teruggezette
+          # feed, niet op een gewenste downgrade.
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "FOUT: Go ${latest} uit de feed is lager dan de pin ${current}" >&2
+            exit 1
+          fi
+          # De checksums uit de feed vertrouwen, zoals node-version de
+          # SHASUMS256.txt van nodejs.org: zelf downloaden en hashen zegt niets
+          # extra's over de herkomst. De build toetst de tarball ertegen.
+          sha_amd64=$(jq -r --arg f "go${latest}.linux-amd64.tar.gz" \
+            '.[].files[]? | select(.filename == $f and .kind == "archive") | .sha256' <<<"$feed")
+          sha_arm64=$(jq -r --arg f "go${latest}.linux-arm64.tar.gz" \
+            '.[].files[]? | select(.filename == $f and .kind == "archive") | .sha256' <<<"$feed")
+          for sha in "$sha_amd64" "$sha_arm64"; do
+            if ! [[ "$sha" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha}' is geen sha256 uit de Go-feed voor go${latest}" >&2
+              exit 1
+            fi
+          done
+          current_amd64=$(grep -oP 'amd64\)\s*GO_SHA=\K[a-f0-9]{64}' Dockerfile)
+          current_arm64=$(grep -oP 'arm64\)\s*GO_SHA=\K[a-f0-9]{64}' Dockerfile)
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "GO_VERSION=$current" "GO_VERSION=$latest" 1
+          "$vervang" Dockerfile "GO_SHA=$current_amd64" "GO_SHA=$sha_amd64" 1
+          "$vervang" Dockerfile "GO_SHA=$current_arm64" "GO_SHA=$sha_arm64" 1
+          # De tools-tabel in de README noemt alleen major.minor; zo verschuiven
+          # tabel en Dockerfile in dezelfde commit. vervang-pin.sh weigert een
+          # spatie, dus de minor staat hier los; precies één treffer bewaakt dat
+          # er niets anders meeverschuift.
+          if [ "${current%.*}" != "${latest%.*}" ]; then
+            "$vervang" README.md "${current%.*}" "${latest%.*}" 1
+          fi
+          {
+            echo "changed=true"
+            echo "amd64=$sha_amd64"
+            echo "arm64=$sha_arm64"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if Go changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/go
+          delete-branch: true
+          commit-message: "chore(deps): bump Go naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump Go naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe stabiele Go-release gedetecteerd op go.dev/dl. Bij een nieuwe
+            minor-versie is ook de vermelding in `README.md` bijgewerkt.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://go.dev/doc/devel/release
+
+            Verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
+
+  # Job 2e: functl — Fundament publiceert alleen de rolling release
+  # `functl-latest`. De commit uit die release wordt een pseudo-versie, en de
+  # h1-hash komt uit de checksum-database van Go; de build toetst de module
+  # daar zelf nog eens tegen bij `go mod download`.
+  functl-version:
+    name: functl-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Determine functl-latest commit and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=fundament-oss/fundament
+          module="github.com/${repo}"
+          max_dagen=30
+          if ! body=$(gh api "repos/${repo}/releases/tags/functl-latest" --jq .body); then
+            echo "FOUT: kon de release functl-latest niet ophalen via de GitHub-API" >&2
+            exit 1
+          fi
+          # Een release-body kan CRLF-regeleinden hebben; de `\r` zou anders
+          # in de commit belanden en de toets hieronder laten falen.
+          body=$(tr -d '\r' <<<"$body")
+          if [ "$(grep -c '^- Commit: ' <<<"$body" || true)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één '- Commit:'-regel in de release functl-latest" >&2
+            exit 1
+          fi
+          commit=$(sed -n 's/^- Commit: //p' <<<"$body")
+          # De commit komt uit een repository van derden en belandt hieronder
+          # in curl-URL's; alleen een volledige hash is hier geldig.
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "FOUT: onverwachte commit '$commit' in functl-latest (verwacht: 40 hex-tekens)" >&2
+            exit 1
+          fi
+          # Stopt upstream met verversen van de rolling release, dan blijft
+          # deze job anders wekelijks groen op een verouderde pin. published_at
+          # helpt niet: die wordt bij verversen niet bijgewerkt.
+          if ! stand=$(gh api "repos/${repo}/compare/${commit}...master" \
+                 --jq '"\(.ahead_by) \(.base_commit.commit.committer.date)"'); then
+            echo "FOUT: kon commit ${commit} niet met master vergelijken via de GitHub-API" >&2
+            exit 1
+          fi
+          read -r voor datum <<<"$stand"
+          if ! [[ "$voor" =~ ^[0-9]+$ && "$datum" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "FOUT: onverwachte vergelijking van ${commit} met master ('${stand}')" >&2
+            exit 1
+          fi
+          dagen=$(( ($(date -u +%s) - $(date -u -d "$datum" +%s)) / 86400 ))
+          if [ "$voor" -gt 0 ] && [ "$dagen" -gt "$max_dagen" ]; then
+            echo "FOUT: functl-latest staat op ${commit} (${dagen} dagen oud) en master loopt ${voor} commits voor; upstream ververst de rolling release niet meer" >&2
+            exit 1
+          fi
+          if ! info=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${commit}.info"); then
+            echo "FOUT: kon de module-info van commit ${commit} niet ophalen via proxy.golang.org" >&2
+            exit 1
+          fi
+          if ! latest=$(jq -r '.Version // empty' <<<"$info"); then
+            echo "FOUT: de module-info van proxy.golang.org is geen leesbare JSON" >&2
+            exit 1
+          fi
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon de pseudo-versie van commit ${commit} niet bepalen via proxy.golang.org" >&2
+            exit 1
+          fi
+          if ! [[ "$latest" =~ ^v0\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ]]; then
+            echo "FOUT: onverwachte pseudo-versie '$latest' (verwacht: v0.0.0-<tijd>-<commit>)" >&2
+            exit 1
+          fi
+          # Zonder deze toets kan de proxy een geldig gevormde versie van een
+          # andere commit teruggeven, en pint de PR iets anders dan de release.
+          if [ "${latest##*-}" != "${commit:0:12}" ]; then
+            echo "FOUT: pseudo-versie '$latest' hoort niet bij commit ${commit}" >&2
+            exit 1
+          fi
+          current=$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige FUNCTL_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin per naam; zie de toelichting bij node-version.
+          for pin in FUNCTL_VERSION FUNCTL_H1; do
+            if [ "$(grep -oE "${pin}=" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current_h1=$(grep -oE 'FUNCTL_H1=h1:[A-Za-z0-9+/]{43}=' Dockerfile | cut -d= -f2- || true)
+          if [ -z "$current_h1" ]; then
+            echo "FOUT: kon huidige FUNCTL_H1 niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "commit=$commit"
+            echo "old_commit=${current##*-}"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Een oudere commit dan de pin is geen bump maar een teruggezette of
+          # vervalste release. Beide versies zijn op vorm getoetst, dus het
+          # tijdstempel staat op een vaste plek en vergelijkt als tekst.
+          if [[ "${latest:7:14}" < "${current:7:14}" ]]; then
+            echo "FOUT: pseudo-versie '$latest' is ouder dan de pin '$current'" >&2
+            exit 1
+          fi
+          lookup=$(curl -fsSL "https://sum.golang.org/lookup/${module}@${latest}" || true)
+          h1=$(awk -v m="$module" -v v="$latest" '$1 == m && $2 == v {print $3}' <<<"$lookup")
+          if ! [[ "$h1" =~ ^h1:[A-Za-z0-9+/]{43}=$ ]]; then
+            echo "FOUT: geen geldige h1-hash voor ${module}@${latest} uit sum.golang.org ('${h1}')" >&2
+            exit 1
+          fi
+          # GOTOOLCHAIN=local: een `go`-regel boven de gepinde Go laat de
+          # image-build falen. Dat blokkeert de bump niet, maar de PR moet het
+          # zeggen, want dan hoort er eerst een Go-bump bij.
+          mod=$(curl -fsSL "https://proxy.golang.org/${module}/@v/${latest}.mod" || true)
+          go_mod=$(awk '$1 == "go" {print $2}' <<<"$mod")
+          if ! [[ "$go_mod" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "FOUT: onverwachte go-regel '${go_mod}' in de go.mod van ${module}@${latest}" >&2
+            exit 1
+          fi
+          go_pin=$(grep -oE 'GO_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$go_pin" ]; then
+            echo "FOUT: kon huidige GO_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          go_te_laag=false
+          if [ "$(printf '%s\n%s\n' "$go_pin" "$go_mod" | sort -V | tail -1)" != "$go_pin" ]; then
+            go_te_laag=true
+            echo "::warning::go.mod van ${module}@${latest} vraagt go ${go_mod}, de Dockerfile pint Go ${go_pin}"
+          fi
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "FUNCTL_VERSION=$current" "FUNCTL_VERSION=$latest" 1
+          "$vervang" Dockerfile "FUNCTL_H1=$current_h1" "FUNCTL_H1=$h1" 1
+          {
+            echo "changed=true"
+            echo "h1=$h1"
+            echo "go_mod=$go_mod"
+            echo "go_pin=$go_pin"
+            echo "go_te_laag=$go_te_laag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if functl changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/functl
+          delete-branch: true
+          commit-message: "chore(deps): bump functl naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump functl naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe commit achter de rolling release `functl-latest` van Fundament.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **h1:** `${{ steps.compare.outputs.h1 }}` (sum.golang.org)
+            - **`go`-regel in go.mod:** `${{ steps.compare.outputs.go_mod }}`; de Dockerfile pint Go `${{ steps.compare.outputs.go_pin }}`
+            - **Wijzigingen:** https://github.com/fundament-oss/fundament/compare/${{ steps.compare.outputs.old_commit }}...${{ steps.compare.outputs.commit }}
+
+            ${{ steps.compare.outputs.go_te_laag == 'true' && format('**Let op:** de go.mod vraagt Go {0}, de Dockerfile pint Go {1}. Met `GOTOOLCHAIN=local` faalt de image-build; merge eerst een Go-bump naar minstens {0}.', steps.compare.outputs.go_mod, steps.compare.outputs.go_pin) || '' }}
+
+            `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
+            en verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
 
   # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
   # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
@@ -540,7 +917,7 @@ jobs:
       # Ook nodig wanneer het package publiek is: anonieme GHCR-pulls lopen
       # tegen een lagere rate limit aan.
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1066,7 +1443,7 @@ jobs:
 
       - name: Open auto-PR if a bump is needed
         if: steps.compare.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           branch: deps/apt-security-refresh
           delete-branch: true

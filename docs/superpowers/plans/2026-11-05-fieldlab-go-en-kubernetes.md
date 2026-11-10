@@ -12,9 +12,9 @@ fixtures de pins uit de Dockerfile lezen.
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
 | 1 | `feat/go-functl` | `INSTALL_GO`: Go-toolchain en `functl`, documentatie inclusief de benodigde Go-domeinen | Refs #204 |
-| 2 | `ci/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures; CI-build met `INSTALL_GO=true` | Closes #204 |
+| 2 | `chore/go-functl-tracking` (op 1) | jobs `go-version` en `functl-version` in `check-upstream.yml` plus fixtures; CI-build met `INSTALL_GO=true` | Closes #204 |
 | 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `helm` en `kubectl`, kubeconfig-mount, documentatie over koppelen en rechten | Refs #205 |
-| 4 | `ci/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
+| 4 | `chore/helm-kubectl-tracking` (op 3) | jobs `kubectl-version` en `helm-version` plus fixtures | Refs #205 |
 
 #205 blijft open: deployen naar een cluster op de host en op afstand is hier niet live te testen.
 
@@ -35,8 +35,8 @@ valt. `go install pkg@versie` leest die `go.sum` niet. De versie-stempel
 `no_new_privs`, omdat de setuid-strip pas na deze laag komt.
 
 **Go via de officiële tarball** van `go.dev/dl`, versie plus SHA-256 per architectuur, net als
-Node.js. De versie volgt de `go`-regel in de `go.mod` van Fundament en het `golang:`-image in de
-plug-in-scaffold (nu beide 1.27.3).
+Node.js. De versie is minstens de `go`-regel in de `go.mod` van Fundament (nu 1.27.3, gelijk aan
+het `golang:`-image in de plug-in-scaffold); de wekelijkse tracking volgt de laatste stabiele Go.
 
 **Symlinks in `/usr/local/bin`** voor `go` en `gofmt`. Een non-interactieve SSH-sessie erft de
 Docker-`ENV` niet; via `/usr/local/bin` vindt hij Go zonder extra PATH-regels.
@@ -59,6 +59,15 @@ bovenaan laat een flip dus de hele image opnieuw bouwen.
 
 **CI-build van de Go-variant.** De PR-build gebruikt de defaults en raakt de Go-laag dus nooit. PR 2
 voegt een build met `INSTALL_GO=true` toe, met een Trivy-scan op de Go-binaries.
+
+**Tracking van Go en functl.** `go-version` volgt de eerste stabiele release in
+`go.dev/dl/?mode=json` en neemt de SHA's uit dezelfde feed, zoals `node-version` de
+`SHASUMS256.txt` vertrouwt; de build toetst de tarball er alsnog tegen. `functl-version` leest
+de commit uit de body van `functl-latest`, laat proxy.golang.org de pseudo-versie geven (suffix
+moet bij de commit horen) en sum.golang.org de h1. Een `go`-regel in de go.mod van Fundament
+boven de gepinde Go blokkeert de bump niet, maar staat expliciet in de PR. De SHA-pins van Go
+heten `GO_SHA`, zodat de telling van de delta-job (`amd64) SHA=`) ze niet meetelt.
+`vervang-pin.sh` laat `+` toe, omdat een h1-hash base64 is.
 
 **Modulecache in `claude-home`.** `GOPATH` blijft op de default `~/go`, en dat valt onder het volume.
 
