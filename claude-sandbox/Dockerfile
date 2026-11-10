@@ -484,8 +484,8 @@ RUN case "$INSTALL_GO" in \
 # docs/kubernetes.md.
 #
 # kubectl werkt met een API-server van één minor-versie lager of hoger. De minor
-# volgt dus de clusterversies die Fundament (Gardener) aanbiedt, niet de
-# nieuwste kubectl: 1.35 dekt 1.34 tot en met 1.36.
+# volgt dus de clusterversie van Fundament, niet de nieuwste kubectl: de
+# clusters van het fieldlab draaien 1.36, en 1.36 dekt 1.35 tot en met 1.37.
 #
 # De versiecontrole draait als nobody, zonder capabilities en met no_new_privs:
 # het is upstream-code, en de setuid-strip komt pas na deze laag. De tijdelijke
@@ -498,13 +498,13 @@ RUN case "$INSTALL_GO" in \
 # TODO(#205): wekelijkse tracking van deze pins.
 ARG INSTALL_K8S=false
 RUN case "$INSTALL_K8S" in \
-      true) KUBECTL_VERSION=v1.35.10 && \
+      true) KUBECTL_VERSION=v1.36.6 && \
             HELM_VERSION=v4.3.1 && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
-              amd64) KUBECTL_SHA=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327; \
+              amd64) KUBECTL_SHA=29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634; \
                      HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
-              arm64) KUBECTL_SHA=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5; \
+              arm64) KUBECTL_SHA=35507ef408c3d38849e5d3203e18f8e861db822aa664101a9ced0869edd06046; \
                      HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
               *) echo "FOUT: kubectl en helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \

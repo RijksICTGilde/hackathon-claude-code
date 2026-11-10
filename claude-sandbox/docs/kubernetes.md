@@ -4,7 +4,7 @@
 
 **Geef je de sandbox toegang tot een cluster, dan kan Claude alles wat die toegangsgegevens toestaan**, ook buiten de sandbox: het token in de kubeconfig is te kopiëren. Met clustertoegang beperkt `OPEN_HTTPS=false` ook niet meer wat Claude bereikt. Pods draaien op het netwerk van het cluster, en via port-forward, een Ingress of de naam van een container-image loopt verkeer buiten de firewall van de sandbox om. De rechten hieronder verkleinen dat; ze sluiten het niet uit. Bij Fundament geldt het token voor je hele Fundament-account, en kan Claude er een blijvende API-sleutel mee maken: gebruik daar altijd een [apart account](#fundament).
 
-Met `INSTALL_K8S=true` bevat de image `kubectl` (1.35) en `helm` (4.3). Daarmee schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
+Met `INSTALL_K8S=true` bevat de image `kubectl` (1.36) en `helm` (4.3). Daarmee schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
 
 Voor `helm` staat een kwetsbaarheid in de certificaatcontrole van Go open (CVE-2026-111943), tot er een helm-release met de fix is. Ze raakt verkeer naar chart-repositories en OCI-registries; verkeer naar de API-server van een cluster nauwelijks, omdat dat met een eigen CA werkt.
 
@@ -42,7 +42,7 @@ Gebruikt een chart andere charts (`dependencies` in `Chart.yaml`), dan haalt `he
 
 ```bash
 k3d cluster create fieldlab \
-  --image rancher/k3s:v1.35.10-k3s1 \
+  --image rancher/k3s:v1.36.6-k3s1 \
   --network claude-sandbox_default \
   --api-port 127.0.0.1:6550 \
   --k3s-arg "--tls-san=k3d-fieldlab-server-0@server:0" \
@@ -50,7 +50,7 @@ k3d cluster create fieldlab \
   --k3s-arg "--kube-apiserver-arg=enable-admission-plugins=NodeRestriction,DenyServiceExternalIPs@server:0"
 ```
 
-- `--image` kiest Kubernetes 1.35, gelijk aan `kubectl` in de sandbox.
+- `--image` kiest Kubernetes 1.36, gelijk aan `kubectl` in de sandbox en aan de clusters van Fundament.
 - `--network` zet het cluster op het netwerk van de sandbox. De sandbox bereikt de API-server dan op `https://k3d-fieldlab-server-0:6443`, zonder `OPEN_HTTPS=true` en zonder `ALLOWED_DOMAINS`. Zet geen andere containers op dit netwerk; behandel alles erop als bereikbaar voor Claude.
 - `--api-port 127.0.0.1:6550` zet de API-server voor jou op de host alleen op `127.0.0.1`, niet op je netwerk. Dat adres schrijft k3d in je eigen kubeconfig.
 - `--tls-san` neemt de naam van de server in het certificaat op; anders weigert `kubectl` in de sandbox de verbinding.
@@ -303,7 +303,7 @@ EOF
    ```bash
    docker compose -f compose.yml -f compose.override.kubeconfig.yml up -d
    ```
-3. Controleer in de container met `kubectl auth whoami` en `kubectl version`. Het tweede toont de versie van `kubectl` (1.35) en die van het cluster. Scheelt dat meer dan één minor-versie, dan waarschuwt `kubectl`; kies dan een cluster op 1.34, 1.35 of 1.36.
+3. Controleer in de container met `kubectl auth whoami` en `kubectl version`. Het tweede toont de versie van `kubectl` (1.36) en die van het cluster. Scheelt dat meer dan één minor-versie, dan waarschuwt `kubectl`; kies dan een cluster op 1.34, 1.35 of 1.36.
 4. Rol de voorbeeldchart uit en kijk of de pods er komen:
    ```bash
    helm upgrade --install demo ./demo
@@ -346,7 +346,7 @@ Zonder Docker zet je het cluster op je machine met de API-server op poort 443. D
 
 ```bash
 k3d cluster create fieldlab \
-  --image rancher/k3s:v1.35.10-k3s1 \
+  --image rancher/k3s:v1.36.6-k3s1 \
   --api-port 443 \
   --k3s-arg "--tls-san=host.containers.internal@server:0" \
   --k3s-arg "--kubelet-arg=seccomp-default=true@server:0" \
@@ -369,7 +369,7 @@ De container-images van je chart haalt het cluster op, niet de sandbox. Daarvoor
 
 ### Fundament
 
-De kubeconfig uit de console van Fundament of van `functl cluster kubeconfig` bevat geen token. `kubectl` vraagt bij elk gebruik een token aan via `functl cluster token`, met je API-sleutel. `functl` zit niet in de image: draai het op de host, en zet alleen zo'n token in de kubeconfig van de sandbox. De API-sleutel komt dan niet in de sandbox.
+De kubeconfig uit de console van Fundament of van `functl cluster kubeconfig` bevat geen token. `kubectl` vraagt bij elk gebruik een token aan via `functl cluster token`, met je API-sleutel. Log daarom op de host in met `functl`, en zet alleen zo'n token in de kubeconfig van de sandbox. De API-sleutel komt dan niet in de sandbox. Met `INSTALL_GO=true` staat `functl` ook in de image, voor het bouwen van plug-ins; log daar niet mee in. Een kubeconfig die `functl` aanroept, zoals die uit de console, weigert de sandbox bij de start.
 
 **Het korte token begrenst de toegang niet.** Het token geldt een kwartier, maar het is een gewoon gebruikerstoken van Fundament, niet gebonden aan één cluster. De API van Fundament accepteert het ook. Elk lid van een organisatie mag een API-sleutel aanmaken, dus binnen dat kwartier kan Claude een nieuwe sleutel op het account aanmaken. Die blijft geldig tot je hem intrekt, of tot de maximale termijn als de beheerder van Fundament die heeft ingesteld. Als projectbeheerder kan Claude daarnaast leden aan het project toevoegen.
 

@@ -53,7 +53,7 @@ De image bevat de volgende tools:
 | Systeem             | procps                                                                                                                                |
 | Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_GO=true`, zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Fundament           | functl, vanaf de bron op een vaste commit (alleen bij `INSTALL_GO=true`)                                                              |
-| Kubernetes          | kubectl 1.35, helm 4.3 (officiële release-binaries, SHA-pinned; alleen bij `INSTALL_K8S=true`, zie [docs/kubernetes.md](docs/kubernetes.md)) |
+| Kubernetes          | kubectl 1.36, helm 4.3 (officiële release-binaries, SHA-pinned; alleen bij `INSTALL_K8S=true`, zie [docs/kubernetes.md](docs/kubernetes.md)) |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |

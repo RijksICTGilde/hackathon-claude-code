@@ -118,19 +118,19 @@ vulnerabilities:
     paths:
       - "usr/local/bin/kubectl"
     expired_at: 2026-12-31
-    statement: golang.org/x/net 0.56.0 in kubectl — DoS via een overmaat aan HTTP/2 SETTINGS-frames; treft kubectl tegenover een vijandige HTTP/2-server (de API-server of een URL bij `-f`). Fix in 0.60.0, nog in geen kubectl 1.35-release.
+    statement: golang.org/x/net 0.56.0 in kubectl — DoS via een overmaat aan HTTP/2 SETTINGS-frames; treft kubectl tegenover een vijandige HTTP/2-server (de API-server of een URL bij `-f`). Fix in 0.60.0, nog in geen kubectl 1.36-release.
 
   - id: CVE-2026-56851
     paths:
       - "usr/local/bin/kubectl"
     expired_at: 2026-12-31
-    statement: golang.org/x/text 0.39.0 in kubectl — DoS door een out-of-bounds slice in het Nickname-profiel van x/text/secure/precis. Dat pakket is niet in kubectl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.41.0, nog in geen kubectl 1.35-release.
+    statement: golang.org/x/text 0.39.0 in kubectl — DoS door een out-of-bounds slice in het Nickname-profiel van x/text/secure/precis. Dat pakket is niet in kubectl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.41.0, nog in geen kubectl 1.36-release.
 
   - id: CVE-2026-78661
     paths:
       - "usr/local/bin/kubectl"
     expired_at: 2026-12-31
-    statement: golang.org/x/net 0.56.0 in kubectl — DoS via HTML-invoer in de parser van x/net/html (addText, fosterParent). kubectl linkt van dat pakket alleen de Tokenizer, niet de parser; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen kubectl 1.35-release.
+    statement: golang.org/x/net 0.56.0 in kubectl — DoS via HTML-invoer in de parser van x/net/html (addText, fosterParent). kubectl linkt van dat pakket alleen de Tokenizer, niet de parser; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen kubectl 1.36-release.
 
   - id: CVE-2026-78661
     paths:
