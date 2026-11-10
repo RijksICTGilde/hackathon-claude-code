@@ -32,8 +32,15 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
 
 | # | Branch | Inhoud | Issue |
 |---|---|---|---|
-| 3 | `feat/helm-kubectl` | `INSTALL_K8S`: `kubectl` en `helm`, kubeconfig-override, documentatie over koppelen, netwerk en rechten | Refs #205 |
-| 4 | `chore/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures, CI-build van de K8S-variant | Refs #205 |
+| 3 | `feat/helm-kubectl` (op #219) | `INSTALL_K8S`: `kubectl` en `helm`, kubeconfig-override, documentatie over koppelen, netwerk en rechten, en de K8S-laag in `build-variants` | Refs #205 |
+| 4 | `chore/helm-kubectl-tracking` (op 3) | wekelijkse jobs voor `kubectl` en `helm` plus fixtures | Refs #205 |
+
+PR 3 staat op #219, dat de opt-in-varianten in één job `build-variants` bouwt en scant. Zo
+wordt de K8S-laag getest in de PR die hem introduceert: `INSTALL_K8S=true` gaat mee in die build,
+met een stap die `kubectl version --client` en `helm version` in de image tegen de pins toetst. De
+language-scan van `build-variants` ziet daarna kubectl en helm. De suppressies voor hun
+CVE's en de helm-melding in `docs/kubernetes.md` zitten daarom ook in PR 3. Een losse
+K8S-job zou een tweede image-build per PR kosten, voor een laag die de andere niet raakt.
 
 #205 blijft open: deployen naar een echt cluster (op de host en op afstand) is hier niet getest.
 
@@ -371,6 +378,11 @@ Docker Engine, arm64, en de volledige image-build.
 
 ## PR 4: tracking en CI-build
 
+De job `build-k8s-variant` en de suppressies hieronder zijn naar PR 3 verhuisd, toen die op #219
+kwam te staan. De K8S-laag bouwt en scant nu mee in `build-variants`. PR 4 houdt de wekelijkse
+jobs, de fixtures en de aparte Dockerfile-blokken. Wat hieronder over `build-k8s-variant` staat,
+geldt nu voor de K8S-stap in `build-variants`.
+
 ### Stappen
 
 1. Dockerfile: kubectl- en helm-pins in eigen blokken binnen de laag; `TODO(#205)` weg.
@@ -465,6 +477,12 @@ de pin op de officiële binary vervalt.
   `bidirule` en `unicode/norm` wel): de kwetsbare code van CVE-2026-56851 is onbereikbaar.
 - CVE-2026-78669 treft kubectl tegenover elke vijandige HTTP/2-server, ook een URL bij `-f`.
 - De kubectl-regels verlopen op 2026-12-31.
+- CVE-2026-78661 in `golang.org/x/net` (fix in 0.62.0) zit in beide binaries: kubectl 0.56.0,
+  helm 0.60.0. Er is geen release met de fix: `release-1.35` van Kubernetes zit op 0.56.0,
+  `release-4.3` van helm op 0.60.0 en helm `main` op 0.61.0. Daarom één regel per binary, tot
+  2026-12-31. De kwetsbare parser (`addText`, `fosterParent`) is in geen van beide gelinkt: helm
+  bevat geen symbool uit `x/net/html`, kubectl alleen de `Tokenizer`. Er is geen
+  gebruikersmelding, net als bij de andere onbereikbare kubectl-CVE.
 
 ### Verificatie
 

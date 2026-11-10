@@ -52,6 +52,8 @@ toets "niet-numeriek aantal"              1 'A=v1.0.0\n'                v1.0.0 v
 # De nieuwe waarde staat al elders; dat mag een correcte vervanging niet
 # als mislukt laten eindigen.
 toets "nieuwe waarde bestond al elders"   0 'A=v1.0.0\nB=v1.1.0\n'      v1.0.0 v1.1.0 1
+# Een plus mag geen quantifier worden: dan raakt a+b ook aab.
+toets "plus is letterlijk"                0 'A=a+b\nB=aab\n'            a+b c+d 1
 
 # Een afgekeurde invoer mag het bestand niet half verminkt achterlaten.
 doel="${werkmap}/onaangeroerd.txt"
@@ -85,6 +87,18 @@ if grep -q 'SHA=ccc' "${doel}" && grep -q 'SHA2=bbb' "${doel}"; then
   geslaagd=$((geslaagd + 1))
 else
   echo "FOUT alleen de bedoelde waarde is vervangen"
+  gefaald=$((gefaald + 1))
+fi
+
+# Een h1-hash is base64, met `+`, `/` en `=`; de vervanging moet hem heel laten.
+doel="${werkmap}/h1.txt"
+printf 'FUNCTL_H1=h1:ab+c/d=\n' > "${doel}"
+"${vervang}" "${doel}" 'FUNCTL_H1=h1:ab+c/d=' 'FUNCTL_H1=h1:x/y+z=' >/dev/null 2>&1
+if [ "$(cat "${doel}")" = 'FUNCTL_H1=h1:x/y+z=' ]; then
+  echo "ok   h1-hash met plus en slash"
+  geslaagd=$((geslaagd + 1))
+else
+  echo "FOUT h1-hash met plus en slash: $(cat "${doel}")"
   gefaald=$((gefaald + 1))
 fi
 

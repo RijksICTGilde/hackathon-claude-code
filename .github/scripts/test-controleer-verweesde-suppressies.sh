@@ -36,10 +36,10 @@ toets() { # naam verwachte_exitcode rapport lijst [verwachte tekst in stderr]
 }
 
 # Een helm-binary met een stdlib-CVE en de npm-bundel met een undici-CVE, zoals
-# Trivy ze in de K8S-variant rapporteert. Zonder PkgIdentifier raakt een
+# Trivy ze in de variants-image rapporteert. Zonder PkgIdentifier raakt een
 # purl-regel elke bevinding met dezelfde id, ook in Trivy zelf.
 cat > "${werkmap}/rapport.json" <<'EOF'
-{"SchemaVersion": 2, "ArtifactName": "claude-sandbox:k8s-scan", "ArtifactType": "container_image", "Results": [
+{"SchemaVersion": 2, "ArtifactName": "claude-sandbox:variants-scan", "ArtifactType": "container_image", "Results": [
   {"Target": "usr/local/bin/helm", "Class": "lang-pkgs", "Type": "gobinary", "Vulnerabilities": [
     {"VulnerabilityID": "CVE-2026-111943", "PkgName": "stdlib", "PkgIdentifier": {"PURL": "pkg:golang/stdlib@v1.27.2"}, "InstalledVersion": "v1.27.2", "FixedVersion": "1.27.3", "Severity": "HIGH"}]},
   {"Target": "Node.js", "Class": "lang-pkgs", "Type": "node-pkg", "Vulnerabilities": [

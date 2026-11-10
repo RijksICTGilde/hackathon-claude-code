@@ -20,9 +20,10 @@ Vaste technische idiomen blijven Engels en worden NIET vertaald: vendoring, pinn
 | `claude-sandbox/compose.yml` | Compose-service, volumes, capabilities voor de firewall |
 | `claude-sandbox/init-firewall.sh`, `entrypoint.sh` | Netwerkrestricties en containerstart |
 | `claude-sandbox/vendor/install-scripts/` | Gevendorde upstream install-scripts (byte-identiek) |
-| `claude-sandbox/docs/` | Opstarten/afsluiten, host-side agents |
+| `claude-sandbox/docs/` | Opstarten/afsluiten, handmatige verificatie van de hardening |
 | `oefeningen/`, `docs/verantwoording.md` | Deelnemersmateriaal en toetsing Overheidsbreed Standpunt Generatieve AI |
 | `.github/workflows/` | actionlint, build-image, check-upstream, release-sign, scorecard, scriptcontroles, shellcheck, trivy |
+| `.claude/skills/` | Projectskills voor het onderhoud van deze repo (niet in de image), zoals `/pr-reeks` |
 
 ## Commando's
 
@@ -41,7 +42,7 @@ Vanuit de repo-wortel, voor workflowwijzigingen:
 
 ```bash
 # shellcheck expliciet meegeven: zonder dat pad slaat actionlint de run-blokken stil over
-actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml .github/workflows/*.yaml
+actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml
 .github/scripts/test-valideer-trivyignore.sh  # fixtures van de suppressie-validatie (vereist yq)
 .github/scripts/test-vervang-pin.sh            # fixtures van de pin-vervanging
 .github/scripts/test-apt-upgrade-beschikbaar.sh # fixtures van de beschikbaarheidsvraag
@@ -59,7 +60,7 @@ Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aa
 Twee mechanismen, allebei gericht op reproduceerbaarheid en een gereviewde upgrade in plaats van een stille:
 
 - **Vendoring** voor install-scripts. De Dockerfile `COPY`t uit `vendor/install-scripts/`, nooit een `curl | sh` naar upstream. Gevendorde bestanden blijven byte-identiek aan hun bron; geen eigen patches, anders loopt de herkomstcontrole vast en overschrijft de wekelijkse job je wijziging.
-- **Versie-pinning** voor binaries: exacte versie plus SHA-256, tenzij het install-script de binary zelf tegen een checksum van dezelfde release verifieert.
+- **Versie-pinning** voor binaries: exacte versie plus SHA-256, tenzij het install-script de binary zelf tegen een checksum van dezelfde release verifieert. Een Go-module die vanaf de bron gebouwd wordt (`functl`) pint op (pseudo-)versie plus h1-hash.
 
 `.github/workflows/check-upstream.yml` draait wekelijks en opent een PR per gedetecteerde wijziging. Kies per afhankelijkheid het juiste mechanisme: een ongeversioneerde upstream-URL wordt gevolgd via sha256-vergelijking; een per-tag gevendord script vereist een eigen release-tracking-job, omdat een tag-URL inhoudelijk nooit wijzigt.
 
