@@ -1,6 +1,6 @@
 # Trivy-suppressions. Elke uitzondering geldt alleen voor het pad waarvoor hij
-# is opgeschreven en verloopt; build-variants meldt een regel die niets meer
-# raakt.
+# is opgeschreven en verloopt; build-variants meldt een `vulnerabilities`-regel
+# die niets meer raakt.
 #
 # Gelezen door .github/workflows/trivy.yml, de image-scans in build-image.yml
 # (build-and-push en build-variants) en apt-security-refresh in

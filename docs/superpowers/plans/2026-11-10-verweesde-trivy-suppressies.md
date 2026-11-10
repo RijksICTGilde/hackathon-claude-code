@@ -18,12 +18,12 @@ Gestapeld op #213.
    *Verificatie:* actionlint met shellcheck schoon. De stappen zelf hebben niet in CI gedraaid: build-image draait alleen op een PR naar `main`.
 5. **`scriptcontroles`.** `setup-trivy` (dezelfde pin als in trivy-action v0.36.0, Trivy v0.70.0), de fixture-sets en de controle uit stap 2 op de repo. De workflow draait ook op `merge_group`.
    *Verificatie:* groen in CI op deze PR.
-6. **Marker** bij de helm-melding in `docs/kubernetes.md`. Verder de comments in `.trivyignore.yaml`, de PR-teksten van de npm-, kubectl- en helm-jobs, en `CLAUDE.md` bijgewerkt.
+6. **Marker** bij de helm-melding in `docs/kubernetes.md`. Verder de comments in `.trivyignore.yaml`, de PR-teksten van de npm-, kubectl-, helm- en functl-jobs, en `CLAUDE.md` bijgewerkt.
 
 ## Ontwerpkeuzes
 
 - **Matching via Trivy, niet nagebouwd.** Trivy matcht paden met doublestar-globs en purls met optionele versie. Nabouwen in bash of jq wijkt af in randgevallen. `trivy convert` werkt op het rapport, dus zonder netwerk en zonder DB.
-- **Twee rapporten, tot MEDIUM.** De lijst wordt gelezen door de image-gates, de fs-gate en de SARIF-scan in `trivy.yml` (die MEDIUM meeneemt). Een regel die alleen een bevinding in de repo of een MEDIUM onderdrukt, is dus niet verweesd. Het image-rapport komt van `build-variants`: die image bevat alles van de default-image en elke opt-in-laag.
+- **Twee rapporten, elk met de severity van zijn lezers.** De image-gates lezen de lijst met CRITICAL,HIGH, de fs-gate en de SARIF-scan in `trivy.yml` de repo, de SARIF-scan met alle severities (trivy-action laat `limit-severities-for-sarif` uit). Het image-rapport is daarom CRITICAL,HIGH, het repo-rapport zonder severity-filter. Een image-regel waarvan de CVE naar MEDIUM zakt, is zo verweesd; een repo-regel voor een LOW niet. Het image-rapport komt van `build-variants` (alleen amd64): die image bevat alles van de default-image en elke opt-in-laag. Een regel voor een bevinding die alleen op arm64 voorkomt, hoort hier niet in.
 - **Niet in `build-and-push`.** Daar zouden de regels voor kubectl, helm en functl altijd verweesd lijken.
 - **Een leeg ignorefile in plaats van `--ignorefile ''`.** Trivy 0.70.0 weigert een lege waarde. Zonder vlag leest hij een `.trivyignore` uit de werkmap.
 - **De marker draagt de binding.** CVE-2026-78661 staat op drie binaries. Een marker met alleen het id zou blijven kloppen zolang één van die regels bestaat, ook als de regel waar de melding over gaat weg is. Om dezelfde reden bindt elke `vulnerabilities`-regel aan één pad of purl: een tweede binding zou blijven onderdrukken nadat de eerste niets meer raakt.

@@ -7,8 +7,8 @@
 # CVE kan op meer binaries staan, en de melding hoort weg te gaan met de regel
 # waar ze over gaat. Verdwijnt die regel omdat een release de kwetsbaarheid
 # oplost, dan maakt deze controle de melding zichtbaar die anders blijft staan.
-# Alles wat op een marker lijkt maar die vorm niet heeft, faalt ook: dat zou
-# stil buiten de controle vallen.
+# Alles op één regel wat op een marker lijkt maar die vorm niet heeft, faalt
+# ook: dat zou stil buiten de controle vallen. Een marker hoort op één regel.
 set -euo pipefail
 shopt -s inherit_errexit
 

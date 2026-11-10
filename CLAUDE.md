@@ -50,7 +50,7 @@ actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml
 .github/scripts/test-controleer-kubeconfig.sh  # fixtures van de kubeconfig-controle bij de start (vereist kubectl, jq)
 .github/scripts/test-controleer-verweesde-suppressies.sh   # fixtures van de controle op verweesde suppressies (vereist trivy, yq, jq)
 .github/scripts/test-controleer-suppressie-verwijzingen.sh # fixtures van de docs-markers naar suppressies (vereist yq, git)
-.github/scripts/controleer-suppressie-verwijzingen.sh      # elke docs-marker trivyignore: <id> <pad> verwijst naar een bestaande regel (vereist yq, git)
+.github/scripts/controleer-suppressie-verwijzingen.sh      # elke docs-marker trivyignore: <id> <pad-of-purl> verwijst naar een bestaande regel (vereist yq, git)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
