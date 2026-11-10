@@ -59,6 +59,7 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
     openssh-client \
     file \
     xz-utils \
+    libatomic1 \
     python3 \
     python3-pip \
     python3-venv \
@@ -67,12 +68,13 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # Node.js LTS officiële binary (amd64 + arm64); SHAs uit nodejs.org/dist pinnen voor supply-chain integriteit
 # Versie + SHAs worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
+# De binary linkt tegen libatomic.so.1; libatomic1 staat daarom in de apt-laag hierboven.
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v24.22.1 && \
+RUN NODE_VERSION=v26.13.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
-      arm64) NODE_ARCH=arm64; SHA=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
+      amd64) NODE_ARCH=x64;   SHA=d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 ;; \
+      arm64) NODE_ARCH=arm64; SHA=406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92 ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
