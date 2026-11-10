@@ -91,3 +91,14 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     expired_at: 2027-01-28
     statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
+
+  # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
+  # INSTALL_GO=true), en gescand door build-variants. Zelf modules bumpen zou de
+  # build laten afwijken van de gepinde, op hash gecontroleerde upstream-module.
+  # check-upstream.yml opent een PR bij een nieuwe functl-commit; haal de regel
+  # dan weg als die commit de module bumpt.
+  - id: CVE-2026-78661
+    paths:
+      - "usr/local/bin/functl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.60.0 in functl — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in functl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0; fundament main zit nog op 0.60.0.
