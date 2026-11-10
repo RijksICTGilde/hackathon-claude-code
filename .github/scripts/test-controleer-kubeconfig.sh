@@ -116,6 +116,14 @@ extra=""
 grep -q 'is niet leesbaar' "${werkmap}/fout" || extra="melding noemt niet dat het bestand onleesbaar is"
 resultaat "bestand bestaat niet" 1 "${rc}" "${extra}"
 
+# Een map op het pad: Docker of podman maakte een ontbrekend bronpad aan.
+mkdir -p "${werkmap}/map-config"
+rc=0
+"${controle}" "${werkmap}/map-config" >/dev/null 2>"${werkmap}/fout" || rc=$?
+extra=""
+grep -q 'is een map' "${werkmap}/fout" || extra="melding noemt niet dat het pad een map is"
+resultaat "kubeconfig is een map" 1 "${rc}" "${extra}"
+
 # Zonder kubectl in PATH: de controle mag dan niet stil goedkeuren.
 leeg="${werkmap}/leeg-pad"
 mkdir -p "${leeg}"
@@ -123,8 +131,32 @@ printf '%s' "${recept}" > "${werkmap}/config"
 rc=0
 PATH="${leeg}" /bin/bash "${controle}" "${werkmap}/config" >/dev/null 2>"${werkmap}/fout" || rc=$?
 extra=""
-grep -q 'INSTALL_K8S=true' "${werkmap}/fout" || extra="melding noemt INSTALL_K8S=true niet"
+grep -q 'INSTALL_FUNDAMENT=true' "${werkmap}/fout" || extra="melding noemt INSTALL_FUNDAMENT=true niet"
 resultaat "kubectl ontbreekt" 1 "${rc}" "${extra}"
+
+# Een kubeconfig van Fundament roept functl aan: geweigerd, met een verwijzing
+# naar de route in de sandbox in plaats van naar het recept.
+printf '%s' "$(met_gebruiker '    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: functl
+      args: [cluster, token, 0b5e1c2a-0000-4000-8000-000000000000]')" > "${werkmap}/config"
+rc=0
+"${controle}" "${werkmap}/config" >/dev/null 2>"${werkmap}/fout" || rc=$?
+extra=""
+grep -q 'docs/fundament.md' "${werkmap}/fout" || extra="geen verwijzing naar docs/fundament.md"
+! grep -q 'docs/kubernetes.md' "${werkmap}/fout" || extra="${extra:+${extra}, }verwijst ook naar het recept"
+grep -q 'gegevens anders dan een token: exec' "${werkmap}/fout" || extra="${extra:+${extra}, }exec niet genoemd"
+resultaat "kubeconfig van Fundament" 1 "${rc}" "${extra}"
+
+# Een andere exec-plugin krijgt het gewone advies.
+printf '%s' "$(met_gebruiker '    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: gke-gcloud-auth-plugin')" > "${werkmap}/config"
+rc=0
+"${controle}" "${werkmap}/config" >/dev/null 2>"${werkmap}/fout" || rc=$?
+extra=""
+! grep -q 'docs/fundament.md' "${werkmap}/fout" || extra="verwijst naar docs/fundament.md"
+resultaat "andere exec-plugin zonder Fundament-advies" 1 "${rc}" "${extra}"
 
 # De melding noemt elke reden.
 printf '%s' "$(met_gebruiker '    exec:

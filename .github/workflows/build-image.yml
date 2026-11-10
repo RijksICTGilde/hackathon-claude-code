@@ -32,8 +32,9 @@ env:
   IMAGE_NAME: rijksictgilde/claude-sandbox
 
 jobs:
-  # De optionele lagen voor sshd, Go, Podman, kubectl en helm en de opt-in
-  # Overheid-plugins (geo, zad-actions) bouwen alleen met hun toggle aan. Zonder
+  # De optionele lagen voor sshd, Fundament (Go, functl, kubectl, helm, just)
+  # en Podman en de opt-in Overheid-plugins (geo, zad-actions) bouwen
+  # alleen met hun toggle aan. Zonder
   # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
   # hardening-drop-in en de scans op openssh, Podman en de Go-binaries nergens
   # in CI. Alle opt-in-toggles in één build: de lagen raken elkaar niet, en zo
@@ -72,8 +73,7 @@ jobs:
           tags: claude-sandbox:variants-scan
           build-args: |
             INSTALL_SSHD=true
-            INSTALL_GO=true
-            INSTALL_K8S=true
+            INSTALL_FUNDAMENT=true
             INSTALL_PODMAN=true
             INSTALL_OVERHEID_GEO=true
             INSTALL_OVERHEID_ZAD_ACTIONS=true
@@ -157,6 +157,40 @@ jobs:
           kubectl_versie=$(jq -r '.clientVersion.gitVersion // empty' <<<"$kubectl_json") || { echo "FOUT: kubectl version gaf geen leesbare JSON" >&2; exit 1; }
           verwacht "kubectl version --client" "$kubectl_versie" "$kubectl_pin"
           verwacht "helm version" "$helm_versie" "$helm_pin"
+
+      # Om dezelfde reden als hierboven. `docker` komt uit podman-docker, bij
+      # INSTALL_PODMAN.
+      - name: just en docker in de image controleren
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if [ "$(grep -oE 'JUST_VERSION=' claude-sandbox/Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één JUST_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          just_pin=$(grep -oE 'JUST_VERSION=[0-9]+\.[0-9]+\.[0-9]+' claude-sandbox/Dockerfile | cut -d= -f2) || true
+          if [ -z "$just_pin" ]; then
+            echo "FOUT: kon JUST_VERSION niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          in_image() {
+            docker run --rm --network none --user claude --entrypoint /usr/bin/env \
+              claude-sandbox:variants-scan -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$@"
+          }
+          verwacht() { # omschrijving werkelijk verwacht
+            if [ "$2" != "$3" ]; then
+              echo "FOUT: $1 is '$2', verwacht '$3'" >&2
+              exit 1
+            fi
+            echo "ok: $1 = $2"
+          }
+          just_versie=$(in_image just --version) || { echo "FOUT: just --version faalt in de image" >&2; exit 1; }
+          docker_versie=$(in_image docker --version) || { echo "FOUT: docker --version faalt in de image" >&2; exit 1; }
+          verwacht "just --version" "$just_versie" "just ${just_pin}"
+          case "$docker_versie" in
+            podman\ version\ *) echo "ok: docker --version = $docker_versie" ;;
+            *) echo "FOUT: docker --version is '$docker_versie', verwacht podman" >&2; exit 1 ;;
+          esac
 
       # Gelijk aan de gate in build-and-push: de lijst gaat mee beide scans in.
       - name: Sleutels in .trivyignore.yaml afdwingen

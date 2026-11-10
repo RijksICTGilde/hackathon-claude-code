@@ -267,6 +267,10 @@ RUN chmod +x /usr/local/bin/init-firewall.sh
 # (Geen inline `#`-comments in de RUN: in een `\`-gecontinueerde RUN is dat
 # fragiel over Docker-builders heen.)
 #
+# podman-docker geeft een `docker`-commando, voor scripts en Justfiles die
+# `docker build` aanroepen. /etc/containers/nodocker zet de melding uit die het
+# anders bij elke aanroep geeft.
+#
 # De ARG's staan direct boven deze laag: een build-arg invalideert elke RUN na
 # zijn declaratie, dus zo bouwt een flip alleen deze laag en wat erna komt opnieuw.
 ARG INSTALL_PODMAN=false
@@ -274,8 +278,9 @@ ARG PODMAN_MULTIUID=false
 RUN case "$INSTALL_PODMAN" in \
       true) apt-get update && \
             apt-get install -y --no-install-recommends \
-              podman uidmap passt slirp4netns && \
+              podman podman-docker uidmap passt slirp4netns && \
             apt-get clean && rm -rf /var/lib/apt/lists/* && \
+            touch /etc/containers/nodocker && \
             { sed -i '/^claude:/d' /etc/subuid /etc/subgid 2>/dev/null || true ; } && \
             case "$PODMAN_MULTIUID" in \
               true) echo "claude:100000:65536" >> /etc/subuid && \
@@ -398,10 +403,19 @@ RUN case "$INSTALL_SSHD" in \
 # er stil weer privésleutelmateriaal in de image te staan.
 RUN test ! -e /home/claude/.ssh-host
 
-# Optioneel: Go en functl voor het ontwikkelen van Fundament-plug-ins. Default
-# uit. Let op: houd in sync: de tools-tabel in README.md, de toelichting bij
-# INSTALL_GO in .env.sample, en in docs/opstarten-en-afsluiten.md de tabel
-# 'Optionele componenten' en de sectie 'Fundament-plug-ins'.
+# Optioneel: alles voor het werken met Fundament, in drie lagen: Go en functl,
+# kubectl en helm, en just. Default uit. Houd in sync: de build-arg in
+# compose.yml, de tools-tabel in README.md, de toelichting bij INSTALL_FUNDAMENT
+# in .env.sample, de tabel 'Optionele componenten' in
+# docs/opstarten-en-afsluiten.md, en docs/fundament.md.
+#
+# De ARG staat boven de eerste van de drie lagen en niet bovenaan: elke RUN na een
+# ARG krijgt hem mee, dus een flip zou anders alle lagen hierboven opnieuw laten
+# bouwen. Drie lagen in plaats van één, zodat een bump van één pin de lagen
+# ervóór in de cache laat.
+ARG INSTALL_FUNDAMENT=false
+
+# Go en functl, voor het ontwikkelen van Fundament-plug-ins.
 #
 # Go en functl worden wekelijks gemonitord door .github/workflows/check-upstream.yml
 # (jobs go-version en functl-version). De functl-pins staan na de
@@ -431,11 +445,7 @@ RUN test ! -e /home/claude/.ssh-host
 #
 # Symlinks in /usr/local/bin in plaats van een ENV PATH: een non-interactieve
 # SSH-sessie erft de Docker-ENV niet.
-#
-# De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
-# een flip zou anders alle lagen hierboven opnieuw laten bouwen.
-ARG INSTALL_GO=false
-RUN case "$INSTALL_GO" in \
+RUN case "$INSTALL_FUNDAMENT" in \
       true) GO_VERSION=1.27.3 && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
@@ -476,15 +486,12 @@ RUN case "$INSTALL_GO" in \
             { [ ! -e /root/.config/go ] || { echo "FOUT: Go-config blijft achter in /root/.config/go" >&2; exit 1; }; } && \
             left=$(find /tmp /var/tmp -mindepth 1 -user 65534 -print -quit) && \
             { [ -z "$left" ] || { echo "FOUT: functl liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
-      false) echo "INFO: INSTALL_GO=false — Go en functl overgeslagen" ;; \
-      *) echo "FOUT: INSTALL_GO='$INSTALL_GO' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+      false) echo "INFO: INSTALL_FUNDAMENT=false — Go en functl overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_FUNDAMENT='$INSTALL_FUNDAMENT' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
-# Optioneel: kubectl en helm voor Helm-charts en een cluster buiten de
-# container. Default uit. Houd in sync: de build-arg in compose.yml, de
-# tools-tabel in README.md, de toelichting bij INSTALL_K8S in .env.sample, de
-# tabel 'Optionele componenten' in docs/opstarten-en-afsluiten.md, en
-# docs/kubernetes.md.
+# kubectl en helm, voor Helm-charts en een cluster buiten de container
+# (docs/kubernetes.md).
 #
 # kubectl werkt met een API-server van één minor-versie lager of hoger. De minor
 # volgt dus de clusterversie van Fundament, niet de nieuwste kubectl: de
@@ -495,12 +502,8 @@ RUN case "$INSTALL_GO" in \
 # HOME vangt config en cache die de tools eventueel schrijven; wat nobody elders
 # achterlaat, zou in de image belanden.
 #
-# De ARG staat hier en niet bovenaan: elke RUN na een ARG krijgt hem mee, dus
-# een flip zou anders alle lagen hierboven opnieuw laten bouwen.
-#
 # TODO(#205): wekelijkse tracking van deze pins.
-ARG INSTALL_K8S=false
-RUN case "$INSTALL_K8S" in \
+RUN case "$INSTALL_FUNDAMENT" in \
       true) KUBECTL_VERSION=v1.36.6 && \
             HELM_VERSION=v4.3.1 && \
             ARCH=$(dpkg --print-architecture) && \
@@ -530,8 +533,45 @@ RUN case "$INSTALL_K8S" in \
             rm -rf /tmp/k8s-home && \
             left=$(find / /tmp /var/tmp /run/lock -xdev \( -path /proc -o -path /sys \) -prune -o -user 65534 -print -quit) && \
             { [ -z "$left" ] || { echo "FOUT: kubectl of helm liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
-      false) echo "INFO: INSTALL_K8S=false — kubectl en helm overgeslagen" ;; \
-      *) echo "FOUT: INSTALL_K8S='$INSTALL_K8S' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+      false) echo "INFO: INSTALL_FUNDAMENT=false — kubectl en helm overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_FUNDAMENT='$INSTALL_FUNDAMENT' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
+# just: een plug-in uit `functl plugin create` bouwt en test met just. De versie
+# is gelijk aan die in de mise.toml van die scaffold. Officiële release-asset op
+# versie plus SHA-256 per architectuur; de versiecontrole draait als nobody,
+# zoals in de laag hierboven.
+#
+# skaffold uit diezelfde mise.toml zit er niet in: de scaffold gebruikt hem
+# alleen voor `functl plugin dev`, tegen een lokaal k3d-cluster dat niet in de
+# sandbox draait.
+#
+# TODO(#205): wekelijkse tracking van deze pins.
+RUN case "$INSTALL_FUNDAMENT" in \
+      true) JUST_VERSION=1.42.4 && \
+            ARCH=$(dpkg --print-architecture) && \
+            case "$ARCH" in \
+              amd64) JUST_TRIPLE=x86_64-unknown-linux-musl; \
+                     JUST_SHA=678efc1cfbd5fa5a88375daa7e2f3864a049d6d63a0296df925a2ae5f516cb56 ;; \
+              arm64) JUST_TRIPLE=aarch64-unknown-linux-musl; \
+                     JUST_SHA=beb35a4ed1208ffbb0fef26042c65875759a5358b9ee1a7856dec8490dfd4aca ;; \
+              *) echo "FOUT: just niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
+            curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TRIPLE}.tar.gz" -o /tmp/just.tar.gz && \
+            echo "$JUST_SHA  /tmp/just.tar.gz" | sha256sum -c - && \
+            mkdir /tmp/just && \
+            tar -xzf /tmp/just.tar.gz -C /tmp/just just && \
+            install -m 0755 /tmp/just/just /usr/local/bin/just && \
+            rm -rf /tmp/just.tar.gz /tmp/just && \
+            mkdir /tmp/just-home && chown 65534:65534 /tmp/just-home && \
+            actual=$(HOME=/tmp/just-home setpriv --reuid=65534 --regid=65534 --clear-groups \
+                       --no-new-privs --inh-caps=-all --bounding-set=-all just --version) && \
+            { [[ "$actual" == "just ${JUST_VERSION}" ]] || { echo "FOUT: just-versie '$actual' != verwacht 'just ${JUST_VERSION}'" >&2; exit 1; }; } && \
+            rm -rf /tmp/just-home && \
+            left=$(find / /tmp /var/tmp /run/lock -xdev \( -path /proc -o -path /sys \) -prune -o -user 65534 -print -quit) && \
+            { [ -z "$left" ] || { echo "FOUT: just liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
+      false) echo "INFO: INSTALL_FUNDAMENT=false — just overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_FUNDAMENT='$INSTALL_FUNDAMENT' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig

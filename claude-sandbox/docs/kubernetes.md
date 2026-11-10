@@ -2,9 +2,9 @@
 
 ## Wat je krijgt en wat niet
 
-**Geef je de sandbox toegang tot een cluster, dan kan Claude alles wat die toegangsgegevens toestaan**, ook buiten de sandbox: het token in de kubeconfig is te kopiëren. Met clustertoegang beperkt `OPEN_HTTPS=false` ook niet meer wat Claude bereikt. Pods draaien op het netwerk van het cluster, en via port-forward, een Ingress of de naam van een container-image loopt verkeer buiten de firewall van de sandbox om. De rechten hieronder verkleinen dat; ze sluiten het niet uit. Bij Fundament geldt het token voor je hele Fundament-account, en kan Claude er een blijvende API-sleutel mee maken: gebruik daar altijd een [apart account](#fundament).
+**Geef je de sandbox toegang tot een cluster, dan kan Claude alles wat die toegangsgegevens toestaan**, ook buiten de sandbox: het token in de kubeconfig is te kopiëren. Met clustertoegang beperkt `OPEN_HTTPS=false` ook niet meer wat Claude bereikt. Pods draaien op het netwerk van het cluster, en via port-forward, een Ingress of de naam van een container-image loopt verkeer buiten de firewall van de sandbox om. De rechten hieronder verkleinen dat; ze sluiten het niet uit.
 
-Met `INSTALL_K8S=true` bevat de image `kubectl` (1.36) en `helm` (4.3). Daarmee schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
+Met `INSTALL_FUNDAMENT=true` bevat de image `kubectl` (1.36) en `helm` (4.3). Deze pagina gaat over k3d en een cluster op afstand; voor Fundament, zie [fundament.md](fundament.md). Met `kubectl` en `helm` schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
 
 Voor `helm` staat een kwetsbaarheid in de certificaatcontrole van Go open (CVE-2026-111943), tot er een helm-release met de fix is. Ze raakt verkeer naar chart-repositories en OCI-registries; verkeer naar de API-server van een cluster nauwelijks, omdat dat met een eigen CA werkt.
 
@@ -14,9 +14,9 @@ Wat op de host gebeurt, staat erbij. De rest draai je in de sandbox.
 
 ### De image bouwen (op de host)
 
-Nog niet opgezet? Volg dan eerst [Opstarten, configureren en afsluiten](opstarten-en-afsluiten.md). Op de host heb je nodig: [`kubectl`](https://kubernetes.io/docs/tasks/tools/), voor een lokaal cluster [`k3d`](https://k3d.io/stable/#installation), en voor Fundament [`functl`](https://github.com/fundament-oss/fundament/blob/master/docs/user/functl.md#install) en [`jq`](https://jqlang.org/download/).
+Nog niet opgezet? Volg dan eerst [Opstarten, configureren en afsluiten](opstarten-en-afsluiten.md). Op de host heb je nodig: [`kubectl`](https://kubernetes.io/docs/tasks/tools/) en, voor een lokaal cluster, [`k3d`](https://k3d.io/stable/#installation).
 
-Zet in `.env` de regel `INSTALL_K8S=true`, en bouw en start de sandbox vanuit `claude-sandbox/`. Gebruik je een podman-override, zet die er met een extra `-f` bij:
+Zet in `.env` de regel `INSTALL_FUNDAMENT=true`, en bouw en start de sandbox vanuit `claude-sandbox/`. Gebruik je een podman-override, zet die er met een extra `-f` bij:
 
 ```bash
 docker compose up --build -d
@@ -61,7 +61,7 @@ De nodes van k3d zijn containers met de rechten van je container-runtime: bij Do
 
 **Een cluster op afstand.** Het adres staat in de kubeconfig van de beheerder, op de regel `server:`. Wat er bij `OPEN_HTTPS=false` in `ALLOWED_DOMAINS` moet, staat in [Netwerk en ALLOWED_DOMAINS](#netwerk-en-allowed_domains).
 
-**Fundament.** De rechten komen daar uit je rol in Fundament, niet uit een eigen ServiceAccount: sla de volgende stap over. Lees eerst [Fundament](#fundament): gebruik voor de sandbox een apart account, nooit je eigen.
+**Fundament.** Daar log je in de sandbox in met `functl`, en gebruik je deze pagina niet verder: zie [fundament.md](fundament.md).
 
 ### Rechten zetten (op de host, als beheerder)
 
@@ -205,34 +205,7 @@ SERVER=https://k3d-fieldlab-server-0:6443
 
 Bij [k3d op rootless podman](#k3d-op-rootless-podman) zet je daarna `SERVER=https://host.containers.internal:443`.
 
-Bij Fundament haal je eerst, met `functl` ingelogd op het [aparte account](#fundament), het cluster-id en de kubeconfig van Fundament op. Vul in de tweede regel het cluster-id uit de eerste in:
-
-```bash
-functl cluster list
-mkdir -p ~/.kube && functl cluster kubeconfig <cluster-id> > ~/.kube/fundament.yaml
-```
-
-Werk je met `OPEN_HTTPS=false`, zet dan de host uit de regel `server:` van dat bestand in `ALLOWED_DOMAINS`. Zet daarna, in plaats van de variabelen hierboven:
-
-```bash
-unset CLUSTER NS
-CLUSTER='<cluster-id>'
-NS='<namespace van je project>'
-F=$HOME/.kube/sandbox/config
-HOST_SERVER=$(kubectl --kubeconfig ~/.kube/fundament.yaml config view --minify -o jsonpath='{.clusters[0].cluster.server}')
-CA=
-SERVER=$HOST_SERVER
-token_ophalen() {
-  case "$CLUSTER" in
-    ''|*[^0-9a-fA-F-]*) echo "FOUT: CLUSTER ($CLUSTER) is geen cluster-id; vul hem in" >&2; return 1 ;;
-  esac
-  functl cluster token "$CLUSTER" | jq -er '.status.token | select(type == "string" and length > 0)'
-}
-```
-
-`CA=` blijft leeg: de kubeconfig van Fundament noemt geen CA, en `kubectl` gebruikt dan de CA's van het systeem. Vul je een placeholder niet in, dan stopt het schrijfblok hieronder met `FOUT`.
-
-Schrijf dan de kubeconfig. Dit blok is voor elke route hetzelfde:
+Schrijf dan de kubeconfig:
 
 ```bash
 (
@@ -252,6 +225,10 @@ Schrijf dan de kubeconfig. Dit blok is voor elke route hetzelfde:
     *://*) ;;
     *) echo "FOUT: SERVER ($SERVER) is geen URL; begin met https://" >&2; exit 1 ;;
   esac
+  if [ -d "$F" ]; then
+    echo "FOUT: $F is een map; verwijder hem als hij leeg is (een eerdere start zonder het bestand maakte hem aan), of kies een ander pad" >&2
+    exit 1
+  fi
   if [ -s "$F" ] && [ "$(kubectl --kubeconfig "$F" config view -o jsonpath='{.users[*].name}')" != sandbox ]; then
     echo "FOUT: $F bevat andere toegangsgegevens dan 'sandbox'; kies een ander pad" >&2
     exit 1
@@ -291,9 +268,9 @@ EOF
 )
 ```
 
-- Het blok toont met welk account het cluster het nieuwe token ziet, bij k3d en een cluster op afstand `system:serviceaccount:<namespace>:sandbox`. Die controle loopt via `HOST_SERVER`, met de naam uit `SERVER` voor het certificaat: staat die naam er niet in, dan faalt hij. Of de sandbox `SERVER` ook bereikt, zie je pas in de sandbox.
+- Het blok toont met welk account het cluster het nieuwe token ziet: `system:serviceaccount:<namespace>:sandbox`. Die controle loopt via `HOST_SERVER`, met de naam uit `SERVER` voor het certificaat: staat die naam er niet in, dan faalt hij. Of de sandbox `SERVER` ook bereikt, zie je pas in de sandbox.
 - Gaat er iets mis, dan eindigt het blok met `FOUT` of een foutmelding van `kubectl`, met een exitcode die niet 0 is, en blijft `F` zoals het was. Staat in `F` al een kubeconfig met andere toegangsgegevens, dan stopt het, zodat er nooit een beheertoegang in de sandbox belandt.
-- **Token vernieuwen**: zet dezelfde variabelen en draai het blok opnieuw. Het overschrijft het bestand op zijn plek, dus een draaiende container ziet het nieuwe token meteen. Het token van `kubectl create token` geldt hier 8 uur, dat van Fundament een kwartier.
+- **Token vernieuwen**: zet dezelfde variabelen en draai het blok opnieuw. Het overschrijft het bestand op zijn plek, dus een draaiende container ziet het nieuwe token meteen. Het token van `kubectl create token` geldt hier 8 uur.
 - De map van `F` moet alleen voor jou te openen zijn; bestaat hij nog niet, dan maakt het blok hem zo aan. Het bestand zelf is leesbaar voor iedereen: onder rootless podman is het in de container van root, en de gebruiker `claude` moet het kunnen lezen.
 
 ### Gebruiken in de sandbox
@@ -317,13 +294,11 @@ EOF
    ```
    Komen er bij een eigen chart geen pods, dan staat de reden ook in de events. Ook een request boven de limiet van de [LimitRange](#wat-het-rechtenblok-doet) houdt pods tegen.
 
-Het bestand staat in de container alleen-lezen op `/run/kubeconfig/config`, buiten de projectmap en buiten `claude-home`; start je zonder de override, dan is het weg. `KUBECONFIG` en `HELM_DRIVER` staan in de omgeving van de container, maar niet in een SSH-sessie (Kepler); zet ze daar zelf met `export`. Bij Fundament kies je met `-n <naam>` een andere namespace van je project; de ServiceAccount van de andere routes heeft alleen rechten in zijn eigen namespace.
+Het bestand staat in de container alleen-lezen op `/run/kubeconfig/config`, buiten de projectmap en buiten `claude-home`; start je zonder de override, dan is het weg. `KUBECONFIG` en `HELM_DRIVER` staan in de omgeving van de container, maar niet in een SSH-sessie (Kepler); zet ze daar zelf met `export`. De ServiceAccount heeft alleen rechten in zijn eigen namespace.
 
 ### Opruimen (op de host)
 
-Niet bij Fundament: `$NS` is daar de namespace van je project. Zie daarvoor [na de sessie](#na-de-sessie-bij-fundament).
-
-Bij k3d of een cluster op afstand: ruim na elke sessie op, met de kubeconfig van de beheerder en dezelfde `NS` als in het rechtenblok:
+Ruim na elke sessie op, met de kubeconfig van de beheerder en dezelfde `NS` als in het rechtenblok:
 
 ```bash
 if [ "$(kubectl get namespace "$NS" -o jsonpath='{.metadata.labels.claude-sandbox}')" = true ]; then
@@ -366,29 +341,6 @@ Met `OPEN_HTTPS=false` komt de sandbox alleen bij de domeinen in `ALLOWED_DOMAIN
 - **Chart-repositories en OCI-registries**, alleen als je chart ze gebruikt: de host uit `helm repo add <naam> <url>`, of uit `oci://ghcr.io/...`. Een registry stuurt de bestanden vaak door naar een tweede host, bij `ghcr.io` bijvoorbeeld `pkg-containers.githubusercontent.com`. Mislukt een download, dan noemt de foutmelding van `helm` de host die hij niet bereikt.
 
 De container-images van je chart haalt het cluster op, niet de sandbox. Daarvoor hoeft niets in `ALLOWED_DOMAINS`. De firewall zoekt de adressen van de domeinen alleen bij de start van de container op: weigert een verbinding die eerst werkte, herstart dan de container.
-
-### Fundament
-
-De kubeconfig uit de console van Fundament of van `functl cluster kubeconfig` bevat geen token. `kubectl` vraagt bij elk gebruik een token aan via `functl cluster token`, met je API-sleutel. Log daarom op de host in met `functl`, en zet alleen zo'n token in de kubeconfig van de sandbox. De API-sleutel komt dan niet in de sandbox. Met `INSTALL_GO=true` staat `functl` ook in de image, voor het bouwen van plug-ins; log daar niet mee in. Een kubeconfig die `functl` aanroept, zoals die uit de console, weigert de sandbox bij de start.
-
-**Het korte token begrenst de toegang niet.** Het token geldt een kwartier, maar het is een gewoon gebruikerstoken van Fundament, niet gebonden aan één cluster. De API van Fundament accepteert het ook. Elk lid van een organisatie mag een API-sleutel aanmaken, dus binnen dat kwartier kan Claude een nieuwe sleutel op het account aanmaken. Die blijft geldig tot je hem intrekt, of tot de maximale termijn als de beheerder van Fundament die heeft ingesteld. Als projectbeheerder kan Claude daarnaast leden aan het project toevoegen.
-
-Geef de sandbox daarom nooit een token van je eigen account. Gebruik een apart Fundament-account dat in de organisatie geen beheerder is en alleen de projectrol heeft die je nodig hebt. Wat het token mag, hangt af van die rol:
-
-- **Organisatiebeheerder** (`Organization admin`): `cluster-admin`, volledige toegang tot het hele cluster. Nooit voor de sandbox.
-- **Projectbeheerder** (`Project admin`): de rol `admin` in elke namespace van het project. Claude kan daarmee zelf ServiceAccounts, rechten en tokens aanmaken, Secrets lezen en NetworkPolicies wijzigen. De afscherming uit [Rechten zetten](#rechten-zetten-op-de-host-als-beheerder) houdt Claude dan niet tegen. Met deze rol werkt ook de standaard van `helm`: zet in de sandbox `export HELM_DRIVER=secret`, dan staan de values van een release niet in ConfigMaps, die ook projectviewers kunnen lezen.
-- **Projectviewer** (`viewer`): de rol `view` in de namespaces van het project: alleen lezen, zonder Secrets. Claude kan dan geen pods starten en dus ook niet via het cluster naar buiten. Dit is de veiligste keuze, maar uitrollen kan er niet mee.
-
-#### Na de sessie bij Fundament
-
-Controleer op de host, ingelogd op het aparte account, welke API-sleutels het account heeft en wie lid is van het project:
-
-```bash
-functl apikey list
-functl project member list <project-id>
-```
-
-Trek een sleutel die je niet kent in met `functl apikey revoke <id>`, en verwijder een onbekend lid met `functl project member remove <project-id> --user-id=<user-id>`. Was het account projectbeheerder, ruim dan ook op wat Claude in de namespaces van het project heeft aangemaakt, zoals ServiceAccounts, RoleBindings en pods.
 
 ### Pod Security
 

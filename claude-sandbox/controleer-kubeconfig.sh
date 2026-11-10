@@ -13,7 +13,12 @@ bestand="${1:?gebruik: controleer-kubeconfig.sh <kubeconfig>}"
 advies="Mount de aparte kubeconfig uit claude-sandbox/docs/kubernetes.md, niet je eigen ~/.kube/config."
 
 if ! command -v kubectl >/dev/null 2>&1; then
-    echo "FOUT: kubectl ontbreekt; bouw de image met INSTALL_K8S=true." >&2
+    echo "FOUT: kubectl ontbreekt; bouw de image met INSTALL_FUNDAMENT=true." >&2
+    exit 1
+fi
+# Docker en podman maken een bronpad dat bij de start ontbreekt aan als lege map.
+if [[ -d "$bestand" ]]; then
+    echo "FOUT: kubeconfig $bestand is een map, geen bestand. Het bestand in SANDBOX_KUBECONFIG ontbrak bij een eerdere start; verwijder op de host de lege map op dat pad, schrijf de kubeconfig, en start opnieuw met docker compose down en up." >&2
     exit 1
 fi
 if [[ ! -r "$bestand" ]]; then
@@ -45,7 +50,13 @@ if [[ -n "$redenen" ]]; then
     {
         echo "FOUT: kubeconfig $bestand geeft de sandbox meer dan één token:"
         while IFS= read -r reden; do echo "  - $reden"; done <<<"$redenen"
-        echo "$advies"
+        # De kubeconfig van Fundament roept functl aan; daarvoor is deze mount
+        # niet bedoeld.
+        if jq -e 'any(.users[]?; .user.exec.command? == "functl")' <<<"$json" >/dev/null; then
+            echo "Dit is een kubeconfig van Fundament: log daarvoor in de sandbox in met functl, zonder deze mount (claude-sandbox/docs/fundament.md)."
+        else
+            echo "$advies"
+        fi
     } >&2
     exit 1
 fi

@@ -94,7 +94,7 @@ vulnerabilities:
     statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
 
   # De regels hieronder zitten in de officiële release-binaries van kubectl en
-  # helm (alleen bij INSTALL_K8S=true), gescand door build-variants. Een regel
+  # helm (alleen bij INSTALL_FUNDAMENT=true), gescand door build-variants. Een regel
   # geldt zolang de gepinde lijn geen release met de fix heeft. Zelf bouwen
   # met een nieuwere Go of nieuwere modules zou de pin op de officiële binary
   # vervangen door een eigen build. Haal een regel weg zodra een bump van de
@@ -139,7 +139,7 @@ vulnerabilities:
     statement: golang.org/x/net 0.60.0 in helm — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in helm gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen helm 4.3-release; ook main zit op 0.61.0.
 
   # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
-  # INSTALL_GO=true), en gescand door build-variants. Zelf modules bumpen zou de
+  # INSTALL_FUNDAMENT=true), en gescand door build-variants. Zelf modules bumpen zou de
   # build laten afwijken van de gepinde, op hash gecontroleerde upstream-module.
   # check-upstream.yml opent een PR bij een nieuwe functl-commit; haal de regel
   # dan weg als die commit de module bumpt.

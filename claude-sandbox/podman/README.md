@@ -179,6 +179,8 @@ podman-override zet `DOCKER_HOST`, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`,
 `TESTCONTAINERS_RYUK_DISABLED` en `TESTCONTAINERS_HOST_OVERRIDE` op
 container-niveau — dus elk proces erft ze, ook een kale `bash -c`.
 
+Ook `docker` werkt: de image bevat `podman-docker`, dat `docker build`, `docker run` en de andere commando's aan podman doorgeeft. Vlaggen die alleen Docker kent, weigert podman wel, zoals `--provenance` bij `docker buildx build`.
+
 **Start niet zelf een tweede `podman system service` op datzelfde pad.** Die kan
 niet binden en ruimt bij het afsluiten de socket van de eerste op; daarna faalt
 Testcontainers met `Could not find a valid Docker environment` (het valt terug op
