@@ -19,7 +19,8 @@ Daarna kun je claude starten met `claude-danger`.
 Verder lezen:
 - [Opstarten, configureren en afsluiten](docs/opstarten-en-afsluiten.md) — build-toggles (`INSTALL_*`), runtime-vars, devcontainer volume-gedrag, post-install setup (GitHub CLI, Git, SDKman, Node.js, Python) en afsluiten.
 - [Maven en Testcontainers via podman](podman/README.md) — Testcontainers draait ín de sandbox, via rootless podman. Er is geen host-side agent meer. Niet elk platform is ondersteund; zie de platformtabel daar.
-- [Kubernetes (kubectl en helm)](docs/kubernetes.md) — Helm-charts controleren en uitrollen naar een cluster buiten de container (`INSTALL_K8S`), met wat Claude met clustertoegang kan.
+- [Fundament](docs/fundament.md) — werken met het Fundament-platform, zoals op het Fieldlab: plug-ins bouwen en uitrollen vanuit de sandbox (`INSTALL_FUNDAMENT`), met wat Claude met je account kan.
+- [Kubernetes (kubectl en helm)](docs/kubernetes.md) — Helm-charts controleren en uitrollen naar een cluster buiten de container, zoals k3d, met wat Claude met clustertoegang kan.
 - [Firewall](#firewall) — netwerk-beperkingen van de container.
 
 > **LET OP**: Bij wijziging in environment variabelen moet ook het volume verwijderd en opnieuw aangemaakt worden. Dit
@@ -51,9 +52,8 @@ De image bevat de volgende tools:
 | Data & scripting    | jq                                                                                                                                    |
 | Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
 | Systeem             | procps                                                                                                                                |
-| Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_GO=true`, zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
-| Fundament           | functl, vanaf de bron op een vaste commit (alleen bij `INSTALL_GO=true`)                                                              |
-| Kubernetes          | kubectl 1.35, helm 4.3 (officiële release-binaries, SHA-pinned; alleen bij `INSTALL_K8S=true`, zie [docs/kubernetes.md](docs/kubernetes.md)) |
+| Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_FUNDAMENT=true`, zie [Fundament](docs/fundament.md)) |
+| Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, helm 4.3, just 1.42 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
@@ -236,7 +236,7 @@ Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — 
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
-2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta en Go (achter `INSTALL_GO`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta, en Go, kubectl, helm en just (achter `INSTALL_FUNDAMENT`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
 `functl` wordt vanaf de bron gebouwd, omdat upstream alleen een rolling release publiceert. De pin is een Go pseudo-versie (`FUNCTL_VERSION`, die de commit vastlegt) plus de h1-hash van de module (`FUNCTL_H1`).
 

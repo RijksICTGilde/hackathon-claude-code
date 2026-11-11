@@ -9,7 +9,9 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
 - Fundament draait clusters op Gardener. Welke Kubernetes-versies een installatie aanbiedt, is
   door de beheerder ingevoerde data en staat niet in de repo. De lokale fixtures van Fundament
   bieden 1.33 en 1.34; de gepinde Gardener (v1.138) ondersteunt voor clusters tot en met 1.35, en
-  1.33 valt vóór het Fieldlab uit de Gardener-ondersteuning.
+  1.33 valt vóór het Fieldlab uit de Gardener-ondersteuning. De aan-de-slagpagina van het Fieldlab
+  (`fieldlab2026.projects.digilab.network/aan-de-slag`) zegt dat de clusters 1.36 draaien, en
+  vraagt deelnemers om kubectl 1.35, 1.36 of 1.37.
 - De kubeconfig van Fundament bevat geen token en geen CA: hij wijst naar de kube-api-proxy en
   roept `functl cluster token` aan. Dat geeft een platform-JWT van een kwartier
   (`APITokenExpiry` in `authn-api`), niet gebonden aan één cluster; `functl` gebruikt hetzelfde
@@ -24,7 +26,9 @@ container (#205). De documentatie zegt eerlijk wat Claude met die toegang kan.
   tenzij de installatie `APIKeyMaxExpiresIn` zet. `project.can_manage_members` is
   `project_admin`. De commando's in de documentatie komen uit `functl/pkg/cli`:
   `apikey list|revoke`, `project member list|remove --user-id`.
-- `functl` zit niet in de image; de documentatie laat het op de host draaien.
+- `functl` staat alleen bij `INSTALL_GO=true` in de image, voor plug-ins. Inloggen bij Fundament
+  gebeurt op de host; de sandbox krijgt alleen het token, en weigert een kubeconfig die `functl`
+  aanroept.
 - De ontwikkelomgeving van Fundament vraagt Docker met minstens 16 GiB geheugen, 24 GiB met de
   plug-in-sandbox (een k3d-cluster met een willekeurige API-poort) erbij.
 
@@ -50,10 +54,10 @@ charts controleren, cluster kiezen, rechten, kubeconfig, gebruiken, opruimen) en
 
 ## Ontwerpkeuzes
 
-**kubectl 1.35, niet de nieuwste (1.37).** kubectl ondersteunt één minor-versie verschil met de
-API-server. 1.35 dekt 1.34 tot en met 1.36, en daarmee de versies die Gardener tijdens het
-Fieldlab ondersteunt. 1.34 zou ook 1.33 dekken, maar is upstream end-of-life. De tracking-job in
-PR 4 volgt dus `stable-1.35.txt`, niet `stable.txt`; een minor-bump is een bewuste keuze die de
+**kubectl 1.36, niet de nieuwste (1.37).** kubectl ondersteunt één minor-versie verschil met de
+API-server. De clusters van het Fieldlab draaien 1.36; kubectl 1.36 dekt 1.35 tot en met 1.37, en
+zit daarmee midden in wat de aan-de-slagpagina vraagt. De tracking-job in PR 4 volgt dus
+`stable-1.36.txt`, niet `stable.txt`; een minor-bump is een bewuste keuze die de
 clusterversies volgt. `kubectl version` toont de skew als een cluster erbuiten valt.
 
 **Officiële binaries op versie plus SHA-256 per architectuur**, op eigen variabelenamen

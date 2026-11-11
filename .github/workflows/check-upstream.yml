@@ -704,7 +704,7 @@ jobs:
             - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
             - **Release notes:** https://go.dev/doc/devel/release
 
-            Verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
             heropen hem om de checks alsnog te laten draaien.
 
@@ -882,7 +882,7 @@ jobs:
             voor een module die deze commit bumpt, haal die dan weg.
 
             `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
-            en verifieer lokaal met `INSTALL_GO=true docker compose build --no-cache` voor je merget.
+            en verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
             heropen hem om de checks alsnog te laten draaien.
 

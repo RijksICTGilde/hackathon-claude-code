@@ -431,7 +431,7 @@ vervangingen "go: minor-sprong geeft vier vervangingen" "$uit" 4
 grep -q "amd64) GO_SHA=${sha_a} ;;" "$d/ws/claude-sandbox/Dockerfile" \
   && grep -q "arm64) GO_SHA=${sha_b} ;;" "$d/ws/claude-sandbox/Dockerfile"
 controle "go: elke architectuur krijgt zijn eigen SHA" $?
-grep -qF "Go 99.0 bij \`INSTALL_GO=true\`" "$d/ws/claude-sandbox/README.md" \
+grep -qF "Go 99.0 bij \`INSTALL_FUNDAMENT=true\`" "$d/ws/claude-sandbox/README.md" \
   && ! grep -qF "Go ${go_minor} bij" "$d/ws/claude-sandbox/README.md"
 controle "go: minor-sprong verzet de README-vermelding" $?
 grep -qx "current=${go_nu}" "$d/uitvoer" && grep -qx 'latest=99.0.0' "$d/uitvoer" \
