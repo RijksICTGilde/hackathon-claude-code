@@ -11,6 +11,13 @@ if [[ "$(id -u)" -eq 0 ]]; then
     exit 1
 fi
 
+# compose.override.kubeconfig.yml mount een kubeconfig van de host op dit pad.
+# Bevat die meer dan één token, dan start de sandbox niet: zo komt een eigen
+# ~/.kube/config met beheerdersgegevens er niet per ongeluk in.
+if [[ -e /run/kubeconfig/config ]] && ! /opt/controleer-kubeconfig.sh /run/kubeconfig/config; then
+    exit 1
+fi
+
 # Hint als optionele runtimes ontbreken (bv. INSTALL_JVM=false bij build)
 if [[ ! -f /home/claude/.sdkman/bin/sdkman-init.sh ]]; then
     echo "INFO: SDKman/JVM niet aanwezig in deze image — herbouw met INSTALL_JVM=true om 'sdk install java' etc. te kunnen draaien." >&2
