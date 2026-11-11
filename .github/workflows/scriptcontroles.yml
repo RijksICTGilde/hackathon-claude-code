@@ -6,6 +6,8 @@ on:
   # Geen basisbranch-filter: de suppressielijst wijzigt juist in een gestapelde
   # pull request, en de scanworkflows draaien daar niet.
   pull_request:
+  # Zo kan de job een required check zijn: de merge queue wacht er anders op.
+  merge_group:
 
 permissions:
   contents: read
@@ -38,5 +40,22 @@ jobs:
       - name: Fixtures van de kubeconfig-controle
         run: .github/scripts/test-controleer-kubeconfig.sh
 
+      # Houd de setup-trivy-pin en version in sync met die in de gepinde
+      # trivy-action (nu v0.36.0).
+      - name: Trivy installeren
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.70.0
+          cache: true
+
+      - name: Fixtures van de controle op verweesde suppressies
+        run: .github/scripts/test-controleer-verweesde-suppressies.sh
+
+      - name: Fixtures van de controle op suppressie-verwijzingen
+        run: .github/scripts/test-controleer-suppressie-verwijzingen.sh
+
       - name: Sleutels in .trivyignore.yaml afdwingen
         run: .github/scripts/valideer-trivyignore.sh
+
+      - name: Verwijzingen naar .trivyignore.yaml in de documentatie
+        run: .github/scripts/controleer-suppressie-verwijzingen.sh

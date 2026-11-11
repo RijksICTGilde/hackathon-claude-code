@@ -366,6 +366,7 @@ jobs:
             npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
             `ip-address`). Loop bij het reviewen `.trivyignore.yaml` na: staat er een
             suppressie voor een module die deze release bumpt, haal die dan weg.
+            `build-variants` faalt zolang de suppressie blijft staan.
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
@@ -879,7 +880,8 @@ jobs:
             ${{ steps.compare.outputs.go_te_laag == 'true' && format('**Let op:** de go.mod vraagt Go {0}, de Dockerfile pint Go {1}. Met `GOTOOLCHAIN=local` faalt de image-build; merge eerst een Go-bump naar minstens {0}.', steps.compare.outputs.go_mod, steps.compare.outputs.go_pin) || '' }}
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/functl`
-            voor een module die deze commit bumpt, haal die dan weg.
+            voor een module die deze commit bumpt, haal die dan weg. `build-variants` faalt zolang de
+            suppressie blijft staan.
 
             `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
             en verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
@@ -1634,7 +1636,7 @@ jobs:
             ${{ steps.compare.outputs.nieuwere_minor == 'true' && format('**Let op:** `stable.txt` staat op {0}, een nieuwere minor dan de gepinde {1}. Deze PR blijft binnen {1}; verzet de minor alleen bewust, als de clusterversies van Fundament dat vragen (zie de comment bij de kubectl-laag in de Dockerfile).', steps.compare.outputs.stable, steps.compare.outputs.minor) || '' }}
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/kubectl`
-            die deze release oplost, haal die dan weg.
+            die deze release oplost, haal die dan weg. `build-variants` faalt zolang de suppressie blijft staan.
 
             Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
@@ -1809,6 +1811,8 @@ jobs:
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/helm`
             die deze release oplost, haal die dan weg, met de melding erover in `docs/kubernetes.md`.
+            `build-variants` faalt zolang de suppressie blijft staan, en `scriptcontroles` als de
+            melding blijft staan nadat de suppressie weg is.
 
             Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en

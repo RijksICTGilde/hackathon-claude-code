@@ -244,6 +244,35 @@ jobs:
           trivyignores: .trivyignore.yaml
           exit-code: '1'
 
+      # Een regel die niets meer raakt, houdt elke scan groen, ook na expired_at.
+      # Deze image bevat alles van de default-image en elke opt-in-laag; de
+      # repo-scan dekt wat trivy.yml ziet. Samen raakt elke nog nodige regel
+      # onder `vulnerabilities` iets, op amd64. Elk rapport met de severity van
+      # de scans die het vertegenwoordigt: de image-gates CRITICAL,HIGH, de
+      # SARIF-scan in trivy.yml alle severities. trivy staat op PATH via
+      # trivy-action hierboven, en de DB komt uit diens cache.
+      - name: Trivy-rapporten zonder suppressies
+        id: rapport
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          # Zonder vlag leest Trivy een `.trivyignore` uit de werkmap, en een
+          # lege waarde weigert hij.
+          : > "${RUNNER_TEMP}/geen-suppressies.yaml"
+          gemeen=(--cache-dir "${GITHUB_WORKSPACE}/.cache/trivy" --skip-db-update
+                  --scanners vuln --ignore-unfixed
+                  --ignorefile "${RUNNER_TEMP}/geen-suppressies.yaml" --format json)
+          trivy image "${gemeen[@]}" --severity "CRITICAL,HIGH" --pkg-types os,library \
+            --output "${RUNNER_TEMP}/trivy-image.json" claude-sandbox:variants-scan
+          trivy fs "${gemeen[@]}" --skip-dirs .cache \
+            --output "${RUNNER_TEMP}/trivy-repo.json" .
+
+      - name: Verweesde suppressies in .trivyignore.yaml
+        if: ${{ !cancelled() && steps.rapport.outcome == 'success' }}
+        run: >-
+          .github/scripts/controleer-verweesde-suppressies.sh .trivyignore.yaml
+          "${RUNNER_TEMP}/trivy-image.json" "${RUNNER_TEMP}/trivy-repo.json"
+
   build:
     name: build-and-push
     runs-on: ubuntu-latest
