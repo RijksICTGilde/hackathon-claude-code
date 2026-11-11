@@ -1758,5 +1758,142 @@ for tool in kubectl helm; do
   controle "${tool}: de checkout bewaart geen credentials" $?
 done
 
+# ── just ──
+yq '.jobs."just-version".steps[] | select(has("run")) | .run' "${workflow}" > "${werkmap}/just-version.sh"
+if [ ! -s "${werkmap}/just-version.sh" ] \
+   || [ "$(yq '.jobs."just-version".steps | map(select(has("run"))) | length' "${workflow}")" -ne 1 ]; then
+  echo "FOUT: verwacht precies 1 run-blok in just-version"
+  exit 1
+fi
+just_nu="$(lees_pin JUST_VERSION)"
+just_sha_amd64="$(lees_sha amd64 JUST_SHA)"
+just_sha_arm64="$(lees_sha arm64 JUST_SHA)"
+functl_commit="${functl_nu##*-}"
+if [ -z "${just_nu}" ] || [ "${#just_sha_amd64}" -ne 64 ] || [ "${#just_sha_arm64}" -ne 64 ]; then
+  echo "FOUT: kon JUST_VERSION of de SHA-pins van just niet uit de Dockerfile lezen"
+  exit 1
+fi
+just_mm="${just_nu%.*}"
+just_patch="${just_mm}.$(( ${just_nu##*.} + 1 ))"
+just_minor="${just_nu%%.*}.$(( $(cut -d. -f2 <<<"${just_nu}") + 1 )).0"
+
+# De gh-stub geeft de mise.toml alleen voor de echte URL met de gepinde commit;
+# zonder bestand mislukt hij. De curl-stub geeft SHA256SUMS per versie.
+just_geval() { # map just-regel(s) sums-versie sha-amd64 sha-arm64
+  local d="$1"
+  printf '[tools]\ngo = "1.27.3"\n%s\nkubectl = "1.36.6"\n' "$2" > "$d/mise.toml"
+  printf '%s  just-%s-x86_64-unknown-linux-musl.tar.gz\n%s  just-%s-aarch64-unknown-linux-musl.tar.gz\n' \
+    "$4" "$3" "$5" "$3" > "$d/sums-$3.txt"
+  stub "$d" gh "printf '%s\n' \"\$@\" >> '$d/gh-argumenten.txt'
+for arg in \"\$@\"; do case \"\$arg\" in
+  repos/fundament-oss/fundament/contents/functl/pkg/scaffold/templates/base/mise.toml.tmpl?ref=${functl_commit})
+    [ -e '$d/mise.toml' ] || exit 1; cat '$d/mise.toml'; exit 0;;
+esac; done
+exit 1"
+  stub "$d" curl "for arg in \"\$@\"; do case \"\$arg\" in
+  https://github.com/casey/just/releases/download/*/SHA256SUMS)
+    v=\"\${arg#https://github.com/casey/just/releases/download/}\"; v=\"\${v%%/*}\"
+    [ -e \"$d/sums-\$v.txt\" ] || exit 22; cat \"$d/sums-\$v.txt\"; exit 0;;
+esac; done
+exit 22"
+}
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_nu}\"" "${just_nu}" "${just_sha_amd64}" "${just_sha_arm64}"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: gelijk aan de scaffold geeft geen bump" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"
+controle "just: gelijk zet changed=false" $?
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "just: gelijk laat de Dockerfile ongemoeid" $?
+grep -qxF "repos/fundament-oss/fundament/contents/functl/pkg/scaffold/templates/base/mise.toml.tmpl?ref=${functl_commit}" "$d/gh-argumenten.txt"
+controle "just: leest de mise.toml van de gepinde functl-commit" $?
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: minor-sprong verzet versie en beide SHAs" 0 "JUST_VERSION=${just_nu} -> JUST_VERSION=${just_minor}" "$uit" "$rc"
+geopend "just: bump zet changed=true" "$d"
+grep -q "amd64) JUST_SHA=${sha_a};" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) JUST_SHA=${sha_b};" "$d/ws/claude-sandbox/Dockerfile"
+controle "just: elke architectuur krijgt zijn eigen SHA" $?
+alleen_gewijzigd "just: alleen de just-regels verschoven" "$d" 'JUST_' 3
+grep -qF "just ${just_minor%.*}," "$d/ws/claude-sandbox/README.md" \
+  && ! grep -qF "just ${just_mm}," "$d/ws/claude-sandbox/README.md"
+controle "just: minor-sprong verzet de README-vermelding" $?
+grep -qx "current=${just_nu}" "$d/uitvoer" && grep -qx "latest=${just_minor}" "$d/uitvoer" \
+  && grep -qx "commit=${functl_commit}" "$d/uitvoer" \
+  && grep -qx "amd64=${sha_a}" "$d/uitvoer" && grep -qx "arm64=${sha_b}" "$d/uitvoer"
+controle "just: outputs voor de PR-body" $?
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_patch}\"" "${just_patch}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: patch-bump slaagt" 0 "JUST_VERSION=${just_nu} -> JUST_VERSION=${just_patch}" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/README.md" "$d/ws/claude-sandbox/README.md"
+controle "just: patch-bump laat de README ongemoeid" $?
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_nu}\"" "${just_nu}" "$sha_a" "${just_sha_arm64}"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: afwijkende amd64-SHA bij gelijke versie wordt rood" 1 "de amd64-SHA-pin van just ${just_nu} wijkt af van upstream (${sha_a})" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}; curl evil\"" "${just_minor}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: een just-regel die geen X.Y.Z is wordt rood" 1 'geen "X.Y.Z"' "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "just: een ongeldige regel verandert niets" $?
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"v${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: een versie met v ervoor wordt rood" 1 'geen "X.Y.Z"' "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "bun = \"1.4.3\"" "${just_nu}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: mise.toml zonder just wordt rood" 1 "verwacht precies één just-regel" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_nu}\"
+just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: twee just-regels worden rood" 1 "gevonden: 2" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+rm "$d/mise.toml"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: mise.toml niet op te halen wordt rood" 1 "kon functl/pkg/scaffold/templates/base/mise.toml.tmpl" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+rm "$d/sums-${just_minor}.txt"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: release zonder SHA256SUMS wordt rood" 1 "kon SHA256SUMS van just ${just_minor} niet ophalen" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "niet-hex"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: SHA256SUMS zonder geldige arm64-regel wordt rood" 1 "geen sha256 voor just-${just_minor}-aarch64-unknown-linux-musl.tar.gz" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "just: een ongeldige checksum verandert niets" $?
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+dubbele_pin "$d" "      true) JUST_VERSION=" "      JUST_VERSION=9.9.9 && \\"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: dubbele JUST_VERSION-pin wordt rood" 1 "verwacht precies één JUST_VERSION-pin" "$uit" "$rc"
+
+d="$(nieuwe_map)"; just_geval "$d" "just = \"${just_minor}\"" "${just_minor}" "$sha_a" "$sha_b"
+sed -i "s|just ${just_mm},|just ${just_mm} en|" "$d/ws/claude-sandbox/README.md"
+uit="$(draai "$d" just-version)"; rc=$?
+toets "just: README-vermelding achtergebleven wordt rood" 1 "'just ${just_mm},' komt 0× voor in README.md" "$uit" "$rc"
+
+# De PR-stap: poort op changed, branch, titel en de vaste zinnen.
+job='.jobs."just-version"'
+stap="${job}.steps[] | select(.with.body != null)"
+body="$(yq "${stap} | .with.body" "${workflow}")"
+r=1
+if [ "$(yq "${stap} | .if" "${workflow}")" = "steps.compare.outputs.changed == 'true'" ] \
+   && [ "$(yq "${stap} | .with.branch" "${workflow}")" = "deps/just" ] \
+   && [ "$(yq "${stap} | .with.title" "${workflow}")" = "chore(deps): bump just naar \${{ steps.compare.outputs.latest }}" ]; then r=0; fi
+controle "just: PR-stap, branch en titel" "$r"
+grep -qxF -- "- **SHA amd64:** \`\${{ steps.compare.outputs.amd64 }}\`" <<<"${body}" \
+  && grep -qxF -- "- **SHA arm64:** \`\${{ steps.compare.outputs.arm64 }}\`" <<<"${body}" \
+  && tr '\n' ' ' <<<"${body}" | grep -qF 'door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs'
+controle "just: SHA-regels en GITHUB_TOKEN-zin in de PR-body" $?
+[ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ]
+controle "just: de checkout bewaart geen credentials" $?
+
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]

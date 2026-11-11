@@ -558,3 +558,21 @@ Niet geverifieerd:
   inclusief de ingevulde `format()`-zinnen.
 - **De echte upstream bij een nieuwe patch of release.** Dat pad is alleen tegen stubs getoetst,
   en via de bump vanaf oude pins.
+
+### Na `INSTALL_FUNDAMENT` (#212)
+
+#212 verving `INSTALL_K8S` door `INSTALL_FUNDAMENT` en zette kubectl op 1.36. De jobs lezen de
+minor uit de pin, dus `kubectl-version` volgt nu `stable-1.36.txt` zonder wijziging. Erbij:
+
+- **`just-version`.** just volgt de `mise.toml` die de gepinde functl in een nieuwe plug-in
+  schrijft (`functl/pkg/scaffold/templates/base/mise.toml.tmpl` op de commit uit
+  `FUNCTL_VERSION`), niet de nieuwste release: de Dockerfile belooft dezelfde just als de
+  scaffold. De checksums komen uit `SHA256SUMS` van de release. De just-pins staan per
+  architectuur op één regel, zodat de job ze leest zoals die van helm.
+- **De README-rij van Fundament** noemt helm als laatste vóór het haakje: de helm-job zoekt
+  `helm <minor> (`. `docs/fundament.md` noemt geen versies; die verwijst naar de tools-tabel,
+  omdat geen job hem bijwerkt.
+
+Verificatie: fixtures 353 geslaagd, 0 gefaald; mutatiecheck op `just-version` 10 van 10
+gevangen; de echte `mise.toml` op de gepinde commit geeft `just = "1.42.4"`, en de SHA256SUMS van
+1.42.4 gelijk aan de pins.

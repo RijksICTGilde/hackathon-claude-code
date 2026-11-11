@@ -543,23 +543,20 @@ RUN case "$INSTALL_FUNDAMENT" in \
     esac
 
 # just: een plug-in uit `functl plugin create` bouwt en test met just. De versie
-# is gelijk aan die in de mise.toml van die scaffold. Officiële release-asset op
+# is gelijk aan die in de mise.toml die de gepinde functl schrijft; de job
+# just-version in check-upstream.yml houdt dat zo. Officiële release-asset op
 # versie plus SHA-256 per architectuur; de versiecontrole draait als nobody,
 # zoals in de laag hierboven.
 #
 # skaffold uit diezelfde mise.toml zit er niet in: de scaffold gebruikt hem
 # alleen voor `functl plugin dev`, tegen een lokaal k3d-cluster dat niet in de
 # sandbox draait.
-#
-# TODO(#205): wekelijkse tracking van deze pins.
 RUN case "$INSTALL_FUNDAMENT" in \
       true) JUST_VERSION=1.42.4 && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
-              amd64) JUST_TRIPLE=x86_64-unknown-linux-musl; \
-                     JUST_SHA=678efc1cfbd5fa5a88375daa7e2f3864a049d6d63a0296df925a2ae5f516cb56 ;; \
-              arm64) JUST_TRIPLE=aarch64-unknown-linux-musl; \
-                     JUST_SHA=beb35a4ed1208ffbb0fef26042c65875759a5358b9ee1a7856dec8490dfd4aca ;; \
+              amd64) JUST_SHA=678efc1cfbd5fa5a88375daa7e2f3864a049d6d63a0296df925a2ae5f516cb56; JUST_TRIPLE=x86_64-unknown-linux-musl ;; \
+              arm64) JUST_SHA=beb35a4ed1208ffbb0fef26042c65875759a5358b9ee1a7856dec8490dfd4aca; JUST_TRIPLE=aarch64-unknown-linux-musl ;; \
               *) echo "FOUT: just niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TRIPLE}.tar.gz" -o /tmp/just.tar.gz && \
