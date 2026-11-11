@@ -8,6 +8,9 @@
 #
 # Het script start niets op en bouwt niets: het test de container die al draait.
 # Zo blijft het herhaalbaar tegen precies de opzet die je Kepler ook geeft.
+#
+# Moet ook onder bash 3.2 (macOS /bin/bash) draaien: geen mapfile, declare -A,
+# ${x,,} of andere bash 4+-constructies.
 set -euo pipefail
 
 KEY=""
@@ -366,20 +369,32 @@ elif ! SSHD_T="$("$CLI" exec "$CONTAINER" sh -c 'sshd -T 2>&1')"; then
 else
     # Ook listenaddress: die kan een eigen poort dragen, en sshd rapporteert hem
     # niet als `port`-regel. Een kaal IPv6-adres telt niet mee.
-    mapfile -t LISTEN_PORTS < <(awk '
+    # Een read-lus en geen `mapfile`: die builtin is bash 4+, en macOS levert
+    # bash 3.2 — daar zou het script hier afbreken, halverwege de secties.
+    # `|| [[ -n … ]]` houdt, net als mapfile, een laatste regel zonder newline mee.
+    # Alleen een getal telt: de waarde gaat ongeëscaped een grep -E in, waar `.*`
+    # een willekeurige DROP-regel zou matchen.
+    LISTEN_PORTS=()
+    while IFS= read -r listen_entry || [[ -n "$listen_entry" ]]; do
+        if [[ "$listen_entry" =~ ^[0-9]{1,5}$ ]]; then
+            LISTEN_PORTS+=("$listen_entry")
+        else
+            fail "onbruikbare poort '$listen_entry' in 'sshd -T' — welke poort de firewall moet dekken is niet vast te stellen"
+        fi
+    done < <(awk '
         tolower($1) == "port" { print $2 }
         tolower($1) == "listenaddress" {
             a = $2
             if (a ~ /\]:[0-9]+$/)                   { sub(/.*\]:/, "", a); print a }
             else if (a !~ /:.*:/ && a ~ /:[0-9]+$/) { sub(/.*:/,   "", a); print a }
         }' <<<"$SSHD_T" | sort -u)
-    GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)"
+    GW="$("$CLI" exec "$CONTAINER" sh -c "ip route | awk '/default/{print \$3; exit}'" 2>/dev/null)" || true
     # `|| true`: een lege grep geeft rc 1, en met pipefail zou de toewijzing het
     # script hier neerleggen — precies bij de regressie die de takken hieronder
     # moeten melden, en vóór de secties die erna komen.
     subnet_line=$(grep -nE -- '^-A INPUT -s [0-9.]+/[0-9]+ -j ACCEPT$' <<<"$INPUT_RULES" | head -1 | cut -d: -f1) || true
     if [[ ${#LISTEN_PORTS[@]} -eq 0 ]]; then
-        fail "geen poortregel in 'sshd -T' ($(tr '\n' ' ' <<<"$SSHD_T")) — of de firewallregels de juiste poorten dekken is niet vast te stellen"
+        fail "geen poortregel in 'sshd -T' ($(grep -iE '^(port|listenaddress) ' <<<"$SSHD_T" | tr '\n' ' ' || true)) — of de firewallregels de juiste poorten dekken is niet vast te stellen"
     elif [[ -z "$subnet_line" ]]; then
         fail "geen subnet-ACCEPT gevonden in de INPUT-chain — de volgorde van de DROP is niet te beoordelen"
     elif [[ -z "$GW" ]]; then
