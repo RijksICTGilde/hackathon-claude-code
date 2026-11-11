@@ -15,7 +15,7 @@ Gestapeld op #213.
 3. **`valideer-trivyignore.sh`** eist precies één pad of purl per regel onder `vulnerabilities`.
    *Verificatie:* `test-valideer-trivyignore.sh` (33 gevallen), groen op de huidige lijst.
 4. **`build-variants`.** Na de scans volgen twee JSON-rapporten zonder suppressies: de image (os- en language-pakketten) en de repo (`trivy fs`), met de DB van de scans. Daarna draait de controle uit stap 1. Beide stappen draaien ook als een eerdere scan faalt, net als de rest van die job.
-   *Verificatie:* actionlint met shellcheck schoon. De stappen zelf hebben niet in CI gedraaid: build-image draait alleen op een PR naar `main`.
+   *Verificatie:* actionlint met shellcheck schoon. De eerste CI-run op #213 meldde de drie undici-regels als verweesd: npm 11.21.2 (#221) bundelt undici 6.29.1, de fixversie van alle drie. Die regels zijn weggehaald.
 5. **`scriptcontroles`.** `setup-trivy` (dezelfde pin als in trivy-action v0.36.0, Trivy v0.70.0), de fixture-sets en de controle uit stap 2 op de repo. De workflow draait ook op `merge_group`.
    *Verificatie:* groen in CI op deze PR.
 6. **Marker** bij de helm-melding in `docs/kubernetes.md`. Verder de comments in `.trivyignore.yaml`, de PR-teksten van de npm-, kubectl-, helm- en functl-jobs, en `CLAUDE.md` bijgewerkt.
