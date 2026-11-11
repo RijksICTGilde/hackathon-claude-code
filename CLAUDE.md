@@ -48,6 +48,9 @@ actionlint -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml
 .github/scripts/test-apt-upgrade-beschikbaar.sh # fixtures van de beschikbaarheidsvraag
 .github/scripts/test-check-upstream-jobs.sh    # fixtures van de wekelijkse versiejobs (vereist yq)
 .github/scripts/test-controleer-kubeconfig.sh  # fixtures van de kubeconfig-controle bij de start (vereist kubectl, jq)
+.github/scripts/test-controleer-verweesde-suppressies.sh   # fixtures van de controle op verweesde suppressies (vereist trivy, yq, jq)
+.github/scripts/test-controleer-suppressie-verwijzingen.sh # fixtures van de docs-markers naar suppressies (vereist yq, git)
+.github/scripts/controleer-suppressie-verwijzingen.sh      # elke docs-marker trivyignore: <id> <pad-of-purl> verwijst naar een bestaande regel (vereist yq, git)
 ```
 
 Bij wijziging in environment-variabelen moet het volume verwijderd en opnieuw aangemaakt worden; dat reset alle configuratie en data in de container.
@@ -60,6 +63,8 @@ Twee mechanismen, allebei gericht op reproduceerbaarheid en een gereviewde upgra
 - **Versie-pinning** voor binaries: exacte versie plus SHA-256, tenzij het install-script de binary zelf tegen een checksum van dezelfde release verifieert. Een Go-module die vanaf de bron gebouwd wordt (`functl`) pint op (pseudo-)versie plus h1-hash.
 
 `.github/workflows/check-upstream.yml` draait wekelijks en opent een PR per gedetecteerde wijziging. Kies per afhankelijkheid het juiste mechanisme: een ongeversioneerde upstream-URL wordt gevolgd via sha256-vergelijking; een per-tag gevendord script vereist een eigen release-tracking-job, omdat een tag-URL inhoudelijk nooit wijzigt.
+
+Een pin die bewust op een minor of major vastligt (`kubectl`, `helm`), volgt alleen releases binnen die lijn: de sprong naar een nieuwere lijn is een eigen afweging en geen auto-PR. Ziet de job een nieuwere lijn, dan meldt hij die. Pins die door verschillende jobs gebumpt worden, staan niet op aangrenzende regels, anders conflicteren hun auto-PR's.
 
 GitHub Actions worden op commit-SHA gepind, met de versie als comment erachter. Dependabot dekt Docker, GitHub Actions en pip — een GitHub-release-binary valt in geen enkel ecosysteem en heeft dus eigen tracking nodig.
 

@@ -6,7 +6,7 @@
 
 Met `INSTALL_FUNDAMENT=true` bevat de image `kubectl` (1.36) en `helm` (4.3). Deze pagina gaat over k3d en een cluster op afstand; voor Fundament, zie [fundament.md](fundament.md). Met `kubectl` en `helm` schrijf en controleer je [Helm-charts](https://helm.sh/docs/topics/charts/), en rol je ze uit naar een cluster buiten de container. Een cluster ín de sandbox kan niet: daarvoor heeft de sandbox rechten nodig die de afscherming van de container ongedaan maken.
 
-Voor `helm` staat een kwetsbaarheid in de certificaatcontrole van Go open (CVE-2026-111943), tot er een helm-release met de fix is. Ze raakt verkeer naar chart-repositories en OCI-registries; verkeer naar de API-server van een cluster nauwelijks, omdat dat met een eigen CA werkt.
+Voor `helm` staat een kwetsbaarheid in de certificaatcontrole van Go open (CVE-2026-111943), tot er een helm-release met de fix is. Ze raakt verkeer naar chart-repositories en OCI-registries; verkeer naar de API-server van een cluster nauwelijks, omdat dat met een eigen CA werkt. <!-- trivyignore: CVE-2026-111943 usr/local/bin/helm -->
 
 ## Hoofdpad
 

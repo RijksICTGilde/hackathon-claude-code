@@ -1,6 +1,6 @@
 # Fundament
 
-Met `INSTALL_FUNDAMENT=true` bevat de image alles om vanuit de sandbox met het [Fundament-platform](https://docs.fundament-poc.nl/docs/) te werken, zoals op het Fieldlab: Go 1.27, [`functl`](https://github.com/fundament-oss/fundament/tree/master/functl), `kubectl` 1.36, `helm` 4.3 en `just` 1.42. De versies van `kubectl` en `just` zijn gelijk aan die in de `mise.toml` van een nieuwe plug-in.
+Met `INSTALL_FUNDAMENT=true` bevat de image alles om vanuit de sandbox met het [Fundament-platform](https://docs.fundament-poc.nl/docs/) te werken, zoals op het Fieldlab: Go, [`functl`](https://github.com/fundament-oss/fundament/tree/master/functl), `kubectl`, `helm` en `just`. De versies staan in de tools-tabel van de [README](../README.md); `kubectl` volgt de clusterversie van Fundament.
 
 ## Wat je krijgt en wat niet
 

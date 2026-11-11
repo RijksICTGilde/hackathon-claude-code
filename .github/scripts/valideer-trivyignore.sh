@@ -66,6 +66,15 @@ for configbestand in trivy.yaml trivy.yml; do
   fi
 done
 
+# Een regel onder `vulnerabilities` bindt aan precies één pad of purl. De
+# controle op verweesde suppressies werkt per regel; een tweede binding zou
+# blijven onderdrukken nadat de eerste niets meer raakt, zonder dat dat opvalt.
+if ! yq -e '[.vulnerabilities // [] | .[] | ((.paths // []) + (.purls // [])) | length == 1] | all' \
+    "${bestand}" >/dev/null; then
+  echo "Ongeldige ${bestand}: elke regel onder vulnerabilities bindt aan precies één pad of purl; splits een regel met meer bindingen." >&2
+  exit 1
+fi
+
 # De regex hierboven ziet de vorm, niet de kalender: 2027-13-45 komt er anders
 # doorheen en laat Trivy pas bij de scan struikelen.
 while read -r datum; do

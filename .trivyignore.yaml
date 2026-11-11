@@ -1,19 +1,27 @@
 # Trivy-suppressions. Elke uitzondering geldt alleen voor het pad waarvoor hij
-# is opgeschreven en verloopt vanzelf, zodat de lijst niet stil veroudert.
+# is opgeschreven en verloopt; build-variants meldt een `vulnerabilities`-regel
+# die niets meer raakt.
 #
 # Gelezen door .github/workflows/trivy.yml, de image-scans in build-image.yml
 # (build-and-push en build-variants) en apt-security-refresh in
-# check-upstream.yml. Trivy vindt dit bestand niet uit
-# zichzelf — alleen `.trivyignore` wordt automatisch opgepikt — dus elke
-# scanstap geeft het expliciet mee, en lokaal draaien vraagt om
+# check-upstream.yml. Trivy vindt dit bestand niet uit zichzelf — alleen
+# `.trivyignore` wordt automatisch opgepikt — dus elke scanstap geeft het
+# expliciet mee, en lokaal draaien vraagt om
 # `--ignorefile .trivyignore.yaml`. Misconfig- en secret-scans worden verder
 # ongefilterd gegated; bewuste uitzonderingen horen hier met reden te staan.
 #
-# Een verlopen regel maakt de gates in trivy.yml en build-image.yml rood. In
-# apt-security-refresh, dat met exit-code 0 draait om een PR te kunnen openen,
-# komt hij terug als waarschuwing in de joboutput. Zo'n rode gate of
-# waarschuwing is het moment om te kijken of de uitzondering nog klopt:
-# verlengen mag, maar dan met een nieuwe onderbouwing.
+# Een verlopen regel die nog iets raakt, maakt de gates in trivy.yml en
+# build-image.yml rood. In apt-security-refresh, dat met exit-code 0 draait om
+# een PR te kunnen openen, komt hij terug als waarschuwing in de joboutput.
+# Zo'n rode gate of waarschuwing is het moment om te kijken of de uitzondering
+# nog klopt: verlengen mag, maar dan met een nieuwe onderbouwing.
+#
+# Een regel onder `vulnerabilities` die niets meer raakt, houdt elke gate
+# groen, ook na expired_at. Daarop faalt build-variants in build-image.yml.
+# Een melding in de documentatie over een gesuppreste CVE draagt
+# `<!-- trivyignore: <id> <pad-of-purl> -->`, met de binding van de regel;
+# scriptcontroles faalt zodra de regel weg is en de melding niet. Een regel
+# onder `vulnerabilities` bindt daarom aan precies één pad of purl.
 #
 # De vorm wordt afgedwongen door .github/scripts/valideer-trivyignore.sh, dat
 # in elke scanjob draait en in de workflow scriptcontroles: Trivy negeert een
@@ -60,51 +68,19 @@ misconfigurations:
       draait, wat een sandbox met open egress oplevert. Zie #98.
 
 vulnerabilities:
-  # De drie hieronder zitten in undici, dat npm via node-gyp bundelt. De
-  # Dockerfile pint npm op de nieuwste 11.x; geen enkele npm-release bundelt een
-  # gefixte undici, ook de volgende major niet. `apt-get upgrade` raakt ze niet:
-  # Node komt van nodejs.org, niet uit apt. node-gyp gebruikt undici alleen om
-  # Node-headers op te halen bij het compileren van een native addon. Twee zijn
-  # een crash van npm door een vijandige server, in een sandbox die geen dienst
-  # aanbiedt. De derde vraagt om een functie in de `tls`-optie; node-gyp geeft
-  # alleen een CA mee, via `connect`, `requestTls` en `proxyTls`.
-  #
-  # Het pad bindt elke regel aan de npm-bundel: dezelfde CVE in een systeem-
-  # pakket of in een eigen node_modules blijft dus gewoon rood. Haal een regel
-  # weg zodra npm de dependency bumpt; check-upstream.yml opent een PR bij een
-  # nieuwe npm-release, wat het moment is om dat na te lopen. Verlopen deze
-  # regels, dan worden build-and-push (alleen op een pull request) en
-  # build-variants rood.
-  - id: CVE-2026-109869
-    paths:
-      - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-28
-    statement: undici — DoS via een onafgevangen stream-fout bij te veel content-encodings, fix in 6.29.1.
-
-  - id: CVE-2026-87018
-    paths:
-      - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-28
-    statement: undici — DoS via TLS 1.2-renegotiatie met een ander certificaat, fix in 6.29.1.
-
-  - id: CVE-2026-109383
-    paths:
-      - "usr/local/lib/node_modules/npm/**"
-    expired_at: 2027-01-28
-    statement: undici — een checkServerIdentity in de tls-optie valt weg; node-gyp gebruikt die optie niet. Fix in 6.29.1.
-
   # De regels hieronder zitten in de officiële release-binaries van kubectl en
   # helm (alleen bij INSTALL_FUNDAMENT=true), gescand door build-variants. Een regel
   # geldt zolang de gepinde lijn geen release met de fix heeft. Zelf bouwen
   # met een nieuwere Go of nieuwere modules zou de pin op de officiële binary
-  # vervangen door een eigen build. Haal een regel weg zodra een bump van de
-  # pin de CVE oplost. Het pad bindt elke regel aan die ene binary.
+  # vervangen door een eigen build. check-upstream.yml opent een PR bij een
+  # nieuwe patch of release; haal dan de regel weg die die release oplost. Het
+  # pad bindt elke regel aan die ene binary.
   - id: CVE-2026-111943
     paths:
       - "usr/local/bin/helm"
     # Kort: de risicoafweging hoort na de eerstvolgende helm-patchrelease
     # opnieuw gemaakt te worden. docs/kubernetes.md meldt deze CVE aan
-    # gebruikers; die melding gaat samen met deze regel weg.
+    # gebruikers, met een marker; die melding gaat samen met deze regel weg.
     expired_at: 2026-11-30
     statement: |
       Go-stdlib crypto/x509 (helm gebouwd met Go 1.27.2, fix in 1.27.3): MITM

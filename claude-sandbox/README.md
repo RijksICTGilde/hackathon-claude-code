@@ -53,7 +53,7 @@ De image bevat de volgende tools:
 | Archivering         | zip, unzip, gnupg2, xz-utils                                                                                                          |
 | Systeem             | procps                                                                                                                                |
 | Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_FUNDAMENT=true`, zie [Fundament](docs/fundament.md)) |
-| Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, helm 4.3, just 1.42 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
+| Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, just 1.42, helm 4.3 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
@@ -242,6 +242,8 @@ De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 `rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.2.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
+`kubectl` en `helm` (achter `INSTALL_FUNDAMENT`) staan ook op versie plus SHA-256 per architectuur. `kubectl` ligt bewust vast op één minor-versie, die de clusterversies van Fundament volgt (zie [docs/kubernetes.md](docs/kubernetes.md)); `helm` op één major-versie.
+
 De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en opent automatisch een PR zodra:
 - een vendored install-script upstream is gewijzigd (PR vervangt het bestand in `vendor/install-scripts/`)
 - een nieuwere Node.js LTS-release beschikbaar is (PR werkt versie + amd64/arm64-SHAs en bij een major-bump de tools-tabel bij, en meldt gedeelde libraries die de nieuwe binary extra nodig heeft)
@@ -252,6 +254,9 @@ De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en
 - de rolling release `functl-latest` van Fundament op een nieuwe commit staat (PR werkt `FUNCTL_VERSION` en `FUNCTL_H1` bij, en meldt het als de `go`-regel in de go.mod van Fundament hoger is dan de gepinde Go-versie: met `GOTOOLCHAIN=local` faalt de build dan). Staat de release op een commit ouder dan 30 dagen terwijl master verder is, dan faalt de job: upstream ververst de rolling release dan niet meer
 - de gepubliceerde image fixbare CRITICAL/HIGH-CVE's in Debian-pakketten bevat, op amd64 of arm64 (PR bumpt `APT_UPGRADE_EPOCH` in de `Dockerfile`, zodat de `apt-get upgrade`-laag opnieuw draait in plaats van uit de layer cache te komen)
 - de `apt-get upgrade`-laag ouder is dan de drempel in `MAX_EPOCH_AGE_DAYS`, ook zonder bevindingen: MEDIUM- en LOW-updates komen alleen via een rebuild binnen
+- een nieuwere `kubectl`-patch binnen de gepinde minor-versie beschikbaar is, volgens `dl.k8s.io/release/stable-<minor>.txt` (PR werkt `KUBECTL_VERSION` en de amd64/arm64-SHAs bij). Een nieuwere minor in `stable.txt` wordt gemeld in de PR en als waarschuwing in de run, maar niet gebumpt; valt de gepinde minor buiten de drie minors die upstream ondersteunt, dan faalt de run
+- een nieuwere `helm`-release binnen de gepinde major-versie beschikbaar is (PR werkt `HELM_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de vermeldingen in de tools-tabel hierboven en in `docs/kubernetes.md`). Een nieuwe major wordt alleen gemeld
+- de `mise.toml` die de gepinde `functl` in een nieuwe plug-in schrijft, een andere `just` noemt (PR werkt `JUST_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de vermelding in de tools-tabel). Zo volgt `just` de scaffold, niet de nieuwste release
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 

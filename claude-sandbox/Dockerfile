@@ -502,21 +502,26 @@ RUN case "$INSTALL_FUNDAMENT" in \
 # HOME vangt config en cache die de tools eventueel schrijven; wat nobody elders
 # achterlaat, zou in de image belanden.
 #
-# TODO(#205): wekelijkse tracking van deze pins.
+# check-upstream.yml volgt de pins wekelijks (jobs kubectl-version en
+# helm-version). Elke tool heeft een eigen blok, met regels ertussen die geen
+# van beide jobs wijzigt: bij aangrenzende regels conflicteren hun auto-PR's.
 RUN case "$INSTALL_FUNDAMENT" in \
-      true) KUBECTL_VERSION=v1.36.6 && \
-            HELM_VERSION=v4.3.1 && \
-            ARCH=$(dpkg --print-architecture) && \
+      true) ARCH=$(dpkg --print-architecture) && \
+            KUBECTL_VERSION=v1.36.6 && \
             case "$ARCH" in \
-              amd64) KUBECTL_SHA=29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634; \
-                     HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
-              arm64) KUBECTL_SHA=35507ef408c3d38849e5d3203e18f8e861db822aa664101a9ced0869edd06046; \
-                     HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
-              *) echo "FOUT: kubectl en helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+              amd64) KUBECTL_SHA=29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634 ;; \
+              arm64) KUBECTL_SHA=35507ef408c3d38849e5d3203e18f8e861db822aa664101a9ced0869edd06046 ;; \
+              *) echo "FOUT: kubectl niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /tmp/kubectl && \
             echo "$KUBECTL_SHA  /tmp/kubectl" | sha256sum -c - && \
             install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
+            HELM_VERSION=v4.3.1 && \
+            case "$ARCH" in \
+              amd64) HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
+              arm64) HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
+              *) echo "FOUT: helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz && \
             echo "$HELM_SHA  /tmp/helm.tar.gz" | sha256sum -c - && \
             mkdir /tmp/helm && \
@@ -538,23 +543,20 @@ RUN case "$INSTALL_FUNDAMENT" in \
     esac
 
 # just: een plug-in uit `functl plugin create` bouwt en test met just. De versie
-# is gelijk aan die in de mise.toml van die scaffold. Officiële release-asset op
+# is gelijk aan die in de mise.toml die de gepinde functl schrijft; de job
+# just-version in check-upstream.yml houdt dat zo. Officiële release-asset op
 # versie plus SHA-256 per architectuur; de versiecontrole draait als nobody,
 # zoals in de laag hierboven.
 #
 # skaffold uit diezelfde mise.toml zit er niet in: de scaffold gebruikt hem
 # alleen voor `functl plugin dev`, tegen een lokaal k3d-cluster dat niet in de
 # sandbox draait.
-#
-# TODO(#205): wekelijkse tracking van deze pins.
 RUN case "$INSTALL_FUNDAMENT" in \
       true) JUST_VERSION=1.42.4 && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
-              amd64) JUST_TRIPLE=x86_64-unknown-linux-musl; \
-                     JUST_SHA=678efc1cfbd5fa5a88375daa7e2f3864a049d6d63a0296df925a2ae5f516cb56 ;; \
-              arm64) JUST_TRIPLE=aarch64-unknown-linux-musl; \
-                     JUST_SHA=beb35a4ed1208ffbb0fef26042c65875759a5358b9ee1a7856dec8490dfd4aca ;; \
+              amd64) JUST_SHA=678efc1cfbd5fa5a88375daa7e2f3864a049d6d63a0296df925a2ae5f516cb56; JUST_TRIPLE=x86_64-unknown-linux-musl ;; \
+              arm64) JUST_SHA=beb35a4ed1208ffbb0fef26042c65875759a5358b9ee1a7856dec8490dfd4aca; JUST_TRIPLE=aarch64-unknown-linux-musl ;; \
               *) echo "FOUT: just niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${JUST_TRIPLE}.tar.gz" -o /tmp/just.tar.gz && \

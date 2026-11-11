@@ -366,6 +366,7 @@ jobs:
             npm bundelt zijn eigen dependencies (`tar`, `undici`, `brace-expansion`,
             `ip-address`). Loop bij het reviewen `.trivyignore.yaml` na: staat er een
             suppressie voor een module die deze release bumpt, haal die dan weg.
+            `build-variants` faalt zolang de suppressie blijft staan.
 
             Verifieer lokaal met `docker compose build --no-cache` voor je merget.
 
@@ -879,7 +880,8 @@ jobs:
             ${{ steps.compare.outputs.go_te_laag == 'true' && format('**Let op:** de go.mod vraagt Go {0}, de Dockerfile pint Go {1}. Met `GOTOOLCHAIN=local` faalt de image-build; merge eerst een Go-bump naar minstens {0}.', steps.compare.outputs.go_mod, steps.compare.outputs.go_pin) || '' }}
 
             Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/functl`
-            voor een module die deze commit bumpt, haal die dan weg.
+            voor een module die deze commit bumpt, haal die dan weg. `build-variants` faalt zolang de
+            suppressie blijft staan.
 
             `functl` draait tijdens de image-build (`functl version`). Bekijk de wijzigingen
             en verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
@@ -1477,3 +1479,483 @@ jobs:
             hetzelfde als "geen fix": kijk eerst of de suite hem later alsnog
             uitlevert, en pas als dat aantoonbaar niet gebeurt hoort hij met
             reden in `.trivyignore.yaml`.
+
+  # Job 4a: kubectl — bewust op één minor gepind (zie de comment bij
+  # de kubectl-laag in de Dockerfile), dus deze job volgt alleen patches via
+  # stable-<minor>.txt. Een nieuwere minor in stable.txt wordt gemeld, niet
+  # gebumpt: die keuze volgt de clusterversies en hoort een eigen afweging te zijn.
+  kubectl-version:
+    name: kubectl-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine latest kubectl patch within the pinned minor and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          current=$(grep -oE 'KUBECTL_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige KUBECTL_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'KUBECTL_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één KUBECTL_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          # Ook bij gelijke versie: een verdwenen SHA-pin hoort niet pas bij de
+          # volgende patch op te vallen. Eigen namen (KUBECTL_SHA), zodat de
+          # telling van de delta-job er niet over struikelt. De lookahead weigert
+          # een hash van meer dan 64 tekens.
+          declare -A pin
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*KUBECTL_SHA=[a-f0-9]{64}(?![a-f0-9])" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor kubectl in de Dockerfile" >&2
+              exit 1
+            fi
+            pin[$arch]=$(grep -oP "${arch}\\)\\s*KUBECTL_SHA=\\K[a-f0-9]{64}(?![a-f0-9])" Dockerfile)
+          done
+          # De gepubliceerde checksum vertrouwen, zoals node-version de
+          # SHASUMS256.txt: hij komt van dezelfde host als de binary, dus zelf
+          # downloaden en hashen zegt niets extra's over de herkomst. De build
+          # toetst de binary ertegen.
+          checksum() { # versie arch -> sha256
+            local s
+            if ! s=$(curl -fsSL "https://dl.k8s.io/release/$1/bin/linux/$2/kubectl.sha256"); then
+              echo "FOUT: kon de $2-checksum van kubectl $1 niet ophalen" >&2
+              return 1
+            fi
+            if ! [[ "$s" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '$s' is geen sha256 uit kubectl.sha256 voor $2 $1" >&2
+              return 1
+            fi
+            printf '%s' "$s"
+          }
+          minor=${current%.*}
+          if ! latest=$(curl -fsSL "https://dl.k8s.io/release/stable-${minor#v}.txt"); then
+            echo "FOUT: kon stable-${minor#v}.txt niet ophalen van dl.k8s.io" >&2
+            exit 1
+          fi
+          # De versie komt van buiten en belandt in curl- en sed-argumenten;
+          # `=~` toetst de hele waarde, ook een tweede regel.
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte kubectl-versie '$latest' in stable-${minor#v}.txt (verwacht: vX.Y.Z)" >&2
+            exit 1
+          fi
+          if [ "${latest%.*}" != "$minor" ]; then
+            echo "FOUT: stable-${minor#v}.txt noemt ${latest}, buiten de gepinde minor ${minor}" >&2
+            exit 1
+          fi
+          if ! stable=$(curl -fsSL https://dl.k8s.io/release/stable.txt); then
+            echo "FOUT: kon stable.txt niet ophalen van dl.k8s.io" >&2
+            exit 1
+          fi
+          if ! [[ "$stable" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte kubectl-versie '$stable' in stable.txt (verwacht: vX.Y.Z)" >&2
+            exit 1
+          fi
+          # Numeriek: als tekst is v1.100 lager dan v1.35.
+          nieuwere_minor=false
+          if [ "${stable%.*}" != "$minor" ] \
+             && [ "$(printf '%s\n%s\n' "$minor" "${stable%.*}" | sort -V | tail -1)" = "${stable%.*}" ]; then
+            nieuwere_minor=true
+            # Upstream ondersteunt de drie nieuwste minors. Daarbuiten komen er
+            # geen patches en dus geen auto-PR meer; alleen een rode run valt op.
+            s=${stable%.*}; s=${s#v}; p=${minor#v}
+            if [ "${s%%.*}" != "${p%%.*}" ] || [ $(( 10#${s#*.} - 10#${p#*.} )) -ge 3 ]; then
+              echo "FOUT: stable.txt staat op ${stable}; de gepinde minor ${minor} valt buiten de drie ondersteunde minors en krijgt geen patches meer. Kies een nieuwere minor (zie de comment bij de kubectl-laag in de Dockerfile)." >&2
+              exit 1
+            fi
+            echo "::warning::stable.txt staat op ${stable}, een nieuwere minor dan de gepinde ${minor}; deze job bumpt alleen patches binnen ${minor}"
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "minor=$minor"
+            echo "stable=$stable"
+            echo "nieuwere_minor=$nieuwere_minor"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            # Een gewijzigde of verkeerd overgenomen checksum mag niet blijven
+            # staan tot de volgende patch: CI bouwt de K8S-laag niet op arm64.
+            for arch in amd64 arm64; do
+              up=$(checksum "$current" "$arch") || exit 1
+              if [ "$up" != "${pin[$arch]}" ]; then
+                echo "FOUT: de ${arch}-SHA-pin van kubectl ${current} wijkt af van upstream (${up})" >&2
+                exit 1
+              fi
+            done
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Een lagere versie dan de pin wijst op een kapotte of teruggezette
+          # feed, niet op een gewenste downgrade.
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "FOUT: kubectl ${latest} uit stable-${minor#v}.txt is lager dan de pin ${current}" >&2
+            exit 1
+          fi
+          declare -A sha
+          for arch in amd64 arm64; do
+            sha[$arch]=$(checksum "$latest" "$arch") || exit 1
+          done
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "KUBECTL_VERSION=$current" "KUBECTL_VERSION=$latest" 1
+          "$vervang" Dockerfile "KUBECTL_SHA=${pin[amd64]}" "KUBECTL_SHA=${sha[amd64]}" 1
+          "$vervang" Dockerfile "KUBECTL_SHA=${pin[arm64]}" "KUBECTL_SHA=${sha[arm64]}" 1
+          {
+            echo "changed=true"
+            echo "amd64=${sha[amd64]}"
+            echo "arm64=${sha[arm64]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if kubectl changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/kubectl
+          delete-branch: true
+          commit-message: "chore(deps): bump kubectl naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump kubectl naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe kubectl-patch binnen de gepinde minor ${{ steps.compare.outputs.minor }}, gedetecteerd via
+            `dl.k8s.io/release/stable-<minor>.txt`.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://github.com/kubernetes/kubernetes/releases/tag/${{ steps.compare.outputs.latest }}
+
+            ${{ steps.compare.outputs.nieuwere_minor == 'true' && format('**Let op:** `stable.txt` staat op {0}, een nieuwere minor dan de gepinde {1}. Deze PR blijft binnen {1}; verzet de minor alleen bewust, als de clusterversies van Fundament dat vragen (zie de comment bij de kubectl-laag in de Dockerfile).', steps.compare.outputs.stable, steps.compare.outputs.minor) || '' }}
+
+            Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/kubectl`
+            die deze release oplost, haal die dan weg. `build-variants` faalt zolang de suppressie blijft staan.
+
+            Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
+
+  # Job 4b: helm — de laatste release binnen de gepinde major. helm brengt v3 en
+  # v4 naast elkaar uit, dus releases/latest kan een v3-patch zijn; de job kiest
+  # zelf uit de lijst. Een nieuwe major wordt gemeld, niet gebumpt. Bij een
+  # nieuwe minor verschuiven de vermeldingen in de README en docs/kubernetes.md mee.
+  helm-version:
+    name: helm-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine latest helm release within the pinned major and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(grep -oE 'HELM_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige HELM_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Precies één pin verwachten; zie de toelichting bij node-version.
+          if [ "$(grep -oE 'HELM_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één HELM_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          # Zie kubectl-version: ook zonder nieuwe release, en op eigen namen.
+          declare -A pin
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*HELM_SHA=[a-f0-9]{64}(?![a-f0-9])" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor helm in de Dockerfile" >&2
+              exit 1
+            fi
+            pin[$arch]=$(grep -oP "${arch}\\)\\s*HELM_SHA=\\K[a-f0-9]{64}(?![a-f0-9])" Dockerfile)
+          done
+          # Zie kubectl-version: de gepubliceerde checksum van get.helm.sh.
+          checksum() { # versie arch -> sha256
+            local bestand="helm-$1-linux-$2.tar.gz" sums s
+            if ! sums=$(curl -fsSL "https://get.helm.sh/${bestand}.sha256sum"); then
+              echo "FOUT: kon de checksum van ${bestand} niet ophalen" >&2
+              return 1
+            fi
+            s=$(awk -v f="$bestand" '$2 == f {print $1}' <<<"$sums")
+            if ! [[ "$s" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '$s' is geen sha256 uit ${bestand}.sha256sum" >&2
+              return 1
+            fi
+            printf '%s' "$s"
+          }
+          major=${current%%.*}
+          # Alle pagina's: v3 en v4 krijgen naast elkaar patches, dus de nieuwste
+          # v4 staat niet gegarandeerd op de eerste.
+          if ! releases=$(gh api --paginate 'repos/helm/helm/releases?per_page=100'); then
+            echo "FOUT: kon de releases van helm/helm niet ophalen via de GitHub API" >&2
+            exit 1
+          fi
+          # De tags komen uit een repository van derden en belanden in curl- en
+          # sed-argumenten. Dit filter is de vormtoets: alleen gepubliceerde,
+          # stabiele vX.Y.Z-tags gaan verder, de rest valt weg. `\A…\z` en niet
+          # `^…$`: `$` laat in jq een afsluitende newline door. Numeriek
+          # sorteren: de volgorde van de API is geen contract, en als tekst is
+          # v4.10 lager dan v4.9. `--paginate` levert de pagina's als losse
+          # lijsten achter elkaar; `jq -s` en `.[][]` voegen ze samen.
+          stabiel='[.[][] | select(.draft == false and .prerelease == false) | .tag_name | strings
+                    | select(test("\\Av[0-9]+\\.[0-9]+\\.[0-9]+\\z"))]
+                   | sort_by(ltrimstr("v") | split(".") | map(tonumber))'
+          if ! latest=$(jq -rs --arg m "${major#v}" "$stabiel"' | map(select(ltrimstr("v") | split(".")[0] == $m)) | last // empty' <<<"$releases") \
+             || ! hoogste=$(jq -rs "$stabiel"' | last // empty' <<<"$releases") \
+             || ! bekend=$(jq -rs --arg c "$current" "$stabiel"' | any(.[]; . == $c)' <<<"$releases"); then
+            echo "FOUT: de releases van helm/helm zijn geen leesbare JSON-lijst" >&2
+            exit 1
+          fi
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon geen stabiele helm-release binnen major ${major} vinden" >&2
+            exit 1
+          fi
+          # Ontbreekt de pin zelf, dan is de lijst onvolledig of teruggezet en
+          # zegt "geen nieuwere release" niets. Staat hij erin, dan is latest
+          # nooit lager dan de pin.
+          if [ "$bekend" != true ]; then
+            echo "FOUT: de gepinde helm ${current} staat niet tussen de stabiele releases van helm/helm" >&2
+            exit 1
+          fi
+          nieuwe_major=false
+          if [ "${hoogste%%.*}" != "$major" ]; then
+            nieuwe_major=true
+            echo "::warning::helm ${hoogste} is uit, een nieuwere major dan de gepinde ${major}; deze job bumpt alleen binnen ${major}"
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "major=$major"
+            echo "hoogste=$hoogste"
+            echo "nieuwe_major=$nieuwe_major"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            # Zie kubectl-version: ook de pins van de huidige versie toetsen.
+            for arch in amd64 arm64; do
+              up=$(checksum "$current" "$arch") || exit 1
+              if [ "$up" != "${pin[$arch]}" ]; then
+                echo "FOUT: de ${arch}-SHA-pin van helm ${current} wijkt af van upstream (${up})" >&2
+                exit 1
+              fi
+            done
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          declare -A sha
+          for arch in amd64 arm64; do
+            sha[$arch]=$(checksum "$latest" "$arch") || exit 1
+          done
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "HELM_VERSION=$current" "HELM_VERSION=$latest" 1
+          "$vervang" Dockerfile "HELM_SHA=${pin[amd64]}" "HELM_SHA=${sha[amd64]}" 1
+          "$vervang" Dockerfile "HELM_SHA=${pin[arm64]}" "HELM_SHA=${sha[arm64]}" 1
+          # De README en docs/kubernetes.md noemen alleen major.minor, zonder v.
+          # Met de omringende tekst erbij, zodat een ander getal met dezelfde
+          # cijfers blijft staan; vervang-pin.sh weigert die tekens, dus perl
+          # met \Q…\E. Precies één treffer per bestand.
+          vermelding() { # bestand oud nieuw
+            local n
+            n=$(grep -oF -- "$2" "$1" | wc -l || true)
+            if [ "$n" -ne 1 ]; then
+              echo "FOUT: '$2' komt ${n}× voor in $1, verwacht 1×" >&2
+              return 1
+            fi
+            OUD="$2" NIEUW="$3" perl -pi -e 's/\Q$ENV{OUD}\E/$ENV{NIEUW}/g' "$1"
+            echo "$1: $2 -> $3 (1×)"
+          }
+          oud_mm=${current#v}; oud_mm=${oud_mm%.*}
+          nieuw_mm=${latest#v}; nieuw_mm=${nieuw_mm%.*}
+          if [ "$oud_mm" != "$nieuw_mm" ]; then
+            vermelding README.md "helm ${oud_mm} (" "helm ${nieuw_mm} ("
+            vermelding docs/kubernetes.md "\`helm\` (${oud_mm})" "\`helm\` (${nieuw_mm})"
+          fi
+          {
+            echo "changed=true"
+            echo "amd64=${sha[amd64]}"
+            echo "arm64=${sha[arm64]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if helm changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/helm
+          delete-branch: true
+          commit-message: "chore(deps): bump helm naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump helm naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe helm-release binnen major ${{ steps.compare.outputs.major }} gedetecteerd op GitHub. Bij een
+            nieuwe minor-versie zijn ook de vermeldingen in `README.md` en `docs/kubernetes.md` bijgewerkt.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://github.com/helm/helm/releases/tag/${{ steps.compare.outputs.latest }}
+
+            ${{ steps.compare.outputs.nieuwe_major == 'true' && format('**Let op:** helm {0} is uit, een nieuwere major dan de gepinde {1}. Deze PR blijft binnen {1}; een major-sprong is een eigen afweging (charts, plug-ins, de documentatie in `docs/kubernetes.md`).', steps.compare.outputs.hoogste, steps.compare.outputs.major) || '' }}
+
+            Loop bij het reviewen `.trivyignore.yaml` na: staat er een suppressie op `usr/local/bin/helm`
+            die deze release oplost, haal die dan weg, met de melding erover in `docs/kubernetes.md`.
+            `build-variants` faalt zolang de suppressie blijft staan, en `scriptcontroles` als de
+            melding blijft staan nadat de suppressie weg is.
+
+            Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
+
+  # Job 4c: just — volgt de mise.toml die de gepinde functl in een nieuwe
+  # plug-in schrijft, niet de nieuwste just: zo bouwt de sandbox met dezelfde
+  # just als de scaffold vraagt. Na een functl-bump stelt deze job de bijpassende
+  # just voor. Bij een nieuwe minor verschuift de vermelding in de README mee.
+  just-version:
+    name: just-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine the just of the pinned functl scaffold and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for naam in JUST_VERSION FUNCTL_VERSION; do
+            if [ "$(grep -oE "${naam}=" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${naam}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current=$(grep -oE 'JUST_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | cut -d= -f2 || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige JUST_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # De commit van de gepinde functl: de laatste twaalf tekens van de
+          # pseudo-versie.
+          commit=$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' Dockerfile | grep -oE '[0-9a-f]{12}$' || true)
+          if [ -z "$commit" ]; then
+            echo "FOUT: kon de commit van FUNCTL_VERSION niet uit Dockerfile lezen" >&2
+            exit 1
+          fi
+          # Zie kubectl-version: ook zonder nieuwe versie, en op eigen namen.
+          declare -A pin
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*JUST_SHA=[a-f0-9]{64}(?![a-f0-9])" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor just in de Dockerfile" >&2
+              exit 1
+            fi
+            pin[$arch]=$(grep -oP "${arch}\\)\\s*JUST_SHA=\\K[a-f0-9]{64}(?![a-f0-9])" Dockerfile)
+          done
+          sjabloon=functl/pkg/scaffold/templates/base/mise.toml.tmpl
+          if ! toml=$(gh api -H 'Accept: application/vnd.github.raw' \
+                        "repos/fundament-oss/fundament/contents/${sjabloon}?ref=${commit}"); then
+            echo "FOUT: kon ${sjabloon} van fundament-oss/fundament op ${commit} niet ophalen" >&2
+            exit 1
+          fi
+          # De waarde komt uit een repository van derden en belandt in curl- en
+          # sed-argumenten: precies één regel `just = "X.Y.Z"`, anders stoppen.
+          regels=$(grep -cE '^just[[:space:]]*=' <<<"$toml" || true)
+          if [ "$regels" -ne 1 ]; then
+            echo "FOUT: verwacht precies één just-regel in ${sjabloon}, gevonden: ${regels}" >&2
+            exit 1
+          fi
+          latest=$(sed -nE 's/^just[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' <<<"$toml")
+          if [ -z "$latest" ]; then
+            echo "FOUT: de just-regel in ${sjabloon} is geen \"X.Y.Z\": $(grep -E '^just[[:space:]]*=' <<<"$toml")" >&2
+            exit 1
+          fi
+          if ! sums=$(curl -fsSL "https://github.com/casey/just/releases/download/${latest}/SHA256SUMS"); then
+            echo "FOUT: kon SHA256SUMS van just ${latest} niet ophalen" >&2
+            exit 1
+          fi
+          declare -A triple=([amd64]=x86_64-unknown-linux-musl [arm64]=aarch64-unknown-linux-musl)
+          declare -A sha
+          for arch in amd64 arm64; do
+            bestand="just-${latest}-${triple[$arch]}.tar.gz"
+            sha[$arch]=$(awk -v f="$bestand" '$2 == f {print $1}' <<<"$sums")
+            if ! [[ "${sha[$arch]}" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha[$arch]}' is geen sha256 voor ${bestand} in SHA256SUMS" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "commit=$commit"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            # Zie kubectl-version: ook de pins van de huidige versie toetsen.
+            for arch in amd64 arm64; do
+              if [ "${sha[$arch]}" != "${pin[$arch]}" ]; then
+                echo "FOUT: de ${arch}-SHA-pin van just ${current} wijkt af van upstream (${sha[$arch]})" >&2
+                exit 1
+              fi
+            done
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "JUST_VERSION=$current" "JUST_VERSION=$latest" 1
+          "$vervang" Dockerfile "JUST_SHA=${pin[amd64]}" "JUST_SHA=${sha[amd64]}" 1
+          "$vervang" Dockerfile "JUST_SHA=${pin[arm64]}" "JUST_SHA=${sha[arm64]}" 1
+          # De README noemt alleen major.minor, met de komma erachter: zo blijft
+          # een ander getal met dezelfde cijfers staan. Zie helm-version.
+          oud_mm=${current%.*}
+          nieuw_mm=${latest%.*}
+          if [ "$oud_mm" != "$nieuw_mm" ]; then
+            n=$(grep -oF -- "just ${oud_mm}," README.md | wc -l || true)
+            if [ "$n" -ne 1 ]; then
+              echo "FOUT: 'just ${oud_mm},' komt ${n}× voor in README.md, verwacht 1×" >&2
+              exit 1
+            fi
+            OUD="just ${oud_mm}," NIEUW="just ${nieuw_mm}," perl -pi -e 's/\Q$ENV{OUD}\E/$ENV{NIEUW}/g' README.md
+            echo "README.md: just ${oud_mm}, -> just ${nieuw_mm}, (1×)"
+          fi
+          {
+            echo "changed=true"
+            echo "amd64=${sha[amd64]}"
+            echo "arm64=${sha[arm64]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if just changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/just
+          delete-branch: true
+          commit-message: "chore(deps): bump just naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump just naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            De scaffold van de gepinde functl (commit `${{ steps.compare.outputs.commit }}`) vraagt een andere
+            just in zijn `mise.toml`. Bij een nieuwe minor-versie is ook de vermelding in `README.md` bijgewerkt.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://github.com/casey/just/releases/tag/${{ steps.compare.outputs.latest }}
+
+            Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
