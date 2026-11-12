@@ -17,7 +17,7 @@ zodat dit voortgangsbestand meereist. Vanaf `main` beginnen geeft gegarandeerd c
 #130 raakt dezelfde workflow, #124 hetzelfde scanfilter en #127 bouwt voort op de scanroute
 uit #125. De PR-beschrijving noemt welke PR de basis is.
 
-#121, #132, #134 en #135 zijn squash-gemerged in `main` (26-08-2026) en de stack is daarop herbaseerd: de
+#121, #132, #134, #135 en #139 zijn squash-gemerged in `main` (26/27-08-2026) en de stack is daarop herbaseerd: de
 onderste openstaande PR vertrekt nu vanaf `main`. Een squash-merge laat de oorspronkelijke
 commits ongemoeid, dus zonder rebase draagt elke branch de al gemergede commits nog mee en
 meldt GitHub een conflict. Landt er weer een PR uit de reeks, dan opnieuw `git rebase --onto`
@@ -72,7 +72,17 @@ nodig heeft daar zijn vorm krijgt.
   dat mislukken de indexen stil, want `apt-get update` geeft dan nog steeds exitcode 0.
 - Wachten op groene CI voor de PR als klaar gepresenteerd wordt.
 - #125 heeft een harde go/no-go: beide scanroutes in één run draaien en de CVE-ID-sets van
-  `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg.
+  `Class == "os-pkgs"` diffen. Niet identiek, dan gaat de oude route niet weg. **Gemeten op
+  27-08-2026: no-go.** De gepubliceerde SBOM levert 0 van de 239 os-CVE's, want BuildKit laat
+  syft de laag als directory scannen en dan komt er geen OS-package uit; met een geïnjecteerd
+  OS-package nog steeds 134 van de 239, doordat Trivy de `upstream=`-qualifier in de purl niet
+  gebruikt en advisories op bronpakket-niveau daardoor niet matchen. Let op dat de diff zoals
+  het issue hem formuleert vals-positief uitpakt zolang de image nul fixbare CRITICAL/HIGH
+  heeft: beide sets zijn dan leeg. Draai de vergelijking zonder severity-filter. De vervolgroute — de build
+  laat Trivy zelf de SBOM maken via een eigen BuildKit-generator — is doorgemeten en levert
+  wél een gelijkwaardige uitkomst (239 tegenover 239), maar vereist een eigen image die
+  onderhouden moet worden. Afgewezen op 27-08-2026: die kosten wegen niet op tegen ~2,3 GB
+  bandbreedte per maand. **Niet opnieuw voorstellen**; de meting staat op het issue.
 - #128 heeft een harde go/no-go: de handtekening op de samengestelde index moet
   verifieerbaar zijn en provenance en SBOM moeten per architectuur meekomen.
 
@@ -101,9 +111,9 @@ criteria.
 | 129 | actionlint in CI | gemerged | `chore/actionlint-in-ci` | #132 | gemerged in `main` op 26-08-2026 |
 | 124 | `.trivyignore.yaml` | gemerged | `chore/trivyignore-yaml` | #134 | gemerged in `main` op 26-08-2026 |
 | 130 | auto-PR-jobs verifiëren hun wijziging | gemerged | `fix/auto-pr-verifieert-wijziging` | #135 | gemerged in `main` op 26-08-2026 |
-| 126 | beschikbaarheid fix vóór bump-PR | PR open | `fix/bump-alleen-als-fix-beschikbaar` | #139 | drie reviewrondes verwerkt; de keten is echt gedraaid onder podman |
-| 125 | scan op gepubliceerde SBOM | open | — | — | — |
-| 127 | SARIF naar code scanning | open | — | — | — |
+| 126 | beschikbaarheid fix vóór bump-PR | gemerged | `fix/bump-alleen-als-fix-beschikbaar` | #139 | gemerged in `main` op 27-08-2026 na vijf reviewrondes |
+| 125 | scan op gepubliceerde SBOM | gesloten | — | — | no-go gemeten; vervolgroute afgewezen, issue gesloten 27-08-2026 |
+| 127 | SARIF naar code scanning | open | — | — | leunt niet meer op #125; 152 CRITICAL/HIGH zonder fix blijven nu onzichtbaar |
 | 128 | native arm64-runners | open | — | — | — |
 | 131 | upstream-tracking voor de actionlint- en shellcheck-pin | open | — | — | — |
 | 133 | inputs van gepinde actions worden niet gecontroleerd | open | — | — | — |
@@ -114,6 +124,7 @@ criteria.
 | 142 | een kwetsbaarheid die weken niet te verhelpen is blijft onder de radar | open | — | — | uit ronde 3 van #126 |
 | 143 | de fixtures van de wekelijkse jobs delen vaste paden | open | — | — | uit ronde 3 van #126 |
 | 144 | de basis-image van de controle wordt anoniem opgehaald | open | — | — | uit ronde 3 van #126 |
+| 149 | elke bouw blijft voorgoed in het register staan | open | — | — | 889 uitgaven op 04-11-2026; er is geen opruiming, ook niet voor voorstellen |
 | 140 | uitzonderingen blijven staan nadat ze overbodig zijn | open | — | — | door de opdrachtgever aangemaakt |
 
 Statuswaarden: open / in uitvoering / PR open / gemerged. Werk deze tabel bij vóór je aan een
@@ -130,7 +141,7 @@ zodra alles in de statustabel gemerged is.
 
 ## Waar het werk stond bij het onderbreken
 
-De stack is `main` ← #139 (#126); #121, #132, #134 en #135 zitten in `main`. #139 is draft en
-heeft zijn drie reviewrondes gehad. Daarna volgen #125, #127 en #128 in die
-volgorde; voor #125 is van belang dat de scanroutes lokaal onder podman werkelijk te draaien
-zijn, dus de harde go/no-go van dat issue is uitvoerbaar.
+Alles uit de oorspronkelijke reeks tot en met #126 zit in `main`. #125 is gesloten (gemeten
+no-go). Nog te doen: #127 en #128, plus de nevenbevindingen #131 tot en met #149. Op
+04-11-2026 zijn die allemaal opnieuw tegen `main` gecontroleerd en nog actueel; de tekst van
+#140 en #149 is daarbij bijgewerkt.
