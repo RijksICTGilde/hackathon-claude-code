@@ -516,10 +516,10 @@ RUN case "$INSTALL_FUNDAMENT" in \
             curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /tmp/kubectl && \
             echo "$KUBECTL_SHA  /tmp/kubectl" | sha256sum -c - && \
             install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
-            HELM_VERSION=v4.3.1 && \
+            HELM_VERSION=v4.3.2 && \
             case "$ARCH" in \
-              amd64) HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
-              arm64) HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
+              amd64) HELM_SHA=d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983 ;; \
+              arm64) HELM_SHA=df31cb61680ef728f82c770e5280dd565617bee6b039d37e85c677288be4bbb0 ;; \
               *) echo "FOUT: helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz && \
