@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # De binary linkt tegen libatomic.so.1; libatomic1 staat daarom in de apt-laag hierboven.
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v26.13.0 && \
+RUN NODE_VERSION=v26.13.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 ;; \
-      arm64) NODE_ARCH=arm64; SHA=406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92 ;; \
+      amd64) NODE_ARCH=x64;   SHA=5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864 ;; \
+      arm64) NODE_ARCH=arm64; SHA=89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
