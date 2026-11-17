@@ -75,21 +75,6 @@ vulnerabilities:
   # vervangen door een eigen build. check-upstream.yml opent een PR bij een
   # nieuwe patch of release; haal dan de regel weg die die release oplost. Het
   # pad bindt elke regel aan die ene binary.
-  - id: CVE-2026-111943
-    paths:
-      - "usr/local/bin/helm"
-    # Kort: de risicoafweging hoort na de eerstvolgende helm-patchrelease
-    # opnieuw gemaakt te worden. docs/kubernetes.md meldt deze CVE aan
-    # gebruikers, met een marker; die melding gaat samen met deze regel weg.
-    expired_at: 2026-11-30
-    statement: |
-      Go-stdlib crypto/x509 (helm gebouwd met Go 1.27.2, fix in 1.27.3): MITM
-      via certificaten onder door Go gedenyliste tussen-CA's. Misbruik vraagt
-      een positie op het netwerkpad én zo'n certificaat. Raakt verkeer naar
-      chart-repositories en OCI-registries; nauwelijks dat naar de API-server,
-      die met een eigen cluster-CA werkt. Kan weg zodra een helm-release met
-      Go 1.27.3 of hoger uit is.
-
   - id: CVE-2026-78669
     paths:
       - "usr/local/bin/kubectl"
@@ -107,12 +92,6 @@ vulnerabilities:
       - "usr/local/bin/kubectl"
     expired_at: 2026-12-31
     statement: golang.org/x/net 0.56.0 in kubectl — DoS via HTML-invoer in de parser van x/net/html (addText, fosterParent). kubectl linkt van dat pakket alleen de Tokenizer, niet de parser; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen kubectl 1.36-release.
-
-  - id: CVE-2026-78661
-    paths:
-      - "usr/local/bin/helm"
-    expired_at: 2026-12-31
-    statement: golang.org/x/net 0.60.0 in helm — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in helm gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen helm 4.3-release; ook main zit op 0.61.0.
 
   # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
   # INSTALL_FUNDAMENT=true), en gescand door build-variants. Zelf modules bumpen zou de
