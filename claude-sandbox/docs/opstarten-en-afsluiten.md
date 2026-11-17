@@ -81,6 +81,14 @@ Je kunt nu connecten met de draaiende container, bijvoorbeeld om een shell (bash
 
 Je landt automatisch in de 'projects' directory.
 
+#### Shell in de huidige projectmap
+`sandbox-shell.sh` start de shell in de containermap die hoort bij de map waar je terminal op de host staat. Sta je in `$PROJECTS_DIR/mijn-app/src`, dan land je in `/home/claude/projects/mijn-app/src`. Buiten `PROJECTS_DIR` start de shell in `/home/claude/projects`, met een melding. Argumenten worden als commando uitgevoerd in plaats van bash:
+```
+sandbox-shell.sh                                        # bash in de bijbehorende map
+sandbox-shell.sh claude --dangerously-skip-permissions  # claude direct in die map
+```
+Het script leest de mount uit de draaiende container, dus het werkt ook met een aangepaste `PROJECTS_DIR`. Met een alias of symlink in je `PATH` werkt het vanuit elke map, bijvoorbeeld `alias cs=/pad/naar/claude-sandbox/sandbox-shell.sh`. Een andere containernaam geef je mee via `CLAUDE_SANDBOX_CONTAINER`.
+
 Als je voor de variant met de shell kiest kun je zelf eerst naar je project-directory navigeren en dan Claude starten, dan heb
 je meer controle over de historie van Claude (die wordt onthouden voor de directory waarin Claude gestart is).
 

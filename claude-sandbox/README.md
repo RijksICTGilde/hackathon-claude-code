@@ -12,6 +12,8 @@ docker compose up --build --detach
 docker exec -tiu claude claude-sandbox bash   # werkt ook vanuit andere directories dan deze repo
 ```
 
+Staat je terminal in (een submap van) `PROJECTS_DIR`, dan opent `./sandbox-shell.sh` de shell direct in dezelfde map in de container — zie [Opstarten](docs/opstarten-en-afsluiten.md#shell-in-de-huidige-projectmap).
+
 Daarna kun je claude starten met `claude-danger`.
 
 > **Nested podman (`INSTALL_PODMAN=true`)?** Dan is `docker compose up` hierboven niet genoeg: nested/detached containers (Testcontainers, Quarkus Dev Services) vereisen óók de runtime-override die `/dev/net/tun` + security-opts meegeeft. Het exacte startcommando verschilt per OS en staat in [podman/README.md](podman/README.md). Zonder de override start de container prima, maar waarschuwt de entrypoint dat nested containers zullen falen. Gebruik je óók `INSTALL_SSHD=true`, geef dan beide overrides mee — zie [Kepler (SSH-remote)](#kepler-ssh-remote).
