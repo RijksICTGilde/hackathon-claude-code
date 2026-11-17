@@ -67,11 +67,11 @@ RUN echo "apt-upgrade epoch: ${APT_UPGRADE_EPOCH}" && \
 # (opent automatisch een PR zodra er een nieuwere LTS-release is).
 # De binary linkt tegen libatomic.so.1; libatomic1 staat daarom in de apt-laag hierboven.
 # Let op: houd versie in de README tools-tabel in sync
-RUN NODE_VERSION=v26.13.0 && \
+RUN NODE_VERSION=v26.13.1 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) NODE_ARCH=x64;   SHA=d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 ;; \
-      arm64) NODE_ARCH=arm64; SHA=406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92 ;; \
+      amd64) NODE_ARCH=x64;   SHA=5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864 ;; \
+      arm64) NODE_ARCH=arm64; SHA=89e1853138db51e8b82d3e98ba9c0d3f2956a28e5e55ea1b7e12d25aae92d5dd ;; \
       *) echo "FOUT: Node.js niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz && \
@@ -446,15 +446,15 @@ ARG INSTALL_FUNDAMENT=false
 # Symlinks in /usr/local/bin in plaats van een ENV PATH: een non-interactieve
 # SSH-sessie erft de Docker-ENV niet.
 RUN case "$INSTALL_FUNDAMENT" in \
-      true) GO_VERSION=1.27.3 && \
+      true) GO_VERSION=1.27.4 && \
             ARCH=$(dpkg --print-architecture) && \
             case "$ARCH" in \
-              amd64) GO_SHA=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;; \
-              arm64) GO_SHA=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;; \
+              amd64) GO_SHA=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840 ;; \
+              arm64) GO_SHA=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92 ;; \
               *) echo "FOUT: Go niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
-            FUNCTL_VERSION=v0.0.0-20261105173205-d80f3ad60d43 && \
-            FUNCTL_H1=h1:BDvOO5d4gY15XMsmVALmrHC1agAl+VnFHKxht/IWvn4= && \
+            FUNCTL_VERSION=v0.0.0-20261116122217-bdc42fada781 && \
+            FUNCTL_H1=h1:JnZQXfxzMAlK6zlOexztOpvK5XzCz+lL2ZCjzJHT2xI= && \
             curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
             echo "$GO_SHA  /tmp/go.tar.gz" | sha256sum -c - && \
             tar -xzf /tmp/go.tar.gz -C /usr/local && \
@@ -516,10 +516,10 @@ RUN case "$INSTALL_FUNDAMENT" in \
             curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /tmp/kubectl && \
             echo "$KUBECTL_SHA  /tmp/kubectl" | sha256sum -c - && \
             install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && \
-            HELM_VERSION=v4.3.1 && \
+            HELM_VERSION=v4.3.2 && \
             case "$ARCH" in \
-              amd64) HELM_SHA=0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b ;; \
-              arm64) HELM_SHA=8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88 ;; \
+              amd64) HELM_SHA=d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983 ;; \
+              arm64) HELM_SHA=df31cb61680ef728f82c770e5280dd565617bee6b039d37e85c677288be4bbb0 ;; \
               *) echo "FOUT: helm niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz && \
