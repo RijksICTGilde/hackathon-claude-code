@@ -48,7 +48,7 @@ De [aan-de-slagpagina van het Fieldlab](https://fieldlab2026.projects.digilab.ne
    ```
    De `--sdk-version` is nodig: zonder die vlag pint `functl` de SDK op een revisie die upstream niet meer bestaat, en dan faalt `go mod tidy` met `unknown revision`. `functl version` geeft de versie van Fundament waaruit `functl` gebouwd is, dus de SDK komt van dezelfde commit. `functl plugin create` draait zelf ook `go mod tidy`, maar meldt een fout daarin alleen als waarschuwing; de losse stap laat hem zien.
 
-   Het container-image bouwen gaat met podman: zet ook `INSTALL_PODMAN=true` en start met de platform-override uit [podman/README.md](../podman/README.md). Die override geeft de sandbox extra rechten; lees eerst wat dat betekent. Gebruik dan het commando van de pagina, `docker build --platform linux/amd64 -t mijn-plugin:dev .`. `just docker` werkt niet: het geeft `docker buildx build` vlaggen mee die podman niet kent (`unknown flag: --provenance`).
+   Het container-image bouwen gaat met podman: zet ook `INSTALL_PODMAN=true` en start met de platform-override uit [podman/README.md](../podman/README.md). Die override geeft de sandbox extra rechten; lees eerst wat dat betekent. Gebruik dan het commando van de pagina, `docker build --platform linux/amd64 -t mijn-plugin:dev .`. `just docker` werkt ook, maar geeft geen `--platform` mee en bouwt dus voor de architectuur van je laptop: op een Mac met Apple-chip wordt dat arm64.
 
 ## Netwerk
 
