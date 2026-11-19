@@ -237,7 +237,7 @@ Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — 
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
-2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta, Go, kubectl, helm en just (achter `INSTALL_FUNDAMENT`) en zadctl (achter `INSTALL_OVERHEID_ZAD_ACTIONS`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+2. **Versie- en SHA-pinning** voor binaries. Node.js en git-delta, Go, kubectl, helm en just (achter `INSTALL_FUNDAMENT`), en zadctl (achter `INSTALL_OVERHEID_ZAD_ACTIONS`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
 `functl` wordt vanaf de bron gebouwd, omdat upstream alleen een rolling release publiceert. De pin is een Go pseudo-versie (`FUNCTL_VERSION`, die de commit vastlegt) plus de h1-hash van de module (`FUNCTL_H1`).
 

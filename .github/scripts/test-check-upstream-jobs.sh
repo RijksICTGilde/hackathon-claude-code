@@ -1910,7 +1910,8 @@ if [ -z "${zadctl_nu}" ] || [ "${#zadctl_sha_amd64}" -ne 64 ] || [ "${#zadctl_sh
   exit 1
 fi
 zadctl_nieuw="${zadctl_nu%.*}.$(( ${zadctl_nu##*.} + 1 ))"
-zadctl_lager="${zadctl_nu%%.*}.$(( $(cut -d. -f2 <<<"${zadctl_nu}") - 1 )).9"
+# Altijd lager dan elke pin boven 0.0.0.
+zadctl_lager=0.0.0
 
 # De gh-stub geeft de tag uit een bestand; zonder bestand mislukt hij. De
 # curl-stub geeft SHA256SUMS per tag.
@@ -2017,6 +2018,26 @@ toets "zadctl: SHA256SUMS zonder geldige amd64-regel wordt rood" 1 "geen sha256 
 d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "sha256:${sha_a}" "$sha_b"
 uit="$(draai "$d" zadctl-version)"; rc=$?
 toets "zadctl: een checksum met voorvoegsel wordt rood" 1 "geen sha256 voor zadctl_linux_amd64.tar.gz" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: een checksum met voorvoegsel verandert niets" $?
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+printf '%s  zadctl_linux_amd64.tar.gz\n' "$sha_b" >> "$d/sums-v${zadctl_nieuw}.txt"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: twee checksums voor hetzelfde bestand worden rood" 1 "geen sha256 voor zadctl_linux_amd64.tar.gz" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: dubbele checksums veranderen niets" $?
+
+# sort -V en niet lexicografisch: 0.14.10 is hoger dan 0.14.9.
+d="$(nieuwe_map)"; zadctl_geval "$d" "v0.14.10" "$sha_a" "$sha_b"
+sed -i "s|ZADCTL_VERSION=${zadctl_nu} |ZADCTL_VERSION=0.14.9 |" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: 0.14.9 naar 0.14.10 is een bump" 0 "ZADCTL_VERSION=0.14.9 -> ZADCTL_VERSION=0.14.10" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v0.14.9" "$sha_a" "$sha_b"
+sed -i "s|ZADCTL_VERSION=${zadctl_nu} |ZADCTL_VERSION=0.14.10 |" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: 0.14.10 naar 0.14.9 wordt rood" 1 "lager dan de pin 0.14.10" "$uit" "$rc"
 
 d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" ""
 uit="$(draai "$d" zadctl-version)"; rc=$?
