@@ -578,13 +578,15 @@ RUN case "$INSTALL_FUNDAMENT" in \
 
 # zadctl, de CLI van ZAD, hoort bij dezelfde keuze als de zad-actions-plugin.
 # Officiële release-asset op versie plus SHA-256 per architectuur; de job
-# zadctl-version in check-upstream.yml volgt de releases. Laat in de Dockerfile,
-# zodat een bump de lagen hierboven in de cache laat. Houd in sync: de
-# tools-tabel in README.md, de toelichting bij INSTALL_OVERHEID_ZAD_ACTIONS in
-# .env.sample en de tabel 'Optionele componenten' in docs/opstarten-en-afsluiten.md.
+# zadctl-version in check-upstream.yml volgt de releases. Staat laat in de
+# Dockerfile, zodat een bump de lagen hierboven in de cache laat. Houd in sync: de
+# tools-tabel, de pinning-alinea en de check-upstream-lijst in README.md, de
+# toelichting bij INSTALL_OVERHEID_ZAD_ACTIONS in .env.sample en de tabel
+# 'Optionele componenten' in docs/opstarten-en-afsluiten.md.
 #
-# De binary pakt zich bij elke eerste start uit in ~/.cache. De versiecontrole
-# draait daarom als nobody met een wegwerp-HOME, zodat er niets in de image blijft.
+# De onefile-binary pakt zich bij de eerste start uit in ~/.cache of $TMPDIR. De
+# versiecontrole draait daarom als nobody met een wegwerp-HOME en -TMPDIR; de find
+# borgt dat er niets in de image achterblijft.
 RUN case "$INSTALL_OVERHEID_ZAD_ACTIONS" in \
       true) ZADCTL_VERSION=0.14.1 && \
             ARCH=$(dpkg --print-architecture) && \

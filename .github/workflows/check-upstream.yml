@@ -1960,7 +1960,6 @@ jobs:
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
             heropen hem om de checks alsnog te laten draaien.
 
-
   # zadctl: volgt de laatste release van RijksICTGilde/zad-cli. Versie plus
   # SHA-256 per architectuur, uit de SHA256SUMS van dezelfde release.
   zadctl-version:
@@ -1984,9 +1983,10 @@ jobs:
             echo "FOUT: verwacht precies één ZADCTL_VERSION-pin in de Dockerfile" >&2
             exit 1
           fi
-          current=$(grep -oE 'ZADCTL_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | cut -d= -f2 || true)
+          # De hele waarde tot de spatie: een pin als 0.15.0-rc.1 telt zo niet als 0.15.0.
+          current=$(grep -oP 'ZADCTL_VERSION=\K[0-9]+\.[0-9]+\.[0-9]+(?= )' Dockerfile || true)
           if [ -z "$current" ]; then
-            echo "FOUT: kon huidige ZADCTL_VERSION niet uit Dockerfile lezen" >&2
+            echo "FOUT: kon huidige ZADCTL_VERSION niet uit Dockerfile lezen (verwacht: X.Y.Z)" >&2
             exit 1
           fi
           # Zie kubectl-version: ook zonder nieuwe versie, en op eigen namen.
@@ -1998,7 +1998,10 @@ jobs:
             fi
             pin[$arch]=$(grep -oP "${arch}\\)\\s*ZADCTL_SHA=\\K[a-f0-9]{64}(?![a-f0-9])" Dockerfile)
           done
-          tag=$(gh api repos/RijksICTGilde/zad-cli/releases/latest --jq .tag_name || true)
+          if ! tag=$(gh api repos/RijksICTGilde/zad-cli/releases/latest --jq .tag_name); then
+            echo "FOUT: kon de laatste release van RijksICTGilde/zad-cli niet ophalen" >&2
+            exit 1
+          fi
           # De tag komt uit een repository van derden en belandt in curl- en
           # sed-argumenten; zie delta-version.
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -2033,6 +2036,11 @@ jobs:
             done
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # Zie go-version: een lagere release wijst op een teruggezette feed.
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "FOUT: zadctl ${latest} uit releases/latest is lager dan de pin ${current}" >&2
+            exit 1
           fi
           vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
           "$vervang" Dockerfile "ZADCTL_VERSION=$current" "ZADCTL_VERSION=$latest" 1

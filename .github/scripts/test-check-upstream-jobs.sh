@@ -1910,6 +1910,7 @@ if [ -z "${zadctl_nu}" ] || [ "${#zadctl_sha_amd64}" -ne 64 ] || [ "${#zadctl_sh
   exit 1
 fi
 zadctl_nieuw="${zadctl_nu%.*}.$(( ${zadctl_nu##*.} + 1 ))"
+zadctl_lager="${zadctl_nu%%.*}.$(( $(cut -d. -f2 <<<"${zadctl_nu}") - 1 )).9"
 
 # De gh-stub geeft de tag uit een bestand; zonder bestand mislukt hij. De
 # curl-stub geeft SHA256SUMS per tag.
@@ -1958,7 +1959,39 @@ d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nu}" "${zadctl_sha_amd64}" "$sha
 uit="$(draai "$d" zadctl-version)"; rc=$?
 toets "zadctl: afwijkende arm64-SHA bij gelijke versie wordt rood" 1 "de arm64-SHA-pin van zadctl ${zadctl_nu} wijkt af van upstream (${sha_b})" "$uit" "$rc"
 
-for tag in "${zadctl_nieuw}" "v${zadctl_nieuw}; curl evil" "v${zadctl_nieuw}-rc1" ""; do
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nu}" "$sha_a" "${zadctl_sha_arm64}"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: afwijkende amd64-SHA bij gelijke versie wordt rood" 1 "de amd64-SHA-pin van zadctl ${zadctl_nu} wijkt af van upstream (${sha_a})" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_lager}" "$sha_a" "$sha_b"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: lagere release dan de pin wordt rood" 1 "lager dan de pin ${zadctl_nu}" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: een lagere release laat de Dockerfile ongemoeid" $?
+
+for arch in amd64 arm64; do
+  d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+  sed -i "s|${arch}) ZADCTL_SHA=\([a-f0-9]*\)|${arch}) ZADCTL_SHA=\1a|" "$d/ws/claude-sandbox/Dockerfile"
+  uit="$(draai "$d" zadctl-version)"; rc=$?
+  toets "zadctl: ${arch}-pin van 65 tekens wordt rood" 1 "precies één ${arch}-SHA-pin voor zadctl" "$uit" "$rc"
+
+  d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nu}" "$sha_a" "$sha_b"
+  sed -i "s|${arch}) ZADCTL_SHA=[a-f0-9]*|${arch}) ZADCTL_SHA=|" "$d/ws/claude-sandbox/Dockerfile"
+  uit="$(draai "$d" zadctl-version)"; rc=$?
+  toets "zadctl: ontbrekende ${arch}-pin wordt ook zonder bump rood" 1 "precies één ${arch}-SHA-pin voor zadctl" "$uit" "$rc"
+
+  d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+  dubbele_pin "$d" "              ${arch}) ZADCTL_SHA=" "              ${arch}) ZADCTL_SHA=${sha_b} ;; \\"
+  uit="$(draai "$d" zadctl-version)"; rc=$?
+  toets "zadctl: tweede ${arch}-pin wordt rood" 1 "precies één ${arch}-SHA-pin voor zadctl" "$uit" "$rc"
+done
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+sed -i "s|ZADCTL_VERSION=${zadctl_nu} |ZADCTL_VERSION=${zadctl_nu}-rc.1 |" "$d/ws/claude-sandbox/Dockerfile"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: een pin met suffix wordt rood" 1 "kon huidige ZADCTL_VERSION niet uit Dockerfile lezen" "$uit" "$rc"
+
+for tag in "${zadctl_nieuw}" "v${zadctl_nieuw}; curl evil" "x; curl evil v${zadctl_nieuw}" "v${zadctl_nieuw}-rc1" ""; do
   d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
   printf '%s\n' "$tag" > "$d/tag"
   uit="$(draai "$d" zadctl-version)"; rc=$?
@@ -1970,7 +2003,7 @@ done
 d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
 rm "$d/tag"
 uit="$(draai "$d" zadctl-version)"; rc=$?
-toets "zadctl: release niet op te halen wordt rood" 1 "onverwachte zadctl-tag ''" "$uit" "$rc"
+toets "zadctl: release niet op te halen wordt rood" 1 "kon de laatste release van RijksICTGilde/zad-cli niet ophalen" "$uit" "$rc"
 
 d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
 rm "$d/sums-v${zadctl_nieuw}.txt"
@@ -1980,6 +2013,16 @@ toets "zadctl: release zonder SHA256SUMS wordt rood" 1 "kon SHA256SUMS van zadct
 d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "niet-hex" "$sha_b"
 uit="$(draai "$d" zadctl-version)"; rc=$?
 toets "zadctl: SHA256SUMS zonder geldige amd64-regel wordt rood" 1 "geen sha256 voor zadctl_linux_amd64.tar.gz" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "sha256:${sha_a}" "$sha_b"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: een checksum met voorvoegsel wordt rood" 1 "geen sha256 voor zadctl_linux_amd64.tar.gz" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" ""
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: SHA256SUMS zonder arm64-checksum wordt rood" 1 "geen sha256 voor zadctl_linux_arm64.tar.gz" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: een ontbrekende checksum verandert niets" $?
 cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
 controle "zadctl: een ongeldige checksum verandert niets" $?
 
@@ -2000,6 +2043,13 @@ grep -qxF -- "- **SHA amd64:** \`\${{ steps.compare.outputs.amd64 }}\`" <<<"${bo
   && grep -qxF -- "- **SHA arm64:** \`\${{ steps.compare.outputs.arm64 }}\`" <<<"${body}" \
   && tr '\n' ' ' <<<"${body}" | grep -qF 'door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs'
 controle "zadctl: SHA-regels en GITHUB_TOKEN-zin in de PR-body" $?
+[ "$(yq "${stap} | .with.commit-message" "${workflow}")" = "chore(deps): bump zadctl naar \${{ steps.compare.outputs.latest }}" ] \
+  && [ "$(yq "${stap} | .with.labels" "${workflow}")" = "dependencies" ] \
+  && grep -qxF -- "- **Oude versie:** \`\${{ steps.compare.outputs.current }}\`" <<<"${body}" \
+  && grep -qxF -- "- **Nieuwe versie:** \`\${{ steps.compare.outputs.latest }}\`" <<<"${body}" \
+  && grep -qF 'https://github.com/RijksICTGilde/zad-cli/releases/tag/v${{ steps.compare.outputs.latest }}' <<<"${body}" \
+  && grep -qF 'INSTALL_OVERHEID_ZAD_ACTIONS=true docker compose build --no-cache' <<<"${body}"
+controle "zadctl: commit-message, label, versies, release-notes en build-hint" $?
 [ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ]
 controle "zadctl: de checkout bewaart geen credentials" $?
 

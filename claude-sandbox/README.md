@@ -54,7 +54,7 @@ De image bevat de volgende tools:
 | Systeem             | procps                                                                                                                                |
 | Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_FUNDAMENT=true`, zie [Fundament](docs/fundament.md)) |
 | Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, just 1.42, helm 4.3 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
-| ZAD                 | zadctl (officiële release-binary, SHA-pinned); alleen bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl` in het `claude-home`-volume staat eerder op het `PATH` en gaat dus voor |
+| ZAD                 | zadctl (officiële release-binary, SHA-pinned); alleen bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl` in het `claude-home`-volume staat eerder op het `PATH` en gaat voor; verwijder die, anders volgt zadctl de gepinde versie niet |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
