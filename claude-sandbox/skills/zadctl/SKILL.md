@@ -44,7 +44,7 @@ login: het tokenscript neemt meerdere projecten tegelijk.
 
 ## 1. Inloggen
 
-De device flow staat uit bij de OM-client, en de container kan geen browser openen. De
+De device flow staat uit bij de Keycloak-client `zad-cli`, en de container kan geen browser openen. De
 callback naar `127.0.0.1` komt ook niet aan. Werkende route: de loopback-flow met de hand.
 
 1. Vraag de gebruiker of die klaar zit om in te loggen. De listener wacht precies 5 minuten
@@ -78,8 +78,9 @@ ingevuld. De gebruiker zet een verse code er zelf achter:
 uit een `.env.zadctl` of de omgeving, een proxy, een eigen CA en `~/.curlrc` tellen niet mee.
 
 Het script draait in de container, en alles daar kan een agent wijzigen: het script zelf,
-`zadctl` op het `PATH`, en de mappen. Het script houdt een gewijzigd configbestand of een
-gewijzigde omgeving tegen, maar geen gewijzigd script of een ander `curl` of `zadctl`. Noem dat als de gebruiker twijfelt, en wijzig het script
+`zadctl` op het `PATH`, en de mappen. Het script houdt een andere URL, proxy, CA of `~/.curlrc` tegen,
+maar geen gewijzigd script en geen omgeving die code meelaadt (`PATH`, `BASH_ENV`,
+geëxporteerde functies, `LD_PRELOAD`). Noem dat als de gebruiker twijfelt, en wijzig het script
 nooit tussen het uitleggen en het draaien. Een code die de gebruiker in de chat zet,
 gebruik je niet: die is dan meestal al verlopen, en het commando draait toch de gebruiker.
 
@@ -122,7 +123,7 @@ de map een nieuwer token dat nog geldig is.
 | Symptoom | Oorzaak en omweg |
 |---|---|
 | Bash weigert een commando met het woord `alias` ("can't be verified to stay inside the worktree") | Geldt in een worktree, ook voor `zadctl alias ...`. Zet het commando in een scriptbestand en draai dat. |
-| `zadctl logs` geeft maar een paar regels | `zadctl logs <deployment> -c <component> --tail 1000`. Meer, vanuit `<basis>/<p>`: `curl -s -H @<(sed -n 's/^ZAD_API_KEY=/X-API-Key: /p' .env.zadctl) "https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api/logs/<p>?deployment=<d>&component=<c>&lines=1000"`. Zo staat de key niet in de argv. Deze API-route is niet getest. |
+| `zadctl logs` geeft maar een paar regels | `zadctl logs <deployment> -c <component> --tail 1000`. Meer, vanuit `<basis>/<p>`: `curl -q -s --noproxy '*' -H @<(sed -n 's/^ZAD_API_KEY=/X-API-Key: /p' .env.zadctl) "https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api/logs/<p>?deployment=<d>&component=<c>&lines=1000"`. Zo staat de key niet in de argv. Deze API-route is niet getest. |
 | `zadctl env list` toont "(set, not returned by the API)" | Geheime waarden geeft de API niet terug. Per deployment: `--deployment <d>`, niet `-d`. |
 | "Service 'aliases' has no values at target 'deployment-component'" | Aliassen bestaan alleen op componentniveau. |
 | Tabel afgekapt | `ZAD_TABLE_WIDTH=200` of `-o json`. |

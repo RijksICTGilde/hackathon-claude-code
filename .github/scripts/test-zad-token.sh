@@ -37,8 +37,11 @@ cat > "${werkmap}/bin/curl" <<'EOF'
 out="" meth=GET url="" stdin=0 bearer=0
 printf '%s\n' "$*" >> "$STUB/argv.log"
 [ "$1" = -q ] || { printf 000; exit 2; }
-# Een proxy of eigen CA uit de omgeving zou het verkeer elders laten lopen.
-[ -z "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${CURL_CA_BUNDLE:-}" ] || { printf 000; exit 5; }
+# Een proxy, eigen CA of keylog uit de omgeving zou het verkeer elders laten lopen
+# of leesbaar maken.
+for v in HTTPS_PROXY https_proxy ALL_PROXY all_proxy CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR SSLKEYLOGFILE CURL_HOME; do
+  [ -z "${!v:-}" ] || { printf 000; exit 5; }
+done
 while [ $# -gt 0 ]; do case "$1" in
   -o) out=$2; shift 2;; -w|--max-time) shift 2;; -X) meth=$2; shift 2;;
   -H) case "$2" in @*) grep -qx "Authorization: Bearer $SSO" "${2#@}" && bearer=1;; esac; shift 2;;
@@ -49,6 +52,8 @@ case "$url" in "$basis"/*) ;; *) printf 000; exit 6;; esac
 [ "$bearer" = 1 ] || { printf 401; exit 0; }
 pad=${url#"$basis"}
 sleutel=$(printf '%s_%s' "$meth" "$pad" | tr '/%@.' '____')
+# Een trage aanroep, om een onderbreking halverwege te testen.
+[ -e "$STUB/$sleutel.traag" ] && { touch "$STUB/bezig"; sleep 2; }
 status=$(cat "$STUB/$sleutel.status" 2>/dev/null || echo 000)
 if [ "$status" = 000 ]; then printf 000; exit 7; fi
 if [ -n "$out" ] && [ "$out" != /dev/null ]; then cat "$STUB/$sleutel.body" > "$out"; fi
@@ -66,9 +71,21 @@ geval() {
   printf 'ZAD_SSO_TOKEN=%s\n' "${SSO}" > "${STUB}/zad/login/.env.zadctl"
 }
 antwoord() { printf '%s' "$2" > "${STUB}/$1.status"; printf '%s' "$3" > "${STUB}/$1.body"; }
+# Een eigen TMPDIR per geval: na afloop moet die leeg zijn, want het headerbestand
+# draagt het SSO-token.
 draai() {
-  PATH="${werkmap}/bin:$PATH" bash "${script}" "$@" > "${STUB}/out" 2> "${STUB}/err"
+  mkdir -p "${STUB}/tmp"
+  TMPDIR="${STUB}/tmp" PATH="${werkmap}/bin:$PATH" bash "${script}" "$@" > "${STUB}/out" 2> "${STUB}/err"
   echo $? > "${STUB}/rc"
+}
+tmp_leeg() { [ -z "$(ls -A "${STUB}/tmp")" ]; }
+# Start het script, wacht tot de trage aanroep loopt en stuurt dan TERM.
+onderbreek() {
+  mkdir -p "${STUB}/tmp"
+  TMPDIR="${STUB}/tmp" PATH="${werkmap}/bin:$PATH" bash "${script}" "$@" > "${STUB}/out" 2> "${STUB}/err" &
+  local pid=$! i=0
+  while [ ! -e "${STUB}/bezig" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  kill -TERM "$pid"; wait "$pid"; echo $? > "${STUB}/rc"
 }
 rc() { [ "$(cat "${STUB}/rc")" = "$1" ]; }
 # `! grep` op een ontbrekend log slaagt ook; eerst eisen dat er aanroepen waren.
@@ -109,6 +126,10 @@ grep -q '"dagen":1' "${STUB}/stdin.log"
 controle "uitgeven: standaard 1 dag" $?
 if [ "$(find "${STUB}/zad/p-a" -type f | wc -l)" -eq 1 ]; then r=0; else r=1; fi
 controle "uitgeven: geen tijdelijk bestand achtergelaten" "$r"
+grep -qx 'ZAD_PROJECT_ID=p-b' "${STUB}/zad/p-b/.env.zadctl" && grep -qx 'ZAD_API_KEY=waardeB' "${STUB}/zad/p-b/.env.zadctl"
+controle "uitgeven: het tweede project krijgt zijn eigen project en key" $?
+tmp_leeg
+controle "uitgeven: TMPDIR is leeg na afloop" $?
 
 geval
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
@@ -121,6 +142,8 @@ grep -q 'bestaat mogelijk; trek het in' "${STUB}/err"
 controle "201 zonder JSON: noemt het token om in te trekken" $?
 if [ ! -e "${STUB}/zad/p-a/.env.zadctl" ] && [ -f "${STUB}/zad/p-b/.env.zadctl" ]; then r=0; else r=1; fi
 controle "201 zonder JSON: het volgende project gaat door" "$r"
+tmp_leeg
+controle "201 zonder JSON: TMPDIR is leeg na afloop" $?
 
 for waarde in '"a\nZAD_API_URL=https://elders"' '"waardeX "' '{"x":1}' '""' 'null'; do
   geval
@@ -175,6 +198,20 @@ rc 1 && grep -q 'bestaat mogelijk' "${STUB}/err"
 controle "uitgifte 502: noemt het token om in te trekken" $?
 
 geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''; touch "${STUB}/${stepup}.traag"
+onderbreek uitgeven "${STUB}/zad" p-a 123456
+rc 143 && grep -q -- '-X DELETE' "${STUB}/argv.log" && grep -q 'step-up gesloten' "${STUB}/err" && tmp_leeg
+controle "TERM tijdens de step-up: venster gesloten, exitcode 143" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'; touch "${STUB}/$(uitgifte p-a).traag"
+onderbreek uitgeven "${STUB}/zad" p-a 123456
+rc 143 && grep -q 'bestaat mogelijk; trek het in met: bash .* intrekken' "${STUB}/err" \
+  && grep -q 'step-up gesloten' "${STUB}/err" && [ ! -e "${STUB}/zad/p-a/.env.zadctl" ]
+controle "TERM tijdens de uitgifte: noemt het token om in te trekken" $?
+
+geval
 touch "${STUB}/zadctl.faalt"
 draai uitgeven "${STUB}/zad" p-a 123456
 rc 1 && grep -q 'SSO-sessie verversen mislukt' "${STUB}/err" && [ ! -e "${STUB}/argv.log" ]
@@ -219,6 +256,18 @@ controle "leden: JSON op stdout, zonder step-up" $?
 controle "leden: alleen de gekozen velden, geen onbekende" $?
 
 geval
+antwoord GET__v2_projects_p-a_leden 200 '{"leden":[{"naam":"svc","soort":"service-account","rollen":["ops"],"tokens":null}]}'
+draai leden "${STUB}/zad" p-a
+rc 0 && [ "$(jq -r '.[0].tokens | length' "${STUB}/out")" = 0 ]
+controle "leden: een lid zonder tokens breekt de lijst niet" $?
+
+geval
+antwoord GET__v2_projects_p-a_leden 200 'geen json "geheimstuk"'
+draai leden "${STUB}/zad" p-a
+rc 1 && grep -q 'onverwacht antwoord op de ledenlijst' "${STUB}/err" && ! grep -q geheimstuk "${STUB}/err"
+controle "leden: onleesbaar antwoord is rood, zonder de body te citeren" $?
+
+geval
 antwoord GET__v2_projects_p-a_leden 403 '{"detail":"Geen toegang tot dit project"}'
 draai leden "${STUB}/zad" p-a
 rc 1 && grep -q 'Geen toegang tot dit project' "${STUB}/err"
@@ -256,11 +305,31 @@ antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
 antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
 ZAD_OM_API_URL=https://elders.example/api ZAD_API_URL=https://elders.example/api \
   ZAD_SSO_ISSUER=https://elders.example/realms/x ZAD_KEYCLOAK_CLIENT_ID=elders \
-  HTTPS_PROXY=http://elders.example:3128 CURL_CA_BUNDLE=/elders.pem \
+  HTTPS_PROXY=http://elders.example:3128 https_proxy=http://elders.example:3128 \
+  ALL_PROXY=http://elders.example:3128 all_proxy=http://elders.example:3128 \
+  CURL_CA_BUNDLE=/elders.pem SSL_CERT_FILE=/elders.pem SSL_CERT_DIR=/elders \
+  SSLKEYLOGFILE=/tmp/elders.keys CURL_HOME=/elders \
   draai uitgeven "${STUB}/zad" p-a 123456
 rc 0 && niet_in 'elders' "${STUB}/argv.log" \
   && grep -qx 'api=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api issuer=https://keycloak.rijksapp.nl/realms/operations-manager client=zad-cli' "${STUB}/zadctl.log"
 controle "andere URL in .env.zadctl of de omgeving: genegeerd" $?
+
+geval
+printf 'ZAD_SSO_TOKEN=verouderd.token.x\nZAD_SSO_TOKEN=%s\n' "${SSO}" > "${STUB}/zad/login/.env.zadctl"
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 0
+controle "twee SSO-regels: de laatste telt" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
+mkdir -p "${STUB}/zad/p-a"
+printf '# tokennaam: x; rm -rf ~\n' > "${STUB}/zad/p-a/.env.zadctl"
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 0 && grep -q 'noemt een ongeldige tokennaam' "${STUB}/err" && ! grep -q 'rm -rf' "${STUB}/err"
+controle "ongeldige vorige tokennaam: niet in een kopieerbaar commando" $?
 
 geval
 draai onzin

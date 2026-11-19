@@ -62,14 +62,15 @@ fi
 loginmap="$basis/login"
 envbestand="$loginmap/.env.zadctl"
 [ -f "$envbestand" ] || fout "$envbestand ontbreekt; eerst inloggen met zadctl login"
-# De URL's staan vast, en proxy-, CA- en curlrc-instellingen tellen niet mee:
+# De URL's staan vast, en proxy-, CA-, keylog- en curlrc-instellingen tellen niet mee:
 # .env.zadctl, ~/.bashrc, ~/.curlrc en de env van Claude zijn allemaal door een agent
 # te schrijven, en zouden tokens en de 2FA-code anders naar een eigen host sturen.
-# Een ander curl of zadctl op het PATH houdt dit niet tegen.
+# Een omgeving die code meelaadt (PATH, BASH_ENV, geëxporteerde functies, LD_PRELOAD)
+# houdt dit niet tegen.
 api=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api
 issuer=https://keycloak.rijksapp.nl/realms/operations-manager
-unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy \
-  CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_HOME
+unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy NO_PROXY no_proxy \
+  CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_HOME SSLKEYLOGFILE
 
 # Het access-token leeft enkele minuten; zadctl ververst het met het refresh-token.
 # Geëxporteerde variabelen gaan bij zadctl voor op .env.zadctl, dus zo praat ook die
@@ -88,7 +89,7 @@ lid=$(base64 -d <<<"$payload" 2>/dev/null | jq -r '.email // empty' 2>/dev/null)
 [ -n "$lid" ] || fout "het SSO-token bevat geen email-claim; opnieuw inloggen"
 lid_url=$(jq -rn --arg v "$lid" '$v | @uri')
 
-stepup_open=0 nieuw="" rc=0
+stepup_open=0 nieuw="" rc=0 bezig=""
 tmp=$(mktemp -d)
 # Geeft 1 als het step-up-venster open bleef, zodat de exitcode dat ook zegt.
 opruimen() {
@@ -105,6 +106,8 @@ opruimen() {
       r=1
     fi
   fi
+  # Onderbroken tijdens een uitgifte: het token bestaat mogelijk al.
+  [ -n "$bezig" ] && echo "$bezig" >&2
   rm -rf "$tmp" "${nieuw:-}"
   return "$r"
 }
@@ -144,9 +147,13 @@ toon_fout() {
 if [ "$actie" = leden ]; then
   p=${lijst[0]}
   status=$(om GET "/v2/projects/$p/leden")
-  if [ "$status" != 200 ]; then echo "$p: leden: HTTP $status" >&2; toon_fout; exit 1; fi
+  if [ "$status" != 200 ]; then
+    echo "$p: leden: HTTP $status" >&2
+    [ "$status" = 401 ] && echo "  SSO-token geweigerd; opnieuw inloggen met zadctl login" >&2
+    toon_fout; exit 1
+  fi
   # Zonder stderr: een jq-fout citeert de waarde waarop hij struikelt.
-  jq '[.leden[] | {naam, soort, rollen, tokens: [.tokens[] | {naam, vervalt, verlopen}]}]' \
+  jq '[.leden[] | {naam, soort, rollen, tokens: [(.tokens // [])[] | {naam, vervalt, verlopen}]}]' \
     "$tmp/antwoord" 2>/dev/null || fout "onverwacht antwoord op de ledenlijst"
   exit 0
 fi
@@ -167,19 +174,27 @@ if [[ "$status" != 2* ]]; then
   exit 1
 fi
 
+# Een kopieerbaar intrekcommando, gequote: basis en naam kunnen uit een bestand komen
+# dat een agent kan schrijven.
+intrekcommando() { # project tokennaam
+  printf 'bash %q intrekken %q %q %q <2FA-code>' "$0" "$basis" "$1" "$2"
+}
+
 mislukt=()
 if [ "$actie" = uitgeven ]; then
   naam="sandbox-$(date -u +%Y%m%d-%H%M%S)"
   for p in "${lijst[@]}"; do
+    intrek="  token '$naam' bestaat mogelijk; trek het in met: $(intrekcommando "$p" "$naam")"
+    bezig=$intrek
     status=$(om POST "/v2/projects/$p/leden/$lid_url/tokens" \
       "$(jq -cn --arg n "$naam" --argjson d "$dagen" '{naam: $n, dagen: $d}')")
+    bezig=""
     echo "$p: token '$naam' ($dagen dag): HTTP $status" >&2
-    # Vanaf een 2xx, zonder antwoord of bij een 5xx bestaat het token mogelijk. Elke fout noemt
-    # dan de naam, zodat de gebruiker het kan intrekken.
-    intrek="  token '$naam' bestaat mogelijk; trek het in met: bash $0 intrekken $basis $p $naam <2FA-code>"
+    # Alleen een 4xx zegt dat er geen token is. Na elke andere status noemt elke fout
+    # de naam, zodat de gebruiker het kan intrekken.
     if [[ "$status" != 2* ]]; then
       toon_fout
-      [[ "$status" == 000 || "$status" == 5* ]] && echo "$intrek" >&2
+      [[ "$status" == 4* ]] || echo "$intrek" >&2
       mislukt+=("$p"); continue
     fi
     token=$(jq -r '.token | strings' "$tmp/antwoord" 2>/dev/null) || token=""
@@ -194,9 +209,10 @@ if [ "$actie" = uitgeven ]; then
     oud=$(sed -n 's/^# tokennaam: //p' "$doel" 2>/dev/null | tail -1 || true)
     if [ -e "$doel" ] && [ ! -r "$doel" ]; then
       echo "  $doel is niet leesbaar; een vorig token daarin blijft mogelijk geldig" >&2
-    fi
-    if [ -n "$oud" ]; then
-      echo "  vorig token '$oud' blijft geldig tot het verloopt; intrekken met: bash $0 intrekken $basis $p $oud <2FA-code>" >&2
+    elif [[ "$oud" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$ ]]; then
+      echo "  vorig token '$oud' blijft geldig tot het verloopt; intrekken met: $(intrekcommando "$p" "$oud")" >&2
+    elif [ -n "$oud" ]; then
+      echo "  $doel noemt een ongeldige tokennaam; kijk in de ledenlijst welk token nog geldig is" >&2
     fi
     # Naar een tijdelijk bestand en dan mv: een bestaand bestand met ruimere rechten
     # of een half geschreven bestand blijft zo nooit achter.
