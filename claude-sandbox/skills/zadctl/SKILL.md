@@ -10,9 +10,8 @@ Voor de CLI zelf: `zadctl guide` en `zadctl <commando> --help`. Deze skill dekt 
 container anders gaat: inloggen zonder browser, persoonlijke tokens met 2FA, en de
 valkuilen bij het uitlezen.
 
-zadctl zit in de image bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl`
-staat eerder op het `PATH` en gaat dus voor. Kijk met `command -v zadctl` en `zadctl --version`
-welke draait.
+Kijk met `command -v zadctl` en `zadctl --version` welke zadctl draait. Ontbreekt hij, dan
+staat de standalone binary op de releasepagina van `RijksICTGilde/zad-cli`.
 
 ## Kernregels
 
@@ -54,15 +53,12 @@ callback naar `127.0.0.1` komt ook niet aan. Werkende route: de loopback-flow me
 4. Stuur die URL direct naar de listener, binnen ongeveer 1 minuut: daarna verloopt de
    `code`. Gebruik `curl -s '<url>'` met enkele quotes, want de URL bevat `&`.
 5. Controleer met `zadctl project list` vanuit `<basis>/login`. De rolkolom kan leeg zijn:
-   zadctl leest een veld `role` dat de API niet meer geeft. Rollen staan in de ledenlijst
+   zadctl leest een veld `role` dat de API niet geeft. Rollen staan in de ledenlijst
    (sectie 3).
-
-Werkt `zadctl login --device --no-open` ooit wel, dan is dat eenvoudiger: alleen een URL en
-een code, zonder callback.
 
 ## 2. Een persoonlijk token
 
-Projectsleutels bestaan niet meer: `GET .../api-key` geeft 410, en `zadctl project use`
+Een project heeft geen eigen sleutel: `GET .../api-key` geeft 410 Gone, en `zadctl project use`
 meldt "No API key for '<p>'". Een token hoort bij een lid, en uitgeven vraagt een verse
 2FA-code. `zad-token.sh` naast deze skill doet de step-up, geeft per project een token
 uit en schrijft `<basis>/<project>/.env.zadctl`. Daarna sluit het script het step-up-venster.
@@ -77,33 +73,34 @@ ingevuld. De gebruiker zet een verse code er zelf achter:
 
 `dagen` is standaard 1. Het script praat alleen met de vaste OM- en Keycloak-URL, en niet
 met URL's uit een `.env.zadctl`. Een andere OM kan met `ZAD_OM_API_URL=<url>` en
-`ZAD_OM_SSO_ISSUER=<url>` vooraan in het commando.
+`ZAD_OM_SSO_ISSUER=<url>` als omgevingsvariabelen.
 
 Het script draait in de container, en alles daar kan een agent wijzigen: het script zelf,
 `zadctl` op het `PATH`, en de mappen. De vaste URL's houden een gewijzigd configbestand
 tegen, maar geen gewijzigd script. Noem dat als de gebruiker twijfelt, en wijzig het script
-nooit tussen het uitleggen en het draaien. Een code die de gebruiker in de chat zet, gebruik je niet: die is
-dan meestal al verlopen, en het commando draait toch de gebruiker.
+nooit tussen het uitleggen en het draaien. Een code die de gebruiker in de chat zet,
+gebruik je niet: die is dan meestal al verlopen, en het commando draait toch de gebruiker.
 
-Het script toont alleen HTTP-statussen, de tokennaam (`sandbox-<datum>-<tijd>`) en bij een
-fout `title`/`detail`/`remedy`. Daarna, vanuit `<basis>/<project>`:
-`zadctl deployment list`.
+Het script toont de OM-URL, HTTP-statussen, de tokennaam (`sandbox-<datum>-<tijd>`), de
+geschreven paden en bij een fout `title`/`detail`/`remedy`, nooit de tokenwaarde. Bestond er
+al een projectbestand, dan noemt het de vorige tokennaam: dat token blijft geldig tot het
+verloopt. Faalt er iets nadat een token is aangemaakt, dan noemt het script het
+intrekcommando. Daarna, vanuit `<basis>/<project>`: `zadctl deployment list`.
 
 Een 403 op de uitgifte zonder step-up-type betekent meestal: geen lid van het project, of een
 rol die het niet toestaat. Kijk dan in de ledenlijst.
 
 ## 3. Leden en tokens bekijken
 
-`GET /api/v2/projects/<p>/leden` met de SSO-Bearer toont per lid `naam`, `soort`, `rollen` en
-`tokens` (`naam`, `vervalt`, `verlopen`), zonder waarden. Lezen vraagt geen step-up. Lees het token in de shell, zodat het
-niet in het commando staat:
+Lezen vraagt geen step-up, dus dit draai je zelf. Het script ververst het SSO-token en
+praat met dezelfde vaste hosts:
 
 ```bash
-cd <basis>/login
-zadctl -o json project list >/dev/null   # ververst het SSO-token
-curl -s -H "Authorization: Bearer $(sed -n 's/^ZAD_SSO_TOKEN=//p' .env.zadctl)" \
-  "$(zadctl -o json version | jq -r .api_url)/v2/projects/<p>/leden" | jq
+bash ~/.claude/skills/zadctl/zad-token.sh leden <basis> <project>
 ```
+
+Per lid toont het `naam`, `soort`, `rollen` en `tokens` (`naam`, `vervalt`, `verlopen`),
+zonder waarden.
 
 ## 4. Een token intrekken
 
@@ -126,5 +123,5 @@ Verwijder daarna de projectmap.
 | `zadctl env list` toont "(set, not returned by the API)" | Geheime waarden geeft de API niet terug. Per deployment: `--deployment <d>`, niet `-d`. |
 | "Service 'aliases' has no values at target 'deployment-component'" | Aliassen bestaan alleen op componentniveau. |
 | Tabel afgekapt | `ZAD_TABLE_WIDTH=200` of `-o json`. |
-| `401` "Authentication required" met de SSO-Bearer | Het access-token leeft ongeveer 5 minuten. Een zadctl-commando met SSO vanuit `<basis>/login` ververst het, en `zad-token.sh` doet dat zelf. Faalt het verversen, log dan opnieuw in. |
+| `401` "Authentication required" met de SSO-Bearer | Het access-token leeft ongeveer 5 minuten. `zad-token.sh` ververst het zelf. Faalt het verversen, log dan opnieuw in. |
 | `403` met `urn:zad:step-up-required` | Die handeling vraagt 2FA. Laat de gebruiker hem uitvoeren. |
