@@ -93,6 +93,12 @@ vulnerabilities:
     expired_at: 2026-12-31
     statement: golang.org/x/net 0.56.0 in kubectl — DoS via HTML-invoer in de parser van x/net/html (addText, fosterParent). kubectl linkt van dat pakket alleen de Tokenizer, niet de parser; de kwetsbare code is onbereikbaar. Fix in 0.62.0, nog in geen kubectl 1.36-release.
 
+  - id: CVE-2026-97054
+    paths:
+      - "usr/local/bin/kubectl"
+    expired_at: 2026-12-31
+    statement: Go-stdlib 1.26.10 in kubectl — een HTTP/1-server met MaxBytesReader kan crashen door een race op de response-headers. kubectl is een client; alleen `kubectl proxy` draait een HTTP-server, lokaal in de sandbox. Fix in Go 1.26.11, nog in geen kubectl 1.36-release.
+
   # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
   # INSTALL_FUNDAMENT=true), en gescand door build-variants. Zelf modules bumpen zou de
   # build laten afwijken van de gepinde, op hash gecontroleerde upstream-module.
