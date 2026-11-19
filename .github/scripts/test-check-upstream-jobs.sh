@@ -30,6 +30,7 @@ lees_pin() { # variabelenaam
 
 rtk_nu="$(lees_pin RTK_VERSION)"
 delta_nu="$(lees_pin DELTA_VERSION)"
+jdtls_nu="$(lees_pin JDTLS_VERSION)"
 node_nu="$(lees_pin NODE_VERSION)"
 node_major="${node_nu#v}"; node_major="${node_major%%.*}"
 npm_nu="$(lees_pin NPM_VERSION)"
@@ -39,14 +40,14 @@ go_nu="$(lees_pin GO_VERSION)"
 functl_nu="$(grep -oE 'FUNCTL_VERSION=v0\.0\.0-[0-9]{14}-[0-9a-f]{12}' "${wortel}/claude-sandbox/Dockerfile" \
   | head -1 | cut -d= -f2)"
 
-for waarde in "${rtk_nu}" "${delta_nu}" "${node_nu}" "${npm_nu}" "${go_nu}" "${functl_nu}"; do
+for waarde in "${rtk_nu}" "${delta_nu}" "${jdtls_nu}" "${node_nu}" "${npm_nu}" "${go_nu}" "${functl_nu}"; do
   if [ -z "${waarde}" ]; then
     echo "FOUT: kon niet alle pins uit de Dockerfile lezen"
     exit 1
   fi
 done
 
-for job in vendored-scripts rtk-version delta-version node-version npm-version go-version functl-version apt-security-refresh; do
+for job in vendored-scripts rtk-version delta-version jdtls-version node-version npm-version go-version functl-version apt-security-refresh; do
   yq ".jobs.\"${job}\".steps[] | select(has(\"run\")) | .run" "${workflow}" > "${werkmap}/${job}.sh"
   # Precies één run-blok: `yq` plakt er anders meerdere achter elkaar en dan
   # draait de fixture een script dat geen enkele stap zo uitvoert.
@@ -256,6 +257,91 @@ d="$(nieuwe_map)"; stub "$d" gh 'echo 0.99.9'; stub "$d" curl "$deb_stub"
 dubbele_pin "$d" 'RUN DELTA_VERSION=' 'RUN DELTA_VERSION=0.0.1 \\'
 uit="$(draai "$d" delta-version)"; rc=$?
 toets "delta: tweede pin wordt rood" 1 "precies één DELTA_VERSION-pin" "$uit" "$rc"
+
+# ── jdtls ──
+# Een echte tarball met bin/jdtls, zodat de inhoudscontrole van de job iets te
+# toetsen heeft; de stub levert per URL de index, latest.txt, de .sha256 of het
+# archief. Na bin/jdtls volgen genoeg namen om de pipe-buffer te vullen: een
+# controle die de lijst vroeg afsluit, faalt dan onder pipefail zoals bij de
+# echte tarball.
+mkdir -p "${werkmap}/jdtls-bron/bin" "${werkmap}/jdtls-bron/plugins" "${werkmap}/jdtls-leeg/lib"
+touch "${werkmap}/jdtls-bron/bin/jdtls" "${werkmap}/jdtls-leeg/lib/iets.jar"
+( cd "${werkmap}/jdtls-bron/plugins" && seq -f 'org.eclipse.voorbeeld.plugin_%04g.jar' 4000 | xargs touch )
+tar -czf "${werkmap}/jdtls.tar.gz" -C "${werkmap}/jdtls-bron" bin plugins
+tar -czf "${werkmap}/jdtls-zonder-bin.tar.gz" -C "${werkmap}/jdtls-leeg" lib
+printf '<html>proxy</html>\n' > "${werkmap}/jdtls-html.tar.gz"
+jdtls_sha="$(sha256sum "${werkmap}/jdtls.tar.gz" | awk '{print $1}')"
+jdtls_naam="jdt-language-server-1.100.0-209901011200.tar.gz"
+
+jdtls_stub() { # map index-versies tarballnaam sha archief
+  stub "$1" curl "uit=; url=
+while [ \$# -gt 0 ]; do case \"\$1\" in -o) shift; uit=\"\$1\" ;; -*) ;; *) url=\"\$1\" ;; esac; shift; done
+case \"\$url\" in
+  */milestones/) for v in $2; do echo \"<a href='/jdtls/milestones/\$v'> \$v</a>\"; done
+                 echo \"<a href='/jdtls/milestones/repository'> repository</a>\" ;;
+  */latest.txt) echo '$3' ;;
+  *.sha256) echo '$4  $3' ;;
+  *.tar.gz) cp '$5' \"\$uit\" ;;
+esac"
+}
+
+# 1.100.0 tegenover 1.9.0: een lexicale sortering zou 1.9.0 kiezen.
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.9.0 ${jdtls_nu} 1.100.0" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: bump verzet versie, build en SHA" 0 "JDTLS_VERSION=${jdtls_nu} -> JDTLS_VERSION=1.100.0" "$uit" "$rc"
+geopend "jdtls: bump zet changed=true" "$d"
+vervangingen "jdtls: drie vervangingen" "$uit" 3
+grep -q "JDTLS_BUILD=209901011200" "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "JDTLS_SHA256=${jdtls_sha}" "$d/ws/claude-sandbox/Dockerfile"
+controle "jdtls: build-stempel en SHA staan in de Dockerfile" $?
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.9.0 ${jdtls_nu}" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: gelijke versie opent niets" 0 "" "$uit" "$rc"
+grep -q 'changed=false' "$d/uitvoer"; controle "jdtls: changed=false bij gelijke versie" $?
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: index zonder milestones wordt rood" 1 "kon laatste jdtls-milestone niet bepalen" "$uit" "$rc"
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "${jdtls_naam}; curl kwaad" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: vijandige tarballnaam geweigerd" 1 "onverwachte tarballnaam" "$uit" "$rc"
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "jdt-language-server-1x100x0-209901011200.tar.gz" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: tarballnaam van een andere versie geweigerd" 1 "onverwachte tarballnaam" "$uit" "$rc"
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls-html.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: download die geen gzip is wordt rood" 1 "geen gzip-archief" "$uit" "$rc"
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls-zonder-bin.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: tarball zonder bin/jdtls wordt rood" 1 "bevat geen bin/jdtls" "$uit" "$rc"
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "${jdtls_naam}" "$(printf "c%.0s" $(seq 64))" "${werkmap}/jdtls.tar.gz"
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: afwijkende upstream-SHA wordt rood" 1 "wijkt af van" "$uit" "$rc"
+grep -q "JDTLS_VERSION=${jdtls_nu}" "$d/ws/claude-sandbox/Dockerfile"
+controle "jdtls: Dockerfile ongemoeid na afwijkende SHA" $?
+
+d="$(nieuwe_map)"; jdtls_stub "$d" "1.100.0" "${jdtls_naam}" "${jdtls_sha}" "${werkmap}/jdtls.tar.gz"
+dubbele_pin "$d" '      JDTLS_SHA256=' '      JDTLS_SHA256=0000 && \\'
+uit="$(draai "$d" jdtls-version)"; rc=$?
+toets "jdtls: tweede SHA-pin wordt rood" 1 "precies één JDTLS_SHA256-pin" "$uit" "$rc"
+
+job='.jobs."jdtls-version"'
+stap="${job}.steps[] | select(.with.body != null)"
+body="$(yq "${stap} | .with.body" "${workflow}")"
+r=1
+if [ "$(yq "${stap} | .if" "${workflow}")" = "steps.compare.outputs.changed == 'true'" ] \
+   && [ "$(yq "${stap} | .with.branch" "${workflow}")" = "deps/jdtls" ]; then r=0; fi
+controle "jdtls: PR-stap op changed, eigen branch" "$r"
+tr '\n' ' ' <<<"${body}" | grep -qF 'door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs'
+controle "jdtls: GITHUB_TOKEN-zin in de PR-body" $?
+r=1; [ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ] && r=0
+controle "jdtls: de checkout bewaart geen credentials" "$r"
 
 # ── node ──
 d="$(nieuwe_map)"; stub "$d" curl "$node_stub"

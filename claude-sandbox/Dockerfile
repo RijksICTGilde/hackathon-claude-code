@@ -113,6 +113,31 @@ RUN DELTA_VERSION=0.22.0 && \
     dpkg -i /tmp/git-delta.deb && \
     rm /tmp/git-delta.deb
 
+# Eclipse JDT Language Server: het programma dat de jdtls-lsp-plugin start; de
+# plugin zelf is alleen configuratie. Zelfde voorwaarde als die plugin.
+# Architectuuronafhankelijk (jars plus een Python-launcher), dus één SHA. Java
+# 25+ is pas nodig bij het starten, niet bij de installatie. Onder /opt en niet
+# in /home/claude, zodat een bump geen volume-recreate vraagt. De tarball zet
+# setgid op zijn mappen; GNU chmod laat dat bij symbolische modes staan, vandaar
+# de expliciete `ug-s`.
+# Versie, build en SHA worden wekelijks gemonitord door
+# .github/workflows/check-upstream.yml (jdtls-version).
+RUN if [ "$INSTALL_JVM" = "true" ] && [ "$INSTALL_ANTHROPIC_PLUGINS" = "true" ]; then \
+      JDTLS_VERSION=1.63.0 && \
+      JDTLS_BUILD=202610191322 && \
+      JDTLS_SHA256=b1f2abe0b3cccb462cf64fb4a5587c7d09df60cf8be7748b152cbd89d018bdc4 && \
+      curl -fsSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/jdt-language-server-${JDTLS_VERSION}-${JDTLS_BUILD}.tar.gz" -o /tmp/jdtls.tar.gz && \
+      echo "${JDTLS_SHA256}  /tmp/jdtls.tar.gz" | sha256sum -c - && \
+      mkdir -p /opt/jdtls && \
+      tar -xzf /tmp/jdtls.tar.gz -C /opt/jdtls --no-same-owner && \
+      chmod -R u=rwX,go=rX,ug-s /opt/jdtls && \
+      rm /tmp/jdtls.tar.gz && \
+      ln -s /opt/jdtls/bin/jdtls /usr/local/bin/jdtls && \
+      command -v jdtls >/dev/null; \
+    else \
+      echo "INFO: jdtls overgeslagen (INSTALL_JVM='$INSTALL_JVM', INSTALL_ANTHROPIC_PLUGINS='$INSTALL_ANTHROPIC_PLUGINS' — beide moeten 'true' zijn)"; \
+    fi
+
 # Non-root user aanmaken
 RUN useradd -m -s /bin/zsh claude
 

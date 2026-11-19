@@ -109,3 +109,14 @@ vulnerabilities:
       - "usr/local/bin/functl"
     expired_at: 2026-12-31
     statement: golang.org/x/net 0.60.0 in functl — DoS via HTML-invoer in de parser van x/net/html. Dat pakket is niet in functl gelinkt; de kwetsbare code is onbereikbaar. Fix in 0.62.0; Fundament main zit nog op 0.60.0.
+
+  # jdtls wordt als officiële release-tarball geïnstalleerd (bij INSTALL_JVM=true
+  # en INSTALL_ANTHROPIC_PLUGINS=true) en bundelt zijn eigen jars. Een jar
+  # vervangen zou de op SHA gepinde tarball verlaten. check-upstream.yml opent
+  # een PR bij een nieuwe jdtls-milestone; haal de regel dan weg als die
+  # milestone de jar bumpt. Het pad bindt de regel aan die ene jar.
+  - id: CVE-2026-102554
+    paths:
+      - "opt/jdtls/plugins/com.google.guava_33.7.1.jre.jar"
+    expired_at: 2027-02-28
+    statement: Guava 33.7.1 in jdtls — DoS (OutOfMemoryError) bij het deserialiseren van een vervalste Java-serialisatiestroom. jdtls ontvangt alleen JSON-RPC over stdio van Claude Code en deserialiseert geen Java-objecten van buiten; de kwetsbare code is niet bereikbaar met invoer van een aanvaller. Fix in 33.7.2, nog in geen jdtls-milestone.
