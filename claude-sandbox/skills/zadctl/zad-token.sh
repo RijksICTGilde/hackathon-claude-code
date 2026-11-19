@@ -45,8 +45,11 @@ fi
 [[ "$dagen" =~ ^[1-9][0-9]*$ ]] || fout "dagen moet een positief geheel getal zijn"
 IFS=, read -r -a lijst <<<"$projecten"
 [ "${#lijst[@]}" -ge 1 ] || fout "geen project opgegeven"
+declare -A gezien=()
 for p in "${lijst[@]}"; do
   [[ "$p" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || fout "ongeldige projectnaam '$p'"
+  [ -z "${gezien[$p]:-}" ] || fout "project '$p' staat er twee keer in"
+  gezien[$p]=1
 done
 if [ "$actie" != uitgeven ]; then
   [ "${#lijst[@]}" -eq 1 ] || fout "$actie werkt op één project"
@@ -59,16 +62,11 @@ fi
 loginmap="$basis/login"
 envbestand="$loginmap/.env.zadctl"
 [ -f "$envbestand" ] || fout "$envbestand ontbreekt; eerst inloggen met zadctl login"
-# De URL's staan vast en komen niet uit .env.zadctl: wie dat bestand kan schrijven,
-# zou tokens en de 2FA-code anders naar een eigen host sturen. Een andere OM kan
-# alleen via de omgevingsvariabelen ZAD_OM_API_URL en ZAD_OM_SSO_ISSUER.
-url_re='^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)*/?$'
-api=${ZAD_OM_API_URL:-https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api}
-issuer=${ZAD_OM_SSO_ISSUER:-https://keycloak.rijksapp.nl/realms/operations-manager}
-[[ "$api" =~ $url_re ]] || fout "onverwachte API-URL '$api'"
-[[ "$issuer" =~ $url_re ]] || fout "onverwachte SSO-issuer '$issuer'"
-api=${api%/} issuer=${issuer%/}
-echo "OM: $api" >&2
+# De URL's staan vast, ook niet via de omgeving: .env.zadctl, ~/.bashrc en de env
+# van Claude zijn allemaal door een agent te schrijven, en zouden tokens en de
+# 2FA-code anders naar een eigen host sturen.
+api=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api
+issuer=https://keycloak.rijksapp.nl/realms/operations-manager
 
 # Het access-token leeft enkele minuten; zadctl ververst het met het refresh-token.
 # Geëxporteerde variabelen gaan bij zadctl voor op .env.zadctl, dus zo praat ook die
@@ -89,7 +87,8 @@ lid_url=$(jq -rn --arg v "$lid" '$v | @uri')
 
 tmp=$(mktemp -d)
 # De Bearer via een headerbestand en de body via stdin, zodat het SSO-token en de
-# 2FA-code niet in de proceslijst staan.
+# 2FA-code niet in de argv van curl staan. De code staat wel in de argv van dit
+# script; die is eenmalig en verloopt binnen een minuut.
 printf 'Authorization: Bearer %s\n' "$sso" > "$tmp/auth"
 stepup_open=0
 opruimen() {
@@ -109,7 +108,8 @@ opruimen() {
 }
 trap opruimen EXIT
 
-# Roept de OM-API aan, schrijft de body naar $tmp/antwoord en geeft de status terug.
+# Roept de OM-API aan, schrijft de body naar $tmp/antwoord en de HTTP-status naar
+# stdout. `|| true`: bij een verbindingsfout schrijft -w zelf 000.
 om() {
   local methode=$1 pad=$2 body=${3:-}
   rm -f "$tmp/antwoord"
@@ -119,7 +119,6 @@ om() {
               -X "$methode" -H @"$tmp/auth" -H 'Accept: application/json')
   if [ -n "$body" ]; then
     args+=(-H 'Content-Type: application/json' --data-binary @-)
-    # Bij een verbindingsfout schrijft -w zelf 000.
     curl "${args[@]}" "$api$pad" <<<"$body" || true
   else
     curl "${args[@]}" "$api$pad" || true
@@ -143,14 +142,15 @@ if [ "$actie" = leden ]; then
   exit 0
 fi
 
-status=$(om POST /v2/step-up "$(jq -cn --arg c "$code" '{code: $c}')")
+status=$(om POST /v2/step-up "$(CODE=$code jq -cn '{code: env.CODE}')")
 echo "step-up: HTTP $status" >&2
+# Zonder antwoord kan de server het venster toch geopend hebben: dan ook sluiten.
+[[ "$status" == 2* || "$status" == 000 || "$status" == 5* ]] && stepup_open=1
 if [[ "$status" != 2* ]]; then
   [[ "$status" == 4* ]] && echo "  2FA-code geweigerd of verlopen" >&2
   toon_fout
   exit 1
 fi
-stepup_open=1
 
 mislukt=()
 if [ "$actie" = uitgeven ]; then
@@ -159,10 +159,14 @@ if [ "$actie" = uitgeven ]; then
     status=$(om POST "/v2/projects/$p/leden/$lid_url/tokens" \
       "$(jq -cn --arg n "$naam" --argjson d "$dagen" '{naam: $n, dagen: $d}')")
     echo "$p: token '$naam' ($dagen dag): HTTP $status" >&2
-    if [[ "$status" != 2* ]]; then toon_fout; mislukt+=("$p"); continue; fi
-    # Vanaf hier bestaat het token. Elke fout noemt de naam, zodat de gebruiker het
-    # kan intrekken.
-    intrek="  token '$naam' bestaat mogelijk; trek het in met: intrekken $basis $p $naam <2FA-code>"
+    # Vanaf een 2xx, of zonder antwoord, bestaat het token mogelijk. Elke fout noemt
+    # dan de naam, zodat de gebruiker het kan intrekken.
+    intrek="  token '$naam' bestaat mogelijk; trek het in met: bash $0 intrekken $basis $p $naam <2FA-code>"
+    if [[ "$status" != 2* ]]; then
+      toon_fout
+      [[ "$status" == 000 || "$status" == 5* ]] && echo "$intrek" >&2
+      mislukt+=("$p"); continue
+    fi
     token=$(jq -r '.token | strings' "$tmp/antwoord" 2>/dev/null) || token=""
     rm -f "$tmp/antwoord"
     # Een newline in de waarde zou extra regels in .env.zadctl schrijven.
@@ -173,7 +177,7 @@ if [ "$actie" = uitgeven ]; then
     doel="$basis/$p/.env.zadctl"
     oud=$(sed -n 's/^# tokennaam: //p' "$doel" 2>/dev/null | tail -1 || true)
     if [ -n "$oud" ]; then
-      echo "  vorig token '$oud' blijft geldig tot het verloopt; intrekken met: intrekken $basis $p $oud <2FA-code>" >&2
+      echo "  vorig token '$oud' blijft geldig tot het verloopt; intrekken met: bash $0 intrekken $basis $p $oud <2FA-code>" >&2
     fi
     # Naar een tijdelijk bestand en dan mv: een bestaand bestand met ruimere rechten
     # of een half geschreven bestand blijft zo nooit achter.

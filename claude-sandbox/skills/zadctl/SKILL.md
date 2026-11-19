@@ -11,7 +11,9 @@ container anders gaat: inloggen zonder browser, persoonlijke tokens met 2FA, en 
 valkuilen bij het uitlezen.
 
 Kijk met `command -v zadctl` en `zadctl --version` welke zadctl draait. Ontbreekt hij, dan
-staat de standalone binary op de releasepagina van `RijksICTGilde/zad-cli`.
+staat de standalone binary op de releasepagina van `RijksICTGilde/zad-cli`. Met
+`OPEN_HTTPS=false` moeten `github.com`, `operations-manager.rig.prd1.gn2.quattro.rijksapps.nl`
+en `keycloak.rijksapp.nl` in `ALLOWED_DOMAINS` staan.
 
 ## Kernregels
 
@@ -71,17 +73,16 @@ ingevuld. De gebruiker zet een verse code er zelf achter:
 ! bash ~/.claude/skills/zadctl/zad-token.sh uitgeven <basis> <project>[,<project>...] <2FA-code> [dagen]
 ```
 
-`dagen` is standaard 1. Het script praat alleen met de vaste OM- en Keycloak-URL, en niet
-met URL's uit een `.env.zadctl`. Een andere OM kan met `ZAD_OM_API_URL=<url>` en
-`ZAD_OM_SSO_ISSUER=<url>` als omgevingsvariabelen.
+`dagen` is standaard 1. Het script praat alleen met de vaste OM- en Keycloak-URL, niet met
+een URL uit een `.env.zadctl` of uit de omgeving.
 
 Het script draait in de container, en alles daar kan een agent wijzigen: het script zelf,
-`zadctl` op het `PATH`, en de mappen. De vaste URL's houden een gewijzigd configbestand
-tegen, maar geen gewijzigd script. Noem dat als de gebruiker twijfelt, en wijzig het script
+`zadctl` op het `PATH`, en de mappen. De vaste URL's houden een gewijzigd configbestand of
+een gewijzigde omgeving tegen, maar geen gewijzigd script. Noem dat als de gebruiker twijfelt, en wijzig het script
 nooit tussen het uitleggen en het draaien. Een code die de gebruiker in de chat zet,
 gebruik je niet: die is dan meestal al verlopen, en het commando draait toch de gebruiker.
 
-Het script toont de OM-URL, HTTP-statussen, de tokennaam (`sandbox-<datum>-<tijd>`), de
+Het script toont HTTP-statussen, de tokennaam (`sandbox-<datum>-<tijd>`), de
 geschreven paden en bij een fout `title`/`detail`/`remedy`, nooit de tokenwaarde. Bestond er
 al een projectbestand, dan noemt het de vorige tokennaam: dat token blijft geldig tot het
 verloopt. Faalt er iets nadat een token is aangemaakt, dan noemt het script het
@@ -112,14 +113,15 @@ commentaar in de `.env.zadctl` van het project en in de ledenlijst:
 ```
 
 Dit doet `DELETE /api/v2/projects/<p>/leden/<e-mail, %40-gecodeerd>/tokens/<tokennaam>`.
-Verwijder daarna de projectmap.
+Staat die tokennaam in de `.env.zadctl` van het project, verwijder dan die map. Anders bevat
+de map een nieuwer token dat nog geldig is.
 
 ## Valkuilen bij het uitlezen
 
 | Symptoom | Oorzaak en omweg |
 |---|---|
 | Bash weigert een commando met het woord `alias` ("can't be verified to stay inside the worktree") | Geldt in een worktree, ook voor `zadctl alias ...`. Zet het commando in een scriptbestand en draai dat. |
-| `zadctl logs` geeft maar een paar regels | `zadctl logs <deployment> -c <component> --tail 1000`. Meer: `GET /api/logs/<p>?deployment=<d>&component=<c>&lines=1000` met header `X-API-Key`. |
+| `zadctl logs` geeft maar een paar regels | `zadctl logs <deployment> -c <component> --tail 1000`. Meer, vanuit `<basis>/<p>`: `curl -s -H @<(sed -n 's/^ZAD_API_KEY=/X-API-Key: /p' .env.zadctl) "https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api/logs/<p>?deployment=<d>&component=<c>&lines=1000"`. Zo staat de key niet in de argv. |
 | `zadctl env list` toont "(set, not returned by the API)" | Geheime waarden geeft de API niet terug. Per deployment: `--deployment <d>`, niet `-d`. |
 | "Service 'aliases' has no values at target 'deployment-component'" | Aliassen bestaan alleen op componentniveau. |
 | Tabel afgekapt | `ZAD_TABLE_WIDTH=200` of `-o json`. |
