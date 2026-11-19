@@ -10,8 +10,9 @@ Voor de CLI zelf: `zadctl guide` en `zadctl <commando> --help`. Deze skill dekt 
 container anders gaat: inloggen zonder browser, persoonlijke tokens met 2FA, en de
 valkuilen bij het uitlezen.
 
-Kijk met `command -v zadctl` en `zadctl --version` welke zadctl draait. Ontbreekt hij, dan
-staat de standalone binary op de releasepagina van `RijksICTGilde/zad-cli`. Met
+De image bevat geen zadctl. Kijk met `command -v zadctl` en `zadctl --version` welke
+draait. Ontbreekt hij, laat de gebruiker dan de standalone binary van de releasepagina van
+`RijksICTGilde/zad-cli` installeren en controleren tegen de `SHA256SUMS` van die release. Met
 `OPEN_HTTPS=false` moeten `operations-manager.rig.prd1.gn2.quattro.rijksapps.nl` en
 `keycloak.rijksapp.nl` in `ALLOWED_DOMAINS` staan, en voor de download ook
 `release-assets.githubusercontent.com`.
@@ -127,5 +128,5 @@ de map een nieuwer token dat nog geldig is.
 | `zadctl env list` toont "(set, not returned by the API)" | Geheime waarden geeft de API niet terug. Per deployment: `--deployment <d>`, niet `-d`. |
 | "Service 'aliases' has no values at target 'deployment-component'" | Aliassen bestaan alleen op componentniveau. |
 | Tabel afgekapt | `ZAD_TABLE_WIDTH=200` of `-o json`. |
-| `401` "Authentication required" met de SSO-Bearer | Het access-token leeft ongeveer 5 minuten. `zad-token.sh` ververst het zelf. Faalt het verversen, log dan opnieuw in. |
+| `401` "Authentication required" met de SSO-Bearer | Het access-token leeft enkele minuten. `zad-token.sh` ververst het zelf. Faalt het verversen, log dan opnieuw in. |
 | `403` met `urn:zad:step-up-required` | Die handeling vraagt 2FA. Laat de gebruiker hem uitvoeren. |

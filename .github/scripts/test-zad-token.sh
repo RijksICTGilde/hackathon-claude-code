@@ -53,7 +53,7 @@ case "$url" in "$basis"/*) ;; *) printf 000; exit 6;; esac
 pad=${url#"$basis"}
 sleutel=$(printf '%s_%s' "$meth" "$pad" | tr '/%@.' '____')
 # Een trage aanroep, om een onderbreking halverwege te testen.
-[ -e "$STUB/$sleutel.traag" ] && { touch "$STUB/bezig"; sleep 2; }
+[ -e "$STUB/$sleutel.traag" ] && { touch "$STUB/bezig" "$STUB/bezig-$sleutel"; sleep 2; }
 status=$(cat "$STUB/$sleutel.status" 2>/dev/null || echo 000)
 if [ "$status" = 000 ]; then printf 000; exit 7; fi
 if [ -n "$out" ] && [ "$out" != /dev/null ]; then cat "$STUB/$sleutel.body" > "$out"; fi
@@ -79,6 +79,7 @@ draai() {
   echo $? > "${STUB}/rc"
 }
 tmp_leeg() { [ -z "$(ls -A "${STUB}/tmp")" ]; }
+wacht_op() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
 # Start het script, wacht tot de trage aanroep loopt en stuurt dan TERM.
 onderbreek() {
   mkdir -p "${STUB}/tmp"
@@ -110,8 +111,8 @@ grep -qx 'ZAD_API_KEY=waardeA=' "${STUB}/zad/p-a/.env.zadctl" && grep -qx 'ZAD_P
 controle "uitgeven: projectbestand met vaste URL, project en key" $?
 ! grep -q 'waarde[AB]' "${STUB}/out" "${STUB}/err"
 controle "uitgeven: de tokenwaarde komt niet op het scherm" $?
-grep -q "vorig token 'sandbox-oud' blijft geldig" "${STUB}/err"
-controle "uitgeven: een vorig token wordt gemeld" $?
+grep -q "vorig token 'sandbox-oud' blijft geldig" "${STUB}/err" && ! grep -q 'bestaat mogelijk' "${STUB}/err"
+controle "uitgeven: een vorig token wordt gemeld, zonder intrekhint voor het nieuwe" $?
 grep -q 'step-up gesloten: HTTP 204' "${STUB}/err"
 controle "uitgeven: het step-up-venster wordt gesloten" $?
 niet_in 123456 "${STUB}/argv.log" && grep -q 123456 "${STUB}/stdin.log"
@@ -167,7 +168,8 @@ controle "schrijven faalt: rood, met het token om in te trekken, zonder de waard
 geval
 antwoord "$stepup" 403 '{"title":"Step-up vereist","detail":"code onjuist"}'
 draai uitgeven "${STUB}/zad" p-a 123456
-rc 1 && grep -q 'step-up geweigerd' "${STUB}/err" && grep -q 'Step-up vereist — code onjuist' "${STUB}/err"
+rc 1 && grep -q 'step-up geweigerd' "${STUB}/err" && grep -q 'Step-up vereist — code onjuist' "${STUB}/err" \
+  && ! grep -q 'bestaat mogelijk' "${STUB}/err"
 controle "step-up 403: rood, met de foutvelden" $?
 niet_in '-X DELETE' "${STUB}/argv.log"
 controle "step-up 403: geen poging tot sluiten" $?
@@ -210,6 +212,55 @@ onderbreek uitgeven "${STUB}/zad" p-a 123456
 rc 143 && grep -q 'bestaat mogelijk; trek het in met: bash .* intrekken' "${STUB}/err" \
   && grep -q 'step-up gesloten' "${STUB}/err" && [ ! -e "${STUB}/zad/p-a/.env.zadctl" ]
 controle "TERM tijdens de uitgifte: noemt het token om in te trekken" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+touch "${STUB}/${stepup}.traag" "${STUB}/${sluit}.traag"
+mkdir -p "${STUB}/tmp"
+TMPDIR="${STUB}/tmp" PATH="${werkmap}/bin:$PATH" bash "${script}" uitgeven "${STUB}/zad" p-a 123456 \
+  > "${STUB}/out" 2> "${STUB}/err" &
+pid=$!
+wacht_op "${STUB}/bezig-${stepup}"; kill -TERM "$pid"
+wacht_op "${STUB}/bezig-${sluit}"; kill -TERM "$pid"
+wait "$pid"; echo $? > "${STUB}/rc"
+rc 143 && grep -q 'step-up gesloten' "${STUB}/err" && tmp_leeg
+controle "tweede TERM tijdens het opruimen: toch gesloten en opgeruimd" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 200 '{"token":"waardeA"}'
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 0 && [ -f "${STUB}/zad/p-a/.env.zadctl" ]
+controle "uitgifte met 200 in plaats van 201: geschreven" $?
+
+geval
+antwoord "$stepup" 401 '{"detail":"Authentication required"}'
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q 'SSO-token geweigerd; opnieuw inloggen' "${STUB}/err"
+controle "step-up 401: hint om opnieuw in te loggen" $?
+
+geval
+antwoord GET__v2_projects_p-a_leden 401 '{}'
+draai leden "${STUB}/zad" p-a
+rc 1 && grep -q 'opnieuw inloggen' "${STUB}/err"
+controle "leden 401: hint om opnieuw in te loggen" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+draai intrekken "${STUB}/zad" p-a sandbox-1 123456
+rc 1 && grep -q 'mogelijk nog geldig; controleer met leden' "${STUB}/err"
+controle "intrekken zonder antwoord: het token is mogelijk nog geldig" $?
+
+geval
+basis_raar="${STUB}/z ad;x"
+mkdir -p "${basis_raar}/login" "${basis_raar}/p-a"
+cp "${STUB}/zad/login/.env.zadctl" "${basis_raar}/login/"
+printf '# tokennaam: sandbox-oud\n' > "${basis_raar}/p-a/.env.zadctl"
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
+draai uitgeven "${basis_raar}" p-a 123456
+rc 0 && grep -qF -- "intrekken $(printf %q "${basis_raar}") p-a sandbox-oud" "${STUB}/err"
+controle "intrekhint: een basis met spatie en ; is gequote" $?
 
 geval
 touch "${STUB}/zadctl.faalt"
@@ -290,7 +341,7 @@ controle "intrekken: een 404 is rood" $?
 for args in 'uitgeven ZAD  123456' 'uitgeven ZAD p-a 12345' 'uitgeven ZAD a;b 123456' \
             'intrekken ZAD p-a .. 123456' 'intrekken ZAD p-a ../x 123456' 'intrekken ZAD p-a,p-b t 123456' \
             'uitgeven ZAD p-a 123456 0' 'uitgeven ZAD p-a,p-a 123456' 'uitgeven ZAD p-a' \
-            'intrekken ZAD p-a t' 'leden ZAD p-a,p-b'; do
+            'intrekken ZAD p-a t' 'leden ZAD p-a,p-b' 'uitgeven ZAD p-a 123456789' 'uitgeven ZAD p-a 123456 7x'; do
   geval
   read -r -a a <<<"${args//ZAD/${STUB}/zad}"
   [ "${args}" = 'uitgeven ZAD  123456' ] && a=(uitgeven "${STUB}/zad" "" 123456)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Persoonlijke ZAD-tokens uitgeven, intrekken en bekijken. Gebruik: zie gebruik().
+# Persoonlijke ZAD-tokens uitgeven, intrekken en bekijken.
 #
 # <basis>/login/.env.zadctl bevat de SSO-tokens van `zadctl login`. Per project
 # schrijft `uitgeven` <basis>/<project>/.env.zadctl met ZAD_API_URL, ZAD_PROJECT_ID
@@ -93,6 +93,9 @@ stepup_open=0 nieuw="" rc=0 bezig=""
 tmp=$(mktemp -d)
 # Geeft 1 als het step-up-venster open bleef, zodat de exitcode dat ook zegt.
 opruimen() {
+  # Een tweede signaal mag het opruimen niet afbreken: dan bleef het SSO-token in
+  # $tmp staan en het venster open zonder melding.
+  trap '' INT TERM HUP
   local r=0 s
   if [ "$stepup_open" = 1 ]; then
     # Anders kan elk proces met het SSO-token tot het venster verloopt zonder code
@@ -115,7 +118,7 @@ trap 'rc=$?; opruimen || rc=1; exit "$rc"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 # De Bearer via een headerbestand en de body via stdin, zodat het SSO-token en de
 # 2FA-code niet in de argv van curl staan. De code staat wel in de argv van dit
-# script; die is eenmalig en verloopt binnen een minuut.
+# script; die is kortlevend.
 printf 'Authorization: Bearer %s\n' "$sso" > "$tmp/auth"
 
 # Roept de OM-API aan, schrijft de body naar $tmp/antwoord en de HTTP-status naar
@@ -188,11 +191,12 @@ if [ "$actie" = uitgeven ]; then
     bezig=$intrek
     status=$(om POST "/v2/projects/$p/leden/$lid_url/tokens" \
       "$(jq -cn --arg n "$naam" --argjson d "$dagen" '{naam: $n, dagen: $d}')")
-    bezig=""
     echo "$p: token '$naam' ($dagen dag): HTTP $status" >&2
-    # Alleen een 4xx zegt dat er geen token is. Na elke andere status noemt elke fout
-    # de naam, zodat de gebruiker het kan intrekken.
+    # Alleen een 4xx zegt dat er geen token is. Na elke andere status bestaat het
+    # token mogelijk; elke fout geeft dan het intrekcommando. `bezig` doet dat bij een
+    # onderbreking, tot het projectbestand er staat.
     if [[ "$status" != 2* ]]; then
+      bezig=""
       toon_fout
       [[ "$status" == 4* ]] || echo "$intrek" >&2
       mislukt+=("$p"); continue
@@ -202,6 +206,7 @@ if [ "$actie" = uitgeven ]; then
     # Alleen token-tekens: een newline of quote zou extra regels of syntax in
     # .env.zadctl schrijven.
     if ! [[ "$token" =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
+      bezig=""
       echo "  antwoord zonder geldig token-veld" >&2; echo "$intrek" >&2
       mislukt+=("$p"); unset token; continue
     fi
@@ -220,8 +225,10 @@ if [ "$actie" = uitgeven ]; then
        && printf 'ZAD_API_URL=%s\nZAD_PROJECT_ID=%s\nZAD_API_KEY=%s\n# tokennaam: %s\n' \
             "$api" "$p" "$token" "$naam" > "$nieuw" \
        && chmod 600 "$nieuw" && mv -fT "$nieuw" "$doel"; then
+      bezig=""
       echo "  geschreven: $doel" >&2
     else
+      bezig=""
       rm -f "${nieuw:-}"
       echo "  kon $doel niet schrijven" >&2; echo "$intrek" >&2
       mislukt+=("$p")
@@ -232,7 +239,11 @@ else
   p=${lijst[0]}
   status=$(om DELETE "/v2/projects/$p/leden/$lid_url/tokens/$(jq -rn --arg v "$tokennaam" '$v | @uri')")
   echo "$p: token '$tokennaam' intrekken: HTTP $status" >&2
-  [[ "$status" == 2* ]] || { toon_fout; mislukt+=("$p"); }
+  if [[ "$status" != 2* ]]; then
+    toon_fout
+    [[ "$status" == 4* ]] || echo "  het token is mogelijk nog geldig; controleer met leden" >&2
+    mislukt+=("$p")
+  fi
 fi
 
 if [ "${#mislukt[@]}" -gt 0 ]; then
