@@ -109,8 +109,8 @@ controle "uitgeven: mode 600, ook over een bestaand 644-bestand" "$r"
 grep -qx 'ZAD_API_KEY=waardeA=' "${STUB}/zad/p-a/.env.zadctl" && grep -qx 'ZAD_PROJECT_ID=p-a' "${STUB}/zad/p-a/.env.zadctl" \
   && grep -qx 'ZAD_API_URL=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api' "${STUB}/zad/p-a/.env.zadctl"
 controle "uitgeven: projectbestand met vaste URL, project en key" $?
-! grep -q 'waarde[AB]' "${STUB}/out" "${STUB}/err"
-controle "uitgeven: de tokenwaarde komt niet op het scherm" $?
+! grep -q 'waarde[AB]\|handtekening' "${STUB}/out" "${STUB}/err"
+controle "uitgeven: de tokenwaarde en het SSO-token komen niet op het scherm" $?
 grep -q "vorig token 'sandbox-oud' blijft geldig" "${STUB}/err" && ! grep -q 'bestaat mogelijk' "${STUB}/err"
 controle "uitgeven: een vorig token wordt gemeld, zonder intrekhint voor het nieuwe" $?
 grep -q 'step-up gesloten: HTTP 204' "${STUB}/err"
@@ -263,6 +263,28 @@ rc 0 && grep -qF -- "intrekken $(printf %q "${basis_raar}") p-a sandbox-oud" "${
 controle "intrekhint: een basis met spatie en ; is gequote" $?
 
 geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
+mkdir -p "${STUB}/tmp"
+# Via env: in deze shell is SHELLOPTS readonly.
+env SHELLOPTS=xtrace TMPDIR="${STUB}/tmp" PATH="${werkmap}/bin:$PATH" \
+  bash "${script}" uitgeven "${STUB}/zad" p-a 123456 > "${STUB}/out" 2> "${STUB}/err"
+echo $? > "${STUB}/rc"
+rc 0 && ! grep -q 'waardeA\|handtekening' "${STUB}/out" "${STUB}/err"
+controle "SHELLOPTS=xtrace uit de omgeving: geen tokens in de uitvoer" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
+mkdir -p "${STUB}/tmp"
+# stderr naar een pijp waarvan de lezer al weg is: elke melding krijgt SIGPIPE.
+{ sleep 0.3
+  TMPDIR="${STUB}/tmp" PATH="${werkmap}/bin:$PATH" bash "${script}" uitgeven "${STUB}/zad" p-a 123456
+} 2>&1 >/dev/null | true
+tmp_leeg && grep -q -- '-X DELETE' "${STUB}/argv.log"
+controle "gesloten stderr: toch opgeruimd en de step-up gesloten" $?
+
+geval
 touch "${STUB}/zadctl.faalt"
 draai uitgeven "${STUB}/zad" p-a 123456
 rc 1 && grep -q 'SSO-sessie verversen mislukt' "${STUB}/err" && [ ! -e "${STUB}/argv.log" ]
@@ -271,8 +293,8 @@ controle "verversen faalt: rood voor elke API-aanroep" $?
 geval
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
 draai uitgeven "${STUB}/zad" p-a 123456
-rc 1 && grep -q 'bestaat mogelijk; trek het in met: bash .* intrekken' "${STUB}/err"
-controle "uitgifte zonder antwoord: noemt het token om in te trekken" $?
+rc 1 && grep -qF "intrekken $(printf %q "${STUB}/zad") p-a sandbox-" "${STUB}/err"
+controle "uitgifte zonder antwoord: noemt project en token om in te trekken" $?
 
 geval
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''

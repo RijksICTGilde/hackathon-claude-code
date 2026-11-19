@@ -3,8 +3,13 @@
 #
 # <basis>/login/.env.zadctl bevat de SSO-tokens van `zadctl login`. Per project
 # schrijft `uitgeven` <basis>/<project>/.env.zadctl met ZAD_API_URL, ZAD_PROJECT_ID
-# en ZAD_API_KEY, plus de tokennaam als commentaar. Uitgeven en intrekken draait de gebruiker zelf, want de 2FA-code
-# is van de gebruiker. De tokenwaarde komt nooit op het scherm.
+# en ZAD_API_KEY, plus de tokennaam als commentaar. `leden` toont leden en tokens
+# zonder waarden. Uitgeven en intrekken draait de gebruiker zelf, want de 2FA-code is
+# van de gebruiker. De tokenwaarde komt nooit op het scherm.
+# Een geëxporteerde SHELLOPTS kan xtrace aanzetten, en die zou tokens tonen. Een
+# gesloten stderr (SIGPIPE) mag het opruimen niet afbreken.
+set +o xtrace +o verbose
+trap '' PIPE
 set -euo pipefail
 umask 077
 
@@ -96,22 +101,25 @@ opruimen() {
   # Een tweede signaal mag het opruimen niet afbreken: dan bleef het SSO-token in
   # $tmp staan en het venster open zonder melding.
   trap '' INT TERM HUP
-  local r=0 s
+  local r=0 s=""
   if [ "$stepup_open" = 1 ]; then
     # Anders kan elk proces met het SSO-token tot het venster verloopt zonder code
     # tokens uitgeven.
     s=$(curl -q -sS --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
       -H @"$tmp/auth" "$api/v2/step-up" || true)
+  fi
+  # Eerst opruimen, dan melden: een melding die faalt, laat zo geen token achter.
+  rm -rf "$tmp" "${nieuw:-}"
+  if [ "$stepup_open" = 1 ]; then
     if [[ "$s" == 2* ]]; then
-      echo "step-up gesloten: HTTP $s" >&2
+      echo "step-up gesloten: HTTP $s" >&2 || true
     else
-      echo "WAARSCHUWING: step-up niet gesloten (HTTP $s); het venster blijft open tot het verloopt" >&2
+      echo "WAARSCHUWING: step-up niet gesloten (HTTP $s); het venster blijft open tot het verloopt" >&2 || true
       r=1
     fi
   fi
   # Onderbroken tijdens een uitgifte: het token bestaat mogelijk al.
-  [ -n "$bezig" ] && echo "$bezig" >&2
-  rm -rf "$tmp" "${nieuw:-}"
+  if [ -n "$bezig" ]; then echo "$bezig" >&2 || true; fi
   return "$r"
 }
 trap 'rc=$?; opruimen || rc=1; exit "$rc"' EXIT
