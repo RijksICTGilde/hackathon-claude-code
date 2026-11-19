@@ -91,6 +91,7 @@ niet in het commando staat:
 
 ```bash
 cd <basis>/login
+zadctl -o json project list >/dev/null   # ververst het SSO-token
 curl -s -H "Authorization: Bearer $(sed -n 's/^ZAD_SSO_TOKEN=//p' .env.zadctl)" \
   "$(zadctl -o json version | jq -r .api_url)/v2/projects/<p>/leden" | jq
 ```
@@ -116,4 +117,5 @@ Verwijder daarna de projectmap.
 | `zadctl env list` toont "(set, not returned by the API)" | Geheime waarden geeft de API niet terug. Per deployment: `--deployment <d>`, niet `-d`. |
 | "Service 'aliases' has no values at target 'deployment-component'" | Aliassen bestaan alleen op componentniveau. |
 | Tabel afgekapt | `ZAD_TABLE_WIDTH=200` of `-o json`. |
+| `401` "Authentication required" met de SSO-Bearer | Het access-token leeft ongeveer 5 minuten. Een zadctl-commando met SSO vanuit `<basis>/login` ververst het, en `zad-token.sh` doet dat zelf. Faalt het verversen, log dan opnieuw in. |
 | `403` met `urn:zad:step-up-required` | Die handeling vraagt 2FA. Laat de gebruiker hem uitvoeren. |

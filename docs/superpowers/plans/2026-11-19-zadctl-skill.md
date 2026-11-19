@@ -11,7 +11,7 @@ Wie in de container met ZAD werkt, loopt vast op drie dingen. `zadctl login` kan
 2. **Antwoordschema van de uitgifte.** De OpenAPI-spec geeft voor de 201 een leeg schema. De bron (`operations-manager/python/opi/api/token_router.py` in RIG-Cluster) geeft `UitgegevenToken {token, lid, naam}`. Uitgeven, roteren en intrekken vragen alle drie een step-up. Een tokennaam is uniek per lid.
    *Verificatie:* 201 met veld `token` bij de echte uitgifte.
 3. **`zad-token.sh uitgeven|intrekken`.** Het script valideert de invoer en haalt het lid uit de `email`-claim van het SSO-token. De API-URL staat vast, of komt uit `ZAD_OM_API_URL` in het commando, en nooit uit `.env.zadctl`: wie dat bestand schrijft, zou anders het SSO-token en de 2FA-code naar een eigen host sturen. Een tokennaam begint met een letter of cijfer en wordt `@uri`-gecodeerd. curl draait met `--path-as-is`, zodat `..` de DELETE niet naar het lid zelf stuurt. De Bearer staat in een headerbestand en niet in de proceslijst. Het venster wordt bij afsluiten gesloten met `DELETE /api/v2/step-up`.
-   *Verificatie:* shellcheck schoon. Een ongeldige projectnaam, een ongeldige code, een ontbrekende code, een ontbrekende loginmap, een tokennaam als `..`, `../x`, `.x` of `a/b`, en een API-URL met een query geven elk een eigen fout. De echte run gaf: step-up 200, token 201, step-up gesloten 204. Het projectbestand heeft mode 0600 met de sleutels `ZAD_API_URL`, `ZAD_PROJECT_ID` en `ZAD_API_KEY`. Daarna werkt `zadctl deployment list`.
+   *Verificatie:* shellcheck schoon. Een ongeldige projectnaam, een ongeldige code, een ontbrekende code, een ontbrekende loginmap, een tokennaam als `..`, `../x`, `.x` of `a/b`, en een API-URL met een query geven elk een eigen fout. De echte run gaf: step-up 200, token 201, step-up gesloten 204. Het projectbestand heeft mode 0600 met de sleutels `ZAD_API_URL`, `ZAD_PROJECT_ID` en `ZAD_API_KEY`. Daarna werkt `zadctl deployment list`. Een `intrekken` na meer dan 5 minuten gaf eerst een 401, omdat het SSO-access-token na ongeveer 5 minuten verloopt. Nu ververst het script dat eerst via zadctl. Daarna gaf het: step-up 200, intrekken 200, step-up gesloten 204. Het token stond niet meer in de ledenlijst, en de oude key werd geweigerd.
 4. **SKILL.md** met kernregels, het mappenschema, de login, het token, de ledenlijst, het intrekken en de valkuilen. Plus een regel in de skills-tabel van `claude-sandbox/README.md`.
    *Verificatie:* de ledenlijst is gelezen met de SSO-Bearer. De velden zijn `naam`, `soort`, `rollen`, `rol_labels` en `tokens`. Een druktest met een subagent (haast, een 2FA-code in de chat, een week geldigheid, een delete) leverde de juiste aanpak op. Drie onduidelijkheden zijn daarna opgelost.
 
@@ -24,6 +24,5 @@ Wie in de container met ZAD werkt, loopt vast op drie dingen. `zadctl login` kan
 
 ## Niet geverifieerd
 
-- `intrekken` tegen de echte API. Daarvoor is een tweede 2FA-code nodig.
 - De logs-omweg met `lines=1000`. Het geteste component had te weinig logregels om die te onderscheiden van `zadctl logs --tail`.
 - Een image-build met de skill. Die bestanden komen via de bestaande `COPY skills/`, en de PR-build in CI dekt dat.

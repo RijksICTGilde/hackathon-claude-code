@@ -31,7 +31,7 @@ case "$actie" in
   *) gebruik ;;
 esac
 
-for cmd in curl jq; do
+for cmd in curl jq zadctl; do
   command -v "$cmd" >/dev/null || fout "'$cmd' ontbreekt"
 done
 
@@ -51,6 +51,11 @@ fi
 loginmap="$basis/login"
 envbestand="$loginmap/.env.zadctl"
 [ -f "$envbestand" ] || fout "$envbestand ontbreekt; eerst inloggen met zadctl login"
+# Het access-token leeft enkele minuten. Een zadctl-aanroep met SSO ververst het met het
+# refresh-token in hetzelfde bestand. Die gaat niet via de vaste URL hieronder, maar
+# raakt alleen tokens die al in dat bestand staan, niet de 2FA-code.
+(cd "$loginmap" && zadctl -o json project list >/dev/null) \
+  || fout "SSO-sessie verversen mislukt; opnieuw inloggen met zadctl login"
 sso=$(sed -n 's/^ZAD_SSO_TOKEN=//p' "$envbestand" | tail -1 | tr -d "\"'")
 [ -n "$sso" ] || fout "geen ZAD_SSO_TOKEN in $envbestand"
 
