@@ -33,7 +33,7 @@ env:
 
 jobs:
   # De optionele lagen voor sshd, Fundament (Go, functl, kubectl, helm, just)
-  # en Podman en de opt-in Overheid-plugins (geo, zad-actions) bouwen
+  # en Podman, de opt-in Overheid-plugins (geo, zad-actions) en zadctl bouwen
   # alleen met hun toggle aan. Zonder
   # deze job draaien die paden, de `sshd -t`/`sshd -T`-asserties op de
   # hardening-drop-in en de scans op openssh, Podman en de Go-binaries nergens

@@ -1959,3 +1959,117 @@ jobs:
             Verifieer lokaal met `INSTALL_FUNDAMENT=true docker compose build --no-cache` voor je merget.
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
             heropen hem om de checks alsnog te laten draaien.
+
+  # zadctl: volgt de laatste release van RijksICTGilde/zad-cli. Versie plus
+  # SHA-256 per architectuur, uit de SHA256SUMS van dezelfde release.
+  zadctl-version:
+    name: zadctl-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine latest zadctl release and compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$(grep -oE 'ZADCTL_VERSION=' Dockerfile | wc -l)" -ne 1 ]; then
+            echo "FOUT: verwacht precies één ZADCTL_VERSION-pin in de Dockerfile" >&2
+            exit 1
+          fi
+          # De hele waarde tot de spatie: een pin als 0.15.0-rc.1 telt zo niet als 0.15.0.
+          current=$(grep -oP 'ZADCTL_VERSION=\K[0-9]+\.[0-9]+\.[0-9]+(?= )' Dockerfile || true)
+          if [ -z "$current" ]; then
+            echo "FOUT: kon huidige ZADCTL_VERSION niet uit Dockerfile lezen (verwacht: X.Y.Z)" >&2
+            exit 1
+          fi
+          # Zie kubectl-version: ook zonder nieuwe versie, en op eigen namen.
+          declare -A pin
+          for arch in amd64 arm64; do
+            if [ "$(grep -oP "${arch}\\)\\s*ZADCTL_SHA=[a-f0-9]{64}(?![a-f0-9])" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${arch}-SHA-pin voor zadctl in de Dockerfile" >&2
+              exit 1
+            fi
+            pin[$arch]=$(grep -oP "${arch}\\)\\s*ZADCTL_SHA=\\K[a-f0-9]{64}(?![a-f0-9])" Dockerfile)
+          done
+          if ! tag=$(gh api repos/RijksICTGilde/zad-cli/releases/latest --jq .tag_name); then
+            echo "FOUT: kon de laatste release van RijksICTGilde/zad-cli niet ophalen" >&2
+            exit 1
+          fi
+          # De tag komt uit een repository van derden en belandt in curl- en
+          # sed-argumenten; zie delta-version.
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FOUT: onverwachte zadctl-tag '$tag' (verwacht: vX.Y.Z)" >&2
+            exit 1
+          fi
+          latest=${tag#v}
+          if ! sums=$(curl -fsSL "https://github.com/RijksICTGilde/zad-cli/releases/download/${tag}/SHA256SUMS"); then
+            echo "FOUT: kon SHA256SUMS van zadctl ${tag} niet ophalen" >&2
+            exit 1
+          fi
+          declare -A sha
+          for arch in amd64 arm64; do
+            bestand="zadctl_linux_${arch}.tar.gz"
+            sha[$arch]=$(awk -v f="$bestand" '$2 == f {print $1}' <<<"$sums")
+            if ! [[ "${sha[$arch]}" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "FOUT: '${sha[$arch]}' is geen sha256 voor ${bestand} in SHA256SUMS" >&2
+              exit 1
+            fi
+          done
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            # Zie kubectl-version: ook de pins van de huidige versie toetsen.
+            for arch in amd64 arm64; do
+              if [ "${sha[$arch]}" != "${pin[$arch]}" ]; then
+                echo "FOUT: de ${arch}-SHA-pin van zadctl ${current} wijkt af van upstream (${sha[$arch]})" >&2
+                exit 1
+              fi
+            done
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Zie go-version: een lagere release wijst op een teruggezette feed.
+          if [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)" = "$current" ]; then
+            echo "FOUT: zadctl ${latest} uit releases/latest is lager dan de pin ${current}" >&2
+            exit 1
+          fi
+          vervang="${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh"
+          "$vervang" Dockerfile "ZADCTL_VERSION=$current" "ZADCTL_VERSION=$latest" 1
+          "$vervang" Dockerfile "ZADCTL_SHA=${pin[amd64]}" "ZADCTL_SHA=${sha[amd64]}" 1
+          "$vervang" Dockerfile "ZADCTL_SHA=${pin[arm64]}" "ZADCTL_SHA=${sha[arm64]}" 1
+          {
+            echo "changed=true"
+            echo "amd64=${sha[amd64]}"
+            echo "arm64=${sha[arm64]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if zadctl changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          branch: deps/zadctl
+          delete-branch: true
+          commit-message: "chore(deps): bump zadctl naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump zadctl naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe zadctl-release gedetecteerd op GitHub.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}`
+            - **SHA amd64:** `${{ steps.compare.outputs.amd64 }}`
+            - **SHA arm64:** `${{ steps.compare.outputs.arm64 }}`
+            - **Release notes:** https://github.com/RijksICTGilde/zad-cli/releases/tag/v${{ steps.compare.outputs.latest }}
+
+            Verifieer lokaal met `INSTALL_OVERHEID_ZAD_ACTIONS=true docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.

@@ -576,6 +576,43 @@ RUN case "$INSTALL_FUNDAMENT" in \
       *) echo "FOUT: INSTALL_FUNDAMENT='$INSTALL_FUNDAMENT' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
     esac
 
+# zadctl, de CLI van ZAD, hoort bij dezelfde keuze als de zad-actions-plugin.
+# Officiële release-asset op versie plus SHA-256 per architectuur; de job
+# zadctl-version in check-upstream.yml volgt de releases. Staat laat in de
+# Dockerfile, zodat een bump de lagen hierboven in de cache laat. Houd in sync: de
+# tools-tabel, de pinning-alinea en de check-upstream-lijst in README.md, de
+# toelichting bij INSTALL_OVERHEID_ZAD_ACTIONS in .env.sample en de tabel
+# 'Optionele componenten' in docs/opstarten-en-afsluiten.md.
+#
+# De onefile-binary pakt zich bij de eerste start uit in ~/.cache of $TMPDIR. De
+# versiecontrole draait daarom als nobody met een wegwerp-HOME en -TMPDIR; de find
+# borgt dat er niets in de image achterblijft.
+RUN case "$INSTALL_OVERHEID_ZAD_ACTIONS" in \
+      true) ZADCTL_VERSION=0.14.1 && \
+            ARCH=$(dpkg --print-architecture) && \
+            case "$ARCH" in \
+              amd64) ZADCTL_SHA=65a0f0f6b9e518d00ec217db2703509fff6c3a9ddc94d570bcd3e46fbbe9b70c ;; \
+              arm64) ZADCTL_SHA=174d56cbfe8aeb825261c1e3ac0f8645ccbb8d0e71f63d1433dac33ac1bfef7c ;; \
+              *) echo "FOUT: zadctl niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
+            esac && \
+            curl -fsSL "https://github.com/RijksICTGilde/zad-cli/releases/download/v${ZADCTL_VERSION}/zadctl_linux_${ARCH}.tar.gz" -o /tmp/zadctl.tar.gz && \
+            echo "$ZADCTL_SHA  /tmp/zadctl.tar.gz" | sha256sum -c - && \
+            mkdir /tmp/zadctl && \
+            tar -xzf /tmp/zadctl.tar.gz -C /tmp/zadctl zadctl && \
+            install -m 0755 /tmp/zadctl/zadctl /usr/local/bin/zadctl && \
+            rm -rf /tmp/zadctl.tar.gz /tmp/zadctl && \
+            mkdir /tmp/zadctl-home && chown 65534:65534 /tmp/zadctl-home && \
+            actual=$(cd /tmp/zadctl-home && HOME=/tmp/zadctl-home TMPDIR=/tmp/zadctl-home \
+                       setpriv --reuid=65534 --regid=65534 --clear-groups \
+                       --no-new-privs --inh-caps=-all --bounding-set=-all zadctl --version) && \
+            { [[ "$actual" == "zadctl ${ZADCTL_VERSION}" ]] || { echo "FOUT: zadctl-versie '$actual' != verwacht 'zadctl ${ZADCTL_VERSION}'" >&2; exit 1; }; } && \
+            rm -rf /tmp/zadctl-home && \
+            left=$(find / /tmp /var/tmp /run/lock -xdev \( -path /proc -o -path /sys \) -prune -o -user 65534 -print -quit) && \
+            { [ -z "$left" ] || { echo "FOUT: zadctl liet bestanden achter, onder meer $left" >&2; exit 1; }; } ;; \
+      false) echo "INFO: INSTALL_OVERHEID_ZAD_ACTIONS=false — zadctl overgeslagen" ;; \
+      *) echo "FOUT: INSTALL_OVERHEID_ZAD_ACTIONS='$INSTALL_OVERHEID_ZAD_ACTIONS' is ongeldig (verwacht: 'true' of 'false')" >&2; exit 1 ;; \
+    esac
+
 # Strip setuid/setgid-bits, behalve newuidmap/newgidmap die rootless podman nodig
 # heeft. Dit is de dragende hardening-laag, geen opruimactie: zonder deze strip
 # kan `claude` na de privilege-drop euid 0 winnen via elke setuid-root-binary.
