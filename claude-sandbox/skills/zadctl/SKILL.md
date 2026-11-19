@@ -10,6 +10,10 @@ Voor de CLI zelf: `zadctl guide` en `zadctl <commando> --help`. Deze skill dekt 
 container anders gaat: inloggen zonder browser, persoonlijke tokens met 2FA, en de
 valkuilen bij het uitlezen.
 
+zadctl zit in de image bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl`
+staat eerder op het `PATH` en gaat dus voor. Kijk met `command -v zadctl` en `zadctl --version`
+welke draait.
+
 ## Kernregels
 
 - **De 2FA-code is van de gebruiker.** Geef nooit zelf een token uit en doe nooit zelf een
