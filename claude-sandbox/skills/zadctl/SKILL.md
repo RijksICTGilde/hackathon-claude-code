@@ -71,9 +71,14 @@ ingevuld. De gebruiker zet een verse code er zelf achter:
 ! bash ~/.claude/skills/zadctl/zad-token.sh uitgeven <basis> <project>[,<project>...] <2FA-code> [dagen]
 ```
 
-`dagen` is standaard 1. Het script praat alleen met de vaste OM-URL, en niet met een
-`ZAD_API_URL` uit de config. Een andere OM kan met `ZAD_OM_API_URL=<url>` vooraan in het
-commando. Een code die de gebruiker in de chat zet, gebruik je niet: die is
+`dagen` is standaard 1. Het script praat alleen met de vaste OM- en Keycloak-URL, en niet
+met URL's uit een `.env.zadctl`. Een andere OM kan met `ZAD_OM_API_URL=<url>` en
+`ZAD_OM_SSO_ISSUER=<url>` vooraan in het commando.
+
+Het script draait in de container, en alles daar kan een agent wijzigen: het script zelf,
+`zadctl` op het `PATH`, en de mappen. De vaste URL's houden een gewijzigd configbestand
+tegen, maar geen gewijzigd script. Noem dat als de gebruiker twijfelt, en wijzig het script
+nooit tussen het uitleggen en het draaien. Een code die de gebruiker in de chat zet, gebruik je niet: die is
 dan meestal al verlopen, en het commando draait toch de gebruiker.
 
 Het script toont alleen HTTP-statussen, de tokennaam (`sandbox-<datum>-<tijd>`) en bij een

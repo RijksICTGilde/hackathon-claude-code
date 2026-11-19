@@ -51,21 +51,25 @@ fi
 loginmap="$basis/login"
 envbestand="$loginmap/.env.zadctl"
 [ -f "$envbestand" ] || fout "$envbestand ontbreekt; eerst inloggen met zadctl login"
-# Het access-token leeft enkele minuten. Een zadctl-aanroep met SSO ververst het met het
-# refresh-token in hetzelfde bestand. Die gaat niet via de vaste URL hieronder, maar
-# raakt alleen tokens die al in dat bestand staan, niet de 2FA-code.
-(cd "$loginmap" && zadctl -o json project list >/dev/null) \
+# De URL's staan vast en komen niet uit .env.zadctl: wie dat bestand kan schrijven,
+# zou tokens en de 2FA-code anders naar een eigen host sturen. Een andere OM kan
+# alleen via ZAD_OM_API_URL en ZAD_OM_SSO_ISSUER in het commando van de gebruiker.
+url_re='^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)*/?$'
+api=${ZAD_OM_API_URL:-https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api}
+issuer=${ZAD_OM_SSO_ISSUER:-https://keycloak.rijksapp.nl/realms/operations-manager}
+[[ "$api" =~ $url_re ]] || fout "onverwachte API-URL '$api'"
+[[ "$issuer" =~ $url_re ]] || fout "onverwachte SSO-issuer '$issuer'"
+api=${api%/} issuer=${issuer%/}
+echo "OM: $api"
+
+# Het access-token leeft enkele minuten; zadctl ververst het met het refresh-token.
+# Geëxporteerde variabelen gaan bij zadctl voor op .env.zadctl, dus zo praat ook die
+# aanroep alleen met de vaste hosts.
+(cd "$loginmap" && ZAD_API_URL="$api" ZAD_SSO_ISSUER="$issuer" ZAD_KEYCLOAK_CLIENT_ID=zad-cli \
+   zadctl -o json project list >/dev/null) \
   || fout "SSO-sessie verversen mislukt; opnieuw inloggen met zadctl login"
 sso=$(sed -n 's/^ZAD_SSO_TOKEN=//p' "$envbestand" | tail -1 | tr -d "\"'")
 [ -n "$sso" ] || fout "geen ZAD_SSO_TOKEN in $envbestand"
-
-# De API-URL staat vast en komt niet uit .env.zadctl: wie dat bestand kan schrijven,
-# zou het SSO-token en de 2FA-code anders naar een eigen host sturen. Een andere OM
-# kan alleen met ZAD_OM_API_URL in het commando dat de gebruiker zelf draait.
-api=${ZAD_OM_API_URL:-https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api}
-[[ "$api" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)*/?$ ]] || fout "onverwachte API-URL '$api'"
-api=${api%/}
-echo "OM: $api"
 
 # Het lid is het e-mailadres uit het SSO-token zelf: zo geeft het script alleen
 # tokens uit aan wie er ingelogd is.
