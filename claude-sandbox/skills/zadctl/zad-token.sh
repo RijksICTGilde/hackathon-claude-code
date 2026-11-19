@@ -27,11 +27,11 @@ case "$actie" in
              basis=$1 projecten=$2 code=$3 dagen=${4:-1} ;;
   intrekken) [ $# -eq 3 ] && fout "2FA-code ontbreekt: zet de code achter het commando"
              [ $# -eq 4 ] || gebruik
-             basis=$1 projecten=$2 tokennaam=$3 code=$4 ;;
+             basis=$1 projecten=$2 tokennaam=$3 code=$4 dagen=1 ;;
   *) gebruik ;;
 esac
 
-for cmd in curl jq zadctl; do
+for cmd in curl jq; do
   command -v "$cmd" >/dev/null || fout "'$cmd' ontbreekt"
 done
 
@@ -44,7 +44,8 @@ for p in "${lijst[@]}"; do
 done
 if [ "$actie" = intrekken ]; then
   [ "${#lijst[@]}" -eq 1 ] || fout "intrekken werkt op één project"
-  [[ "$tokennaam" =~ ^[A-Za-z0-9.-]{1,64}$ ]] || fout "ongeldige tokennaam '$tokennaam'"
+  # Begint met letter of cijfer: een naam als `..` zou de DELETE naar het lid zelf sturen.
+  [[ "$tokennaam" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$ ]] || fout "ongeldige tokennaam '$tokennaam'"
 fi
 
 loginmap="$basis/login"
@@ -53,10 +54,13 @@ envbestand="$loginmap/.env.zadctl"
 sso=$(sed -n 's/^ZAD_SSO_TOKEN=//p' "$envbestand" | tail -1 | tr -d "\"'")
 [ -n "$sso" ] || fout "geen ZAD_SSO_TOKEN in $envbestand"
 
-# zadctl zelf bepaalt de API-URL, zodat een `zadctl config set api_url` meetelt.
-api=$(cd "$loginmap" && zadctl -o json version | jq -r '.api_url // empty')
-[[ "$api" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$ ]] || fout "onverwachte api_url '$api'"
+# De API-URL staat vast en komt niet uit .env.zadctl: wie dat bestand kan schrijven,
+# zou het SSO-token en de 2FA-code anders naar een eigen host sturen. Een andere OM
+# kan alleen met ZAD_OM_API_URL in het commando dat de gebruiker zelf draait.
+api=${ZAD_OM_API_URL:-https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api}
+[[ "$api" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)*/?$ ]] || fout "onverwachte API-URL '$api'"
 api=${api%/}
+echo "OM: $api"
 
 # Het lid is het e-mailadres uit het SSO-token zelf: zo geeft het script alleen
 # tokens uit aan wie er ingelogd is.
@@ -82,7 +86,8 @@ trap sluit_stepup EXIT
 # Roept de OM-API aan, schrijft de body naar $tmp/antwoord en geeft de status terug.
 om() {
   local methode=$1 pad=$2 body=${3:-}
-  local args=(-s -o "$tmp/antwoord" -w '%{http_code}' -X "$methode"
+  # --path-as-is: curl normaliseert dan geen punt-segmenten weg uit het pad.
+  local args=(-s --path-as-is -o "$tmp/antwoord" -w '%{http_code}' -X "$methode"
               -H @"$tmp/auth" -H 'Accept: application/json')
   [ -n "$body" ] && args+=(-H 'Content-Type: application/json' --data "$body")
   # Bij een verbindingsfout schrijft -w zelf 000.
@@ -118,7 +123,7 @@ if [ "$actie" = uitgeven ]; then
   done
 else
   p=${lijst[0]}
-  status=$(om DELETE "/v2/projects/$p/leden/$lid_url/tokens/$tokennaam")
+  status=$(om DELETE "/v2/projects/$p/leden/$lid_url/tokens/$(jq -rn --arg v "$tokennaam" '$v | @uri')")
   echo "$p: token '$tokennaam' intrekken: HTTP $status"
   [[ "$status" == 2* ]] || { toon_fout; mislukt=1; }
 fi
