@@ -54,6 +54,7 @@ De image bevat de volgende tools:
 | Systeem             | procps                                                                                                                                |
 | Runtimes            | Node.js 26 LTS (nodejs.org officiële binary, SHA-pinned, met libatomic1), Python 3 (pip3 + venv) (+ Go 1.27 bij `INSTALL_FUNDAMENT=true`, zie [Fundament](docs/fundament.md)) |
 | Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, just 1.42, helm 4.3 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
+| ZAD                 | zadctl (officiële release-binary, SHA-pinned); alleen bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl` in het `claude-home`-volume staat eerder op het `PATH` en gaat dus voor |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
@@ -236,7 +237,7 @@ Test daarnaast de **regressie** dat SSH uit blijft als je er niet om vraagt — 
 De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 1. **Vendoring** voor install-scripts zonder versie-URL. De scripts van `claude.ai/install.sh` en `get.sdkman.io` staan onder `vendor/install-scripts/` en worden via `COPY` in de image gezet. Een upstream-wijziging breekt de build dus nooit; de wijziging komt pas binnen via een gereviewde PR.
-2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta, en Go, kubectl, helm en just (achter `INSTALL_FUNDAMENT`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
+2. **Versie- en SHA-pinning** voor binaries. Node.js, git-delta, Go, kubectl, helm en just (achter `INSTALL_FUNDAMENT`) en zadctl (achter `INSTALL_OVERHEID_ZAD_ACTIONS`) staan met exacte versies en SHA-256 in `Dockerfile`. Upstream-releases zijn permanent, dus de pin blijft geldig totdat een nieuwere versie wordt gemerged.
 
 `functl` wordt vanaf de bron gebouwd, omdat upstream alleen een rolling release publiceert. De pin is een Go pseudo-versie (`FUNCTL_VERSION`, die de commit vastlegt) plus de h1-hash van de module (`FUNCTL_H1`).
 
@@ -257,6 +258,7 @@ De workflow `.github/workflows/check-upstream.yml` draait elke maandagochtend en
 - een nieuwere `kubectl`-patch binnen de gepinde minor-versie beschikbaar is, volgens `dl.k8s.io/release/stable-<minor>.txt` (PR werkt `KUBECTL_VERSION` en de amd64/arm64-SHAs bij). Een nieuwere minor in `stable.txt` wordt gemeld in de PR en als waarschuwing in de run, maar niet gebumpt; valt de gepinde minor buiten de drie minors die upstream ondersteunt, dan faalt de run
 - een nieuwere `helm`-release binnen de gepinde major-versie beschikbaar is (PR werkt `HELM_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de vermeldingen in de tools-tabel hierboven en in `docs/kubernetes.md`). Een nieuwe major wordt alleen gemeld
 - de `mise.toml` die de gepinde `functl` in een nieuwe plug-in schrijft, een andere `just` noemt (PR werkt `JUST_VERSION` en de amd64/arm64-SHAs bij, en bij een nieuwe minor-versie de vermelding in de tools-tabel). Zo volgt `just` de scaffold, niet de nieuwste release
+- een nieuwere `zadctl`-release van `RijksICTGilde/zad-cli` beschikbaar is (PR werkt `ZADCTL_VERSION` en de amd64/arm64-SHAs uit de `SHA256SUMS` van die release bij)
 
 Review de PR (kijk naar release notes, draai eventueel `docker compose build --no-cache` lokaal) en merge. Dependabot houdt daarnaast de Debian base-image en GitHub Actions zelf bijgewerkt.
 

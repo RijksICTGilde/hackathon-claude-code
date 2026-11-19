@@ -1895,5 +1895,113 @@ controle "just: SHA-regels en GITHUB_TOKEN-zin in de PR-body" $?
 [ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ]
 controle "just: de checkout bewaart geen credentials" $?
 
+# ── zadctl ──
+yq '.jobs."zadctl-version".steps[] | select(has("run")) | .run' "${workflow}" > "${werkmap}/zadctl-version.sh"
+if [ ! -s "${werkmap}/zadctl-version.sh" ] \
+   || [ "$(yq '.jobs."zadctl-version".steps | map(select(has("run"))) | length' "${workflow}")" -ne 1 ]; then
+  echo "FOUT: verwacht precies 1 run-blok in zadctl-version"
+  exit 1
+fi
+zadctl_nu="$(lees_pin ZADCTL_VERSION)"
+zadctl_sha_amd64="$(lees_sha amd64 ZADCTL_SHA)"
+zadctl_sha_arm64="$(lees_sha arm64 ZADCTL_SHA)"
+if [ -z "${zadctl_nu}" ] || [ "${#zadctl_sha_amd64}" -ne 64 ] || [ "${#zadctl_sha_arm64}" -ne 64 ]; then
+  echo "FOUT: kon ZADCTL_VERSION of de SHA-pins van zadctl niet uit de Dockerfile lezen"
+  exit 1
+fi
+zadctl_nieuw="${zadctl_nu%.*}.$(( ${zadctl_nu##*.} + 1 ))"
+
+# De gh-stub geeft de tag uit een bestand; zonder bestand mislukt hij. De
+# curl-stub geeft SHA256SUMS per tag.
+zadctl_geval() { # map tag sha-amd64 sha-arm64
+  local d="$1"
+  printf '%s\n' "$2" > "$d/tag"
+  # De .sbom-regels vangen een match op deel van de bestandsnaam.
+  printf '%s  zadctl_linux_amd64.tar.gz.sbom\n%s  zadctl_linux_amd64.tar.gz\n%s  zadctl_linux_arm64.tar.gz\n%s  zadctl_linux_arm64.tar.gz.sbom\n' \
+    "$sha_b" "$3" "$4" "$sha_a" > "$d/sums-$2.txt"
+  stub "$d" gh "for arg in \"\$@\"; do case \"\$arg\" in
+  repos/RijksICTGilde/zad-cli/releases/latest)
+    [ -e '$d/tag' ] || exit 1; cat '$d/tag'; exit 0;;
+esac; done
+exit 1"
+  stub "$d" curl "for arg in \"\$@\"; do case \"\$arg\" in
+  https://github.com/RijksICTGilde/zad-cli/releases/download/*/SHA256SUMS)
+    v=\"\${arg#https://github.com/RijksICTGilde/zad-cli/releases/download/}\"; v=\"\${v%%/*}\"
+    [ -e \"$d/sums-\$v.txt\" ] || exit 22; cat \"$d/sums-\$v.txt\"; exit 0;;
+esac; done
+exit 22"
+}
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nu}" "${zadctl_sha_amd64}" "${zadctl_sha_arm64}"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: gelijke release geeft geen bump" 0 "" "$uit" "$rc"
+grep -qx 'changed=false' "$d/uitvoer"
+controle "zadctl: gelijk zet changed=false" $?
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: gelijk laat de Dockerfile ongemoeid" $?
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: nieuwe release verzet versie en beide SHAs" 0 "ZADCTL_VERSION=${zadctl_nu} -> ZADCTL_VERSION=${zadctl_nieuw}" "$uit" "$rc"
+geopend "zadctl: bump zet changed=true" "$d"
+grep -q "amd64) ZADCTL_SHA=${sha_a} " "$d/ws/claude-sandbox/Dockerfile" \
+  && grep -q "arm64) ZADCTL_SHA=${sha_b} " "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: elke architectuur krijgt zijn eigen SHA" $?
+alleen_gewijzigd "zadctl: alleen de zadctl-regels verschoven" "$d" 'ZADCTL_' 3
+cmp -s "${wortel}/claude-sandbox/README.md" "$d/ws/claude-sandbox/README.md"
+controle "zadctl: bump laat de README ongemoeid" $?
+grep -qx "current=${zadctl_nu}" "$d/uitvoer" && grep -qx "latest=${zadctl_nieuw}" "$d/uitvoer" \
+  && grep -qx "amd64=${sha_a}" "$d/uitvoer" && grep -qx "arm64=${sha_b}" "$d/uitvoer"
+controle "zadctl: outputs voor de PR-body" $?
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nu}" "${zadctl_sha_amd64}" "$sha_b"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: afwijkende arm64-SHA bij gelijke versie wordt rood" 1 "de arm64-SHA-pin van zadctl ${zadctl_nu} wijkt af van upstream (${sha_b})" "$uit" "$rc"
+
+for tag in "${zadctl_nieuw}" "v${zadctl_nieuw}; curl evil" "v${zadctl_nieuw}-rc1" ""; do
+  d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+  printf '%s\n' "$tag" > "$d/tag"
+  uit="$(draai "$d" zadctl-version)"; rc=$?
+  toets "zadctl: tag '${tag}' wordt rood" 1 "onverwachte zadctl-tag" "$uit" "$rc"
+  cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+  controle "zadctl: tag '${tag}' verandert niets" $?
+done
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+rm "$d/tag"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: release niet op te halen wordt rood" 1 "onverwachte zadctl-tag ''" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+rm "$d/sums-v${zadctl_nieuw}.txt"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: release zonder SHA256SUMS wordt rood" 1 "kon SHA256SUMS van zadctl v${zadctl_nieuw} niet ophalen" "$uit" "$rc"
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "niet-hex" "$sha_b"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: SHA256SUMS zonder geldige amd64-regel wordt rood" 1 "geen sha256 voor zadctl_linux_amd64.tar.gz" "$uit" "$rc"
+cmp -s "${wortel}/claude-sandbox/Dockerfile" "$d/ws/claude-sandbox/Dockerfile"
+controle "zadctl: een ongeldige checksum verandert niets" $?
+
+d="$(nieuwe_map)"; zadctl_geval "$d" "v${zadctl_nieuw}" "$sha_a" "$sha_b"
+dubbele_pin "$d" "      true) ZADCTL_VERSION=" "      ZADCTL_VERSION=9.9.9 && \\"
+uit="$(draai "$d" zadctl-version)"; rc=$?
+toets "zadctl: dubbele ZADCTL_VERSION-pin wordt rood" 1 "verwacht precies één ZADCTL_VERSION-pin" "$uit" "$rc"
+
+job='.jobs."zadctl-version"'
+stap="${job}.steps[] | select(.with.body != null)"
+body="$(yq "${stap} | .with.body" "${workflow}")"
+r=1
+if [ "$(yq "${stap} | .if" "${workflow}")" = "steps.compare.outputs.changed == 'true'" ] \
+   && [ "$(yq "${stap} | .with.branch" "${workflow}")" = "deps/zadctl" ] \
+   && [ "$(yq "${stap} | .with.title" "${workflow}")" = "chore(deps): bump zadctl naar \${{ steps.compare.outputs.latest }}" ]; then r=0; fi
+controle "zadctl: PR-stap, branch en titel" "$r"
+grep -qxF -- "- **SHA amd64:** \`\${{ steps.compare.outputs.amd64 }}\`" <<<"${body}" \
+  && grep -qxF -- "- **SHA arm64:** \`\${{ steps.compare.outputs.arm64 }}\`" <<<"${body}" \
+  && tr '\n' ' ' <<<"${body}" | grep -qF 'door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs'
+controle "zadctl: SHA-regels en GITHUB_TOKEN-zin in de PR-body" $?
+[ "$(yq "${job}.steps[0].with.persist-credentials" "${workflow}")" = "false" ]
+controle "zadctl: de checkout bewaart geen credentials" $?
+
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]
