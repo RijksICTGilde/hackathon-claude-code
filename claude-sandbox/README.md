@@ -108,9 +108,10 @@ De volgende plugins zijn voorgeinstalleerd in de image:
 
 > Deze skills worden geïnstalleerd als `INSTALL_LOCAL_SKILLS=true`; bij `false` wordt geen enkele uit deze lijst geïnstalleerd. Zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten).
 
-| Skill                  | Functie                                                       |
-|------------------------|---------------------------------------------------------------|
-| digital-waste-spotter  | Analyse van digitale verspilling in code (compute, I/O, etc.) |
+| Skill                  | Functie                                                                  |
+|------------------------|--------------------------------------------------------------------------|
+| digital-waste-spotter  | Analyse van digitale verspilling in code (compute, I/O, etc.)            |
+| zadctl                 | ZAD vanuit de container: inloggen, persoonlijk token met 2FA, uitlezen   |
 
 Lokale skills staan in de `skills/` directory en worden bij het bouwen van de image meegenomen.
 
