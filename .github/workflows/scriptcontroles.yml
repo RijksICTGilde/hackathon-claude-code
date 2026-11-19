@@ -40,6 +40,9 @@ jobs:
       - name: Fixtures van de kubeconfig-controle
         run: .github/scripts/test-controleer-kubeconfig.sh
 
+      - name: Fixtures van het ZAD-tokenscript
+        run: .github/scripts/test-zad-token.sh
+
       # Houd de setup-trivy-pin en version in sync met die in de gepinde
       # trivy-action (nu v0.36.0).
       - name: Trivy installeren
