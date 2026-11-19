@@ -86,6 +86,14 @@ je meer controle over de historie van Claude (die wordt onthouden voor de direct
 
 Voor beide shells wordt er een alias `claude-danger` aangemaakt, daarmee wordt claude gestart met de vlag `--dangerously-skip-permissions`.
 
+#### Shell in de huidige projectmap
+`sandbox-shell.sh` start de shell in de containermap die hoort bij de map waar je terminal op de host staat. Sta je in `$PROJECTS_DIR/mijn-app/src`, dan land je in `/home/claude/projects/mijn-app/src`. Buiten `PROJECTS_DIR` start de shell in `/home/claude/projects`, met een melding. Argumenten worden als commando uitgevoerd in plaats van bash:
+```
+sandbox-shell.sh                                        # bash in de bijbehorende map
+sandbox-shell.sh claude --dangerously-skip-permissions  # claude direct in die map
+```
+Het script leest de mount uit de draaiende container, dus het werkt ook met een aangepaste `PROJECTS_DIR`. Met een alias of symlink in je `PATH` werkt het vanuit elke map, bijvoorbeeld `alias cs=/pad/naar/claude-sandbox/sandbox-shell.sh`. Een andere containernaam geef je mee via `CLAUDE_SANDBOX_CONTAINER`.
+
 ### Devcontainer volume-gedrag
 > Het `claude-home` volume mount de volledige home directory (`/home/claude`). Bij de allereerste start (met een leeg volume) wordt de inhoud vanuit de image gekopieerd. Bij volgende starts heeft de inhoud van het volume voorrang op de image — dit is standaard devcontainer-gedrag en zorgt ervoor dat je instellingen, auth tokens, shell history en geinstalleerde tools behouden blijven tussen herstarts en rebuilds. Keerzijde: nieuwe plugins, skills, rtk-patches of SDKman-installs die je via toggles toevoegt, verschijnen pas na het verwijderen en opnieuw aanmaken van het volume:
 > ```
