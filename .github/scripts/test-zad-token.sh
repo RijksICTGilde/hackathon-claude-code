@@ -26,14 +26,19 @@ cat > "${werkmap}/bin/zadctl" <<'EOF'
 #!/usr/bin/env bash
 printf 'api=%s issuer=%s client=%s\n' "${ZAD_API_URL:-}" "${ZAD_SSO_ISSUER:-}" \
   "${ZAD_KEYCLOAK_CLIENT_ID:-}" >> "$STUB/zadctl.log"
+[ ! -e "$STUB/zadctl.faalt" ]
 EOF
 # Nep-curl antwoordt per methode en pad uit $STUB/<sleutel>.status en .body, en logt
 # argv en stdin. Zonder .status: verbindingsfout, zoals curl dan zelf 000 schrijft.
-# Alleen de vaste OM-host en een Bearer uit een headerbestand worden bediend.
+# Alleen een aanroep met -q, naar de vaste OM-host en met een Bearer uit een
+# headerbestand wordt bediend.
 cat > "${werkmap}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 out="" meth=GET url="" stdin=0 bearer=0
 printf '%s\n' "$*" >> "$STUB/argv.log"
+[ "$1" = -q ] || { printf 000; exit 2; }
+# Een proxy of eigen CA uit de omgeving zou het verkeer elders laten lopen.
+[ -z "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${CURL_CA_BUNDLE:-}" ] || { printf 000; exit 5; }
 while [ $# -gt 0 ]; do case "$1" in
   -o) out=$2; shift 2;; -w|--max-time) shift 2;; -X) meth=$2; shift 2;;
   -H) case "$2" in @*) grep -qx "Authorization: Bearer $SSO" "${2#@}" && bearer=1;; esac; shift 2;;
@@ -117,13 +122,14 @@ controle "201 zonder JSON: noemt het token om in te trekken" $?
 if [ ! -e "${STUB}/zad/p-a/.env.zadctl" ] && [ -f "${STUB}/zad/p-b/.env.zadctl" ]; then r=0; else r=1; fi
 controle "201 zonder JSON: het volgende project gaat door" "$r"
 
-for waarde in '"a\nZAD_API_URL=https://elders"' '{"x":1}' '""' 'null'; do
+for waarde in '"a\nZAD_API_URL=https://elders"' '"waardeX "' '{"x":1}' '""' 'null'; do
   geval
   antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
   antwoord "$(uitgifte p-a)" 201 "{\"token\":${waarde}}"
   draai uitgeven "${STUB}/zad" p-a 123456
-  rc 1 && [ ! -e "${STUB}/zad/p-a/.env.zadctl" ] && grep -q 'zonder geldig token-veld' "${STUB}/err"
-  controle "token ${waarde}: geweigerd, niets geschreven" $?
+  rc 1 && [ ! -e "${STUB}/zad/p-a/.env.zadctl" ] && grep -q 'zonder geldig token-veld' "${STUB}/err" \
+    && ! grep -q 'waardeX\|elders' "${STUB}/out" "${STUB}/err"
+  controle "token ${waarde}: geweigerd, niets geschreven, niet getoond" $?
 done
 
 geval
@@ -131,22 +137,48 @@ antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
 antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
 mkdir -p "${STUB}/zad/p-a/.env.zadctl"
 draai uitgeven "${STUB}/zad" p-a 123456
-rc 1 && grep -q 'kon .* niet schrijven' "${STUB}/err" && grep -q 'bestaat mogelijk' "${STUB}/err"
-controle "schrijven faalt: rood, met het token om in te trekken" $?
+rc 1 && grep -q 'kon .* niet schrijven' "${STUB}/err" && grep -q 'bestaat mogelijk' "${STUB}/err" \
+  && ! grep -q waardeA "${STUB}/out" "${STUB}/err"
+controle "schrijven faalt: rood, met het token om in te trekken, zonder de waarde" $?
 
 geval
 antwoord "$stepup" 403 '{"title":"Step-up vereist","detail":"code onjuist"}'
 draai uitgeven "${STUB}/zad" p-a 123456
-rc 1 && grep -q '2FA-code geweigerd' "${STUB}/err" && grep -q 'Step-up vereist — code onjuist' "${STUB}/err"
+rc 1 && grep -q 'step-up geweigerd' "${STUB}/err" && grep -q 'Step-up vereist — code onjuist' "${STUB}/err"
 controle "step-up 403: rood, met de foutvelden" $?
 niet_in '-X DELETE' "${STUB}/argv.log"
 controle "step-up 403: geen poging tot sluiten" $?
+
+geval
+antwoord "$stepup" 422 '{"detail":"code verlopen"}'
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q '2FA-code geweigerd of verlopen' "${STUB}/err" && niet_in '-X DELETE' "${STUB}/argv.log"
+controle "step-up 422: code geweigerd, geen poging tot sluiten" $?
 
 geval
 antwoord "$sluit" 204 ''
 draai uitgeven "${STUB}/zad" p-a 123456
 rc 1 && grep -q -- '-X DELETE' "${STUB}/argv.log" && grep -q 'step-up gesloten' "${STUB}/err"
 controle "step-up zonder antwoord: toch sluiten" $?
+
+geval
+antwoord "$stepup" 503 '{}'; antwoord "$sluit" 204 ''
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q -- '-X DELETE' "${STUB}/argv.log" && grep -q 'step-up gesloten' "${STUB}/err"
+controle "step-up 503: toch sluiten" $?
+
+geval
+antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
+antwoord "$(uitgifte p-a)" 502 ''
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q 'bestaat mogelijk' "${STUB}/err"
+controle "uitgifte 502: noemt het token om in te trekken" $?
+
+geval
+touch "${STUB}/zadctl.faalt"
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q 'SSO-sessie verversen mislukt' "${STUB}/err" && [ ! -e "${STUB}/argv.log" ]
+controle "verversen faalt: rood voor elke API-aanroep" $?
 
 geval
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
@@ -165,8 +197,8 @@ geval
 antwoord "$stepup" 200 '{}'
 antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
 draai uitgeven "${STUB}/zad" p-a 123456
-grep -q 'WAARSCHUWING: step-up niet gesloten (HTTP 000)' "${STUB}/err"
-controle "sluiten faalt: waarschuwing in plaats van 'gesloten'" $?
+rc 1 && grep -q 'WAARSCHUWING: step-up niet gesloten (HTTP 000)' "${STUB}/err" && [ -f "${STUB}/zad/p-a/.env.zadctl" ]
+controle "sluiten faalt: waarschuwing en exitcode 1, het token is wel geschreven" $?
 
 geval
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
@@ -180,7 +212,8 @@ geval
 antwoord GET__v2_projects_p-a_leden 200 \
   '{"leden":[{"naam":"a@b.nl","soort":"persoon","rollen":["admin"],"rol_labels":["Admin"],"tokens":[{"naam":"t","vervalt":"2026-11-20","verlopen":false,"hash":"geheim"}]}]}'
 draai leden "${STUB}/zad" p-a
-rc 0 && [ "$(jq -r '.[0].rollen[0]' "${STUB}/out")" = admin ] && niet_in step-up "${STUB}/argv.log"
+rc 0 && [ "$(jq -r '.[0].rollen[0]' "${STUB}/out")" = admin ] && niet_in step-up "${STUB}/argv.log" \
+  && [ "$(jq -r '.[0].tokens[0].verlopen' "${STUB}/out")" = false ]
 controle "leden: JSON op stdout, zonder step-up" $?
 ! grep -q geheim "${STUB}/out"
 controle "leden: alleen de gekozen velden, geen onbekende" $?
@@ -207,7 +240,8 @@ controle "intrekken: een 404 is rood" $?
 
 for args in 'uitgeven ZAD  123456' 'uitgeven ZAD p-a 12345' 'uitgeven ZAD a;b 123456' \
             'intrekken ZAD p-a .. 123456' 'intrekken ZAD p-a ../x 123456' 'intrekken ZAD p-a,p-b t 123456' \
-            'uitgeven ZAD p-a 123456 0' 'uitgeven ZAD p-a,p-a 123456'; do
+            'uitgeven ZAD p-a 123456 0' 'uitgeven ZAD p-a,p-a 123456' 'uitgeven ZAD p-a' \
+            'intrekken ZAD p-a t' 'leden ZAD p-a,p-b'; do
   geval
   read -r -a a <<<"${args//ZAD/${STUB}/zad}"
   [ "${args}" = 'uitgeven ZAD  123456' ] && a=(uitgeven "${STUB}/zad" "" 123456)
@@ -221,9 +255,29 @@ printf 'ZAD_API_URL=https://elders.example/api\n' >> "${STUB}/zad/login/.env.zad
 antwoord "$stepup" 200 '{}'; antwoord "$sluit" 204 ''
 antwoord "$(uitgifte p-a)" 201 '{"token":"waardeA"}'
 ZAD_OM_API_URL=https://elders.example/api ZAD_API_URL=https://elders.example/api \
+  ZAD_SSO_ISSUER=https://elders.example/realms/x ZAD_KEYCLOAK_CLIENT_ID=elders \
+  HTTPS_PROXY=http://elders.example:3128 CURL_CA_BUNDLE=/elders.pem \
   draai uitgeven "${STUB}/zad" p-a 123456
-rc 0 && niet_in 'elders' "${STUB}/argv.log" && niet_in 'elders' "${STUB}/zadctl.log"
+rc 0 && niet_in 'elders' "${STUB}/argv.log" \
+  && grep -qx 'api=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api issuer=https://keycloak.rijksapp.nl/realms/operations-manager client=zad-cli' "${STUB}/zadctl.log"
 controle "andere URL in .env.zadctl of de omgeving: genegeerd" $?
+
+geval
+draai onzin
+rc 2 && grep -q 'bash zad-token.sh leden' "${STUB}/err"
+controle "onbekende actie: gebruikstekst, exitcode 2" $?
+
+geval
+draai uitgeven "${STUB}/zad" p-a
+rc 1 && grep -qx 'FOUT: 2FA-code ontbreekt: zet de code achter het commando' "${STUB}/err"
+controle "uitgeven zonder code: noemt de ontbrekende code" $?
+
+geval
+printf 'ZAD_SSO_TOKEN=kop.%s.handtekening\n' "$(printf '{"sub":"x"}' | base64 | tr -d '\n=' | tr '+/' '-_')" \
+  > "${STUB}/zad/login/.env.zadctl"
+draai uitgeven "${STUB}/zad" p-a 123456
+rc 1 && grep -q 'geen email-claim' "${STUB}/err" && [ ! -e "${STUB}/argv.log" ]
+controle "SSO-token zonder email: rood voor elke API-aanroep" $?
 
 echo "---- ${geslaagd} geslaagd, ${gefaald} gefaald ----"
 [ "${gefaald}" -eq 0 ]

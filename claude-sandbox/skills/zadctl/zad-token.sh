@@ -3,7 +3,7 @@
 #
 # <basis>/login/.env.zadctl bevat de SSO-tokens van `zadctl login`. Per project
 # schrijft `uitgeven` <basis>/<project>/.env.zadctl met ZAD_API_URL, ZAD_PROJECT_ID
-# en ZAD_API_KEY. Uitgeven en intrekken draait de gebruiker zelf, want de 2FA-code
+# en ZAD_API_KEY, plus de tokennaam als commentaar. Uitgeven en intrekken draait de gebruiker zelf, want de 2FA-code
 # is van de gebruiker. De tokenwaarde komt nooit op het scherm.
 set -euo pipefail
 umask 077
@@ -62,11 +62,14 @@ fi
 loginmap="$basis/login"
 envbestand="$loginmap/.env.zadctl"
 [ -f "$envbestand" ] || fout "$envbestand ontbreekt; eerst inloggen met zadctl login"
-# De URL's staan vast, ook niet via de omgeving: .env.zadctl, ~/.bashrc en de env
-# van Claude zijn allemaal door een agent te schrijven, en zouden tokens en de
-# 2FA-code anders naar een eigen host sturen.
+# De URL's staan vast, en proxy-, CA- en curlrc-instellingen tellen niet mee:
+# .env.zadctl, ~/.bashrc, ~/.curlrc en de env van Claude zijn allemaal door een agent
+# te schrijven, en zouden tokens en de 2FA-code anders naar een eigen host sturen.
+# Een ander curl of zadctl op het PATH houdt dit niet tegen.
 api=https://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api
 issuer=https://keycloak.rijksapp.nl/realms/operations-manager
+unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy \
+  CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE CURL_HOME
 
 # Het access-token leeft enkele minuten; zadctl ververst het met het refresh-token.
 # Geëxporteerde variabelen gaan bij zadctl voor op .env.zadctl, dus zo praat ook die
@@ -85,28 +88,32 @@ lid=$(base64 -d <<<"$payload" 2>/dev/null | jq -r '.email // empty' 2>/dev/null)
 [ -n "$lid" ] || fout "het SSO-token bevat geen email-claim; opnieuw inloggen"
 lid_url=$(jq -rn --arg v "$lid" '$v | @uri')
 
+stepup_open=0 nieuw="" rc=0
 tmp=$(mktemp -d)
-# De Bearer via een headerbestand en de body via stdin, zodat het SSO-token en de
-# 2FA-code niet in de argv van curl staan. De code staat wel in de argv van dit
-# script; die is eenmalig en verloopt binnen een minuut.
-printf 'Authorization: Bearer %s\n' "$sso" > "$tmp/auth"
-stepup_open=0
+# Geeft 1 als het step-up-venster open bleef, zodat de exitcode dat ook zegt.
 opruimen() {
+  local r=0 s
   if [ "$stepup_open" = 1 ]; then
     # Anders kan elk proces met het SSO-token tot het venster verloopt zonder code
     # tokens uitgeven.
-    local s
-    s=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
+    s=$(curl -q -sS --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
       -H @"$tmp/auth" "$api/v2/step-up" || true)
     if [[ "$s" == 2* ]]; then
       echo "step-up gesloten: HTTP $s" >&2
     else
       echo "WAARSCHUWING: step-up niet gesloten (HTTP $s); het venster blijft open tot het verloopt" >&2
+      r=1
     fi
   fi
-  rm -rf "$tmp"
+  rm -rf "$tmp" "${nieuw:-}"
+  return "$r"
 }
-trap opruimen EXIT
+trap 'rc=$?; opruimen || rc=1; exit "$rc"' EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+# De Bearer via een headerbestand en de body via stdin, zodat het SSO-token en de
+# 2FA-code niet in de argv van curl staan. De code staat wel in de argv van dit
+# script; die is eenmalig en verloopt binnen een minuut.
+printf 'Authorization: Bearer %s\n' "$sso" > "$tmp/auth"
 
 # Roept de OM-API aan, schrijft de body naar $tmp/antwoord en de HTTP-status naar
 # stdout. `|| true`: bij een verbindingsfout schrijft -w zelf 000.
@@ -115,7 +122,8 @@ om() {
   rm -f "$tmp/antwoord"
   # --path-as-is: tweede verdediging naast de naamvalidatie, zodat geen punt-segment
   # het pad inkort.
-  local args=(-sS --max-time 30 --path-as-is -o "$tmp/antwoord" -w '%{http_code}'
+  # -q: ~/.curlrc niet lezen.
+  local args=(-q -sS --max-time 30 --path-as-is -o "$tmp/antwoord" -w '%{http_code}'
               -X "$methode" -H @"$tmp/auth" -H 'Accept: application/json')
   if [ -n "$body" ]; then
     args+=(-H 'Content-Type: application/json' --data-binary @-)
@@ -137,17 +145,24 @@ if [ "$actie" = leden ]; then
   p=${lijst[0]}
   status=$(om GET "/v2/projects/$p/leden")
   if [ "$status" != 200 ]; then echo "$p: leden: HTTP $status" >&2; toon_fout; exit 1; fi
+  # Zonder stderr: een jq-fout citeert de waarde waarop hij struikelt.
   jq '[.leden[] | {naam, soort, rollen, tokens: [.tokens[] | {naam, vervalt, verlopen}]}]' \
-    "$tmp/antwoord" || fout "onverwacht antwoord op de ledenlijst"
+    "$tmp/antwoord" 2>/dev/null || fout "onverwacht antwoord op de ledenlijst"
   exit 0
 fi
 
+# Vóór de aanroep open: ook zonder antwoord, bij een 5xx of bij een onderbreking kan
+# de server het venster geopend hebben. Alleen een 4xx zegt zeker van niet.
+stepup_open=1
 status=$(om POST /v2/step-up "$(CODE=$code jq -cn '{code: env.CODE}')")
 echo "step-up: HTTP $status" >&2
-# Zonder antwoord kan de server het venster toch geopend hebben: dan ook sluiten.
-[[ "$status" == 2* || "$status" == 000 || "$status" == 5* ]] && stepup_open=1
 if [[ "$status" != 2* ]]; then
-  [[ "$status" == 4* ]] && echo "  2FA-code geweigerd of verlopen" >&2
+  case "$status" in
+    4*) stepup_open=0 ;;&
+    400|422) echo "  2FA-code geweigerd of verlopen" >&2 ;;
+    401) echo "  SSO-token geweigerd; opnieuw inloggen met zadctl login" >&2 ;;
+    403) echo "  step-up geweigerd" >&2 ;;
+  esac
   toon_fout
   exit 1
 fi
@@ -159,7 +174,7 @@ if [ "$actie" = uitgeven ]; then
     status=$(om POST "/v2/projects/$p/leden/$lid_url/tokens" \
       "$(jq -cn --arg n "$naam" --argjson d "$dagen" '{naam: $n, dagen: $d}')")
     echo "$p: token '$naam' ($dagen dag): HTTP $status" >&2
-    # Vanaf een 2xx, of zonder antwoord, bestaat het token mogelijk. Elke fout noemt
+    # Vanaf een 2xx, zonder antwoord of bij een 5xx bestaat het token mogelijk. Elke fout noemt
     # dan de naam, zodat de gebruiker het kan intrekken.
     intrek="  token '$naam' bestaat mogelijk; trek het in met: bash $0 intrekken $basis $p $naam <2FA-code>"
     if [[ "$status" != 2* ]]; then
@@ -169,13 +184,17 @@ if [ "$actie" = uitgeven ]; then
     fi
     token=$(jq -r '.token | strings' "$tmp/antwoord" 2>/dev/null) || token=""
     rm -f "$tmp/antwoord"
-    # Een newline in de waarde zou extra regels in .env.zadctl schrijven.
+    # Alleen token-tekens: een newline of quote zou extra regels of syntax in
+    # .env.zadctl schrijven.
     if ! [[ "$token" =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
       echo "  antwoord zonder geldig token-veld" >&2; echo "$intrek" >&2
       mislukt+=("$p"); unset token; continue
     fi
     doel="$basis/$p/.env.zadctl"
     oud=$(sed -n 's/^# tokennaam: //p' "$doel" 2>/dev/null | tail -1 || true)
+    if [ -e "$doel" ] && [ ! -r "$doel" ]; then
+      echo "  $doel is niet leesbaar; een vorig token daarin blijft mogelijk geldig" >&2
+    fi
     if [ -n "$oud" ]; then
       echo "  vorig token '$oud' blijft geldig tot het verloopt; intrekken met: bash $0 intrekken $basis $p $oud <2FA-code>" >&2
     fi
@@ -191,7 +210,7 @@ if [ "$actie" = uitgeven ]; then
       echo "  kon $doel niet schrijven" >&2; echo "$intrek" >&2
       mislukt+=("$p")
     fi
-    unset token nieuw
+    unset token; nieuw=""
   done
 else
   p=${lijst[0]}
