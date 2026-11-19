@@ -36,6 +36,7 @@ services:
       - ANTHROPIC_API_KEY
       - OPEN_HTTPS
       - ALLOWED_DOMAINS
+      - ALLOWED_K8S_API
       - MARKETPLACE_AUTOUPDATE
     volumes:
       - claude-home:/home/claude

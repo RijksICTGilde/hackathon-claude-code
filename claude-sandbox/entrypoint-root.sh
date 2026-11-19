@@ -11,19 +11,23 @@ USER_PATH="$PATH"
 PATH="$ROOT_PATH"
 
 # Draait als root voor alles wat root vereist — firewall, AppArmor-borging en de
-# optionele sshd — en dropt daarna onherroepelijk naar `claude`. OPEN_HTTPS en
-# ALLOWED_DOMAINS worden alleen hier gelezen — na de drop kan `claude` de
-# egress-allowlist niet meer heropenen.
+# optionele sshd — en dropt daarna onherroepelijk naar `claude`. OPEN_HTTPS,
+# ALLOWED_DOMAINS en ALLOWED_K8S_API bepalen alleen hier wat de firewall opent —
+# na de drop kan `claude` de egress-allowlist niet meer heropenen. De
+# gebruikersfase leest ALLOWED_K8S_API nog wel, maar uitsluitend om te
+# waarschuwen dat hij niet bij de API-server uit de kubeconfig past.
 # Waarom de firewall vóór de drop moet: ADR 0001 §2.3.1 "Firewall vóór de
 # privilege-drop".
 
 echo "entrypoint OPEN_HTTPS: ${OPEN_HTTPS:-false}"
 echo "entrypoint ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}"
+echo "entrypoint ALLOWED_K8S_API: ${ALLOWED_K8S_API:-}"
 if ! /usr/local/bin/init-firewall.sh; then
     {
         echo "FATAL: Firewall-initialisatie mislukt."
         echo "Veelvoorkomende oorzaken:"
         echo "  - OPEN_HTTPS heeft geen waarde 'true' of 'false'"
+        echo "  - ALLOWED_K8S_API heeft niet de vorm host:poort, of de host is niet op te lossen"
         echo "  - Container mist NET_ADMIN/NET_RAW (controleer cap_add in compose.yml)"
         echo "  - iptables/ipset modules niet beschikbaar op host-kernel"
         echo "Zie de output hierboven voor het concrete iptables/ipset-commando dat faalde."

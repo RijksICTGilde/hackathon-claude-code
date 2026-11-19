@@ -90,12 +90,16 @@ in de URL: 443) en schrijft één waarschuwing als die niet overeenkomen met
 `ALLOWED_K8S_API`. Niet fataal, en zonder het bestaande oordeel over de
 kubeconfig te wijzigen.
 
-Geen waarschuwing in de gevallen waarin het adres al bereikbaar is:
+Geen waarschuwing in deze gevallen:
 
-- de poort is 443 en `OPEN_HTTPS=true`;
+- de poort is 443 — die valt onder `OPEN_HTTPS` en `ALLOWED_DOMAINS`, en een
+  waarschuwing zou hier naar de verkeerde variabele wijzen;
 - de host valt binnen het eigen subnet uit `ip route` — dat is de
   k3d-op-het-sandbox-netwerk-route, waar de `HOST_NETWORK`-ACCEPT het al dekt;
 - er is geen kubeconfig gemount.
+
+Een IPv6-adres in `server:` krijgt zijn eigen waarschuwing: de firewall
+blokkeert IPv6 integraal, dus geen enkele allowlist maakt dat adres bereikbaar.
 
 De controle is een waarschuwing en geen fout, omdat een legitieme opzet de
 variabele niet nodig heeft.

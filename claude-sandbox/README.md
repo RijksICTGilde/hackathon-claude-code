@@ -125,6 +125,7 @@ Met de standaard configuratie (`OPEN_HTTPS=true` in `.env.sample`) wordt al het 
 | Uitgaand HTTPS (poort 443)       | Toegestaan (alle bestemmingen)                                           |
 | Uitgaand DNS (poort 53)          | Toegestaan (alleen Docker DNS en host network)                           |
 | Host network                     | Toegestaan                                                               |
+| Uitgaand naar de K8s-API-server  | Alleen met `ALLOWED_K8S_API` gezet (één `host:poort`)                    |
 | Uitgaand overig (incl. SSH)      | Geblokkeerd (REJECT)                                                     |
 | Inkomend                         | Geblokkeerd, behalve antwoorden op eigen verzoeken (ESTABLISHED/RELATED) |
 | Localhost                        | Toegestaan                                                               |
@@ -132,7 +133,7 @@ Met de standaard configuratie (`OPEN_HTTPS=true` in `.env.sample`) wordt al het 
 Git-verkeer naar GitHub wordt automatisch via HTTPS afgehandeld doordat `git config --system` alle `git@github.com:` URL's herschrijft naar `https://github.com/`. SSH-clone URL's werken daardoor gewoon, ook al is poort 22 geblokkeerd.
 
 ### Strikte whitelist (OPEN_HTTPS=false)
-Zet `OPEN_HTTPS=false` in `.env` om alleen verkeer naar gewhiteliste hosts toe te staan. De whitelist wordt opgebouwd uit GitHub IP-ranges (dynamisch opgehaald) en DNS-resolutie van domeinen uit het script plus de `ALLOWED_DOMAINS` variabele in `.env`. Alleen HTTPS-verkeer (poort 443) is toegestaan naar gewhiteliste IP's.
+Zet `OPEN_HTTPS=false` in `.env` om alleen verkeer naar gewhiteliste hosts toe te staan. De whitelist wordt opgebouwd uit GitHub IP-ranges (dynamisch opgehaald) en DNS-resolutie van domeinen uit het script plus de `ALLOWED_DOMAINS` variabele in `.env`. Alleen HTTPS-verkeer (poort 443) is toegestaan naar gewhiteliste IP's. Een Kubernetes-API-server op een andere poort valt daarbuiten; daarvoor is `ALLOWED_K8S_API` (zie [docs/kubernetes.md](docs/kubernetes.md#een-api-server-buiten-het-netwerk-van-de-sandbox)), die onafhankelijk van `OPEN_HTTPS` werkt.
 
 De Anthropic devcontainer-opzet werkt standaard met een strikte domein-whitelist. Dit project staat standaard al het HTTPS-verkeer toe, om de volgende redenen:
 

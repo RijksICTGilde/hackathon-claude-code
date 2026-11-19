@@ -33,8 +33,10 @@ toets() { # naam verwachte_exitcode inhoud
   "${controle}" "${bestand}" > "${werkmap}/uit" 2> "${werkmap}/fout" || rc=$?
   if [ -s "${werkmap}/uit" ]; then
     extra="schreef naar stdout"
-  elif [ "${verwacht}" -eq 0 ] && [ -s "${werkmap}/fout" ]; then
-    extra="schreef naar stderr: $(head -1 "${werkmap}/fout")"
+  # Een WAARSCHUWING hoort bij exitcode 0: de kubeconfig is goedgekeurd, maar de
+  # API-server erin is mogelijk niet bereikbaar. Al het andere op stderr is fout.
+  elif [ "${verwacht}" -eq 0 ] && grep -qv '^WAARSCHUWING:' "${werkmap}/fout"; then
+    extra="schreef naar stderr: $(grep -v '^WAARSCHUWING:' "${werkmap}/fout" | head -1)"
   elif [ "${verwacht}" -ne 0 ] && ! grep -q 'docs/kubernetes.md' "${werkmap}/fout" \
        && ! grep -q '^FOUT: kubeconfig .* is niet te lezen' "${werkmap}/fout"; then
     extra="geen verwijzing naar docs/kubernetes.md"
@@ -168,6 +170,51 @@ grep -q 'gegevens anders dan een token: exec' "${werkmap}/fout" || extra="exec n
 grep -q 'gegevens anders dan een token: client-key-data' "${werkmap}/fout" || extra="${extra:+${extra}, }client-key-data niet genoemd"
 grep -q 'gebruiker sandbox heeft geen token' "${werkmap}/fout" || extra="${extra:+${extra}, }ontbrekend token niet genoemd"
 resultaat "melding noemt elke reden" 1 1 "${extra}"
+
+# De waarschuwing over de firewall: de kubeconfig is goedgekeurd, maar het adres
+# van de API-server valt mogelijk buiten wat de firewall doorlaat.
+met_server() { # server-URL
+  printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: sandbox\n  cluster:\n    server: %s\nusers:\n- name: sandbox\n  user:\n    token: abc\ncontexts:\n- name: sandbox\n  context:\n    cluster: sandbox\n    user: sandbox\ncurrent-context: sandbox\n' "$1"
+}
+
+# Een stub-`ip` zodat het eigen subnet van de testmachine er niet toe doet.
+stub="${werkmap}/stub"
+mkdir -p "${stub}"
+printf '#!/bin/sh\necho "192.168.77.0/24 dev eth0 proto kernel scope link src 192.168.77.5"\n' > "${stub}/ip"
+chmod +x "${stub}/ip"
+
+firewall_toets() { # naam server ALLOWED_K8S_API ("-" = ongezet) verwacht_patroon ("" = geen waarschuwing)
+  local naam="$1" server="$2" allow="$3" patroon="$4" rc=0 extra=""
+  met_server "${server}" > "${werkmap}/config"
+  if [ "${allow}" = "-" ]; then
+    env -u ALLOWED_K8S_API PATH="${stub}:${PATH}" "${controle}" "${werkmap}/config" \
+      > "${werkmap}/uit" 2> "${werkmap}/fout" || rc=$?
+  else
+    env ALLOWED_K8S_API="${allow}" PATH="${stub}:${PATH}" "${controle}" "${werkmap}/config" \
+      > "${werkmap}/uit" 2> "${werkmap}/fout" || rc=$?
+  fi
+  if [ -n "${patroon}" ]; then
+    grep -q "${patroon}" "${werkmap}/fout" || extra="waarschuwing ontbreekt of noemt '${patroon}' niet"
+  elif [ -s "${werkmap}/fout" ]; then
+    extra="onverwachte melding: $(head -1 "${werkmap}/fout")"
+  fi
+  resultaat "${naam}" 0 "${rc}" "${extra}"
+}
+
+firewall_toets "API-server op 6443 zonder ALLOWED_K8S_API" \
+  https://172.19.0.1:6443 - 'ALLOWED_K8S_API is niet gezet'
+firewall_toets "ALLOWED_K8S_API past bij de kubeconfig" \
+  https://172.19.0.1:6443 172.19.0.1:6443 ''
+firewall_toets "ALLOWED_K8S_API wijst naar een ander adres" \
+  https://172.19.0.1:6443 10.0.0.5:6443 'staat op 10.0.0.5:6443'
+firewall_toets "API-server op poort 443 valt onder ALLOWED_DOMAINS" \
+  https://api.intern - ''
+firewall_toets "API-server met pad telt als poort 443" \
+  https://api.intern/clusters/abc - ''
+firewall_toets "API-server op het eigen subnet is al bereikbaar" \
+  https://192.168.77.9:6443 - ''
+firewall_toets "IPv6 in server is nooit bereikbaar" \
+  'https://[fd00::1]:6443' - 'blokkeert IPv6'
 
 echo "geslaagd: ${geslaagd}, gefaald: ${gefaald}"
 [ "${gefaald}" -eq 0 ]

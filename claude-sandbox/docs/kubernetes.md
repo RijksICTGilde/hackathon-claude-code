@@ -334,11 +334,33 @@ k3d cluster create fieldlab \
 
 Met `OPEN_HTTPS=false` komt de sandbox alleen bij de domeinen in `ALLOWED_DOMAINS`. De firewall zet er voor Kubernetes niets zelf bij. Zet erin wat je gebruikt, en niet meer:
 
-- **De API-server**: de host uit de regel `server:` van de kubeconfig (niet nodig bij k3d op Docker). Naar buiten laat de firewall alleen poort 443 door, ook met `OPEN_HTTPS=true`. Draait de API-server op een andere poort (bij k3s is dat 6443), dan bereikt de sandbox hem niet.
-- **Een IP-adres in `server:`** kan niet in `ALLOWED_DOMAINS`: de firewall zoekt elk domein op als DNS-naam, en met een IP-adres erin start de container niet. Vraag de beheerder dan om een hostnaam voor de API-server die in het certificaat staat, of gebruik `OPEN_HTTPS=true`, met wat dat opent.
+- **De API-server op poort 443**: zet de host uit de regel `server:` van de kubeconfig in `ALLOWED_DOMAINS` (niet nodig bij k3d op Docker). `ALLOWED_DOMAINS` geldt alleen voor poort 443, en de lijst wordt via DNS opgezocht: een IP-adres kan er niet in en de container start er niet mee.
+- **De API-server op een andere poort** (bij k3s is dat 6443) bereikt de sandbox niet via `ALLOWED_DOMAINS`, en ook `OPEN_HTTPS=true` opent alleen 443. Gebruik daarvoor `ALLOWED_K8S_API`; zie [Een API-server buiten het netwerk van de sandbox](#een-api-server-buiten-het-netwerk-van-de-sandbox).
 - **Chart-repositories en OCI-registries**, alleen als je chart ze gebruikt: de host uit `helm repo add <naam> <url>`, of uit `oci://ghcr.io/...`. Een registry stuurt de bestanden vaak door naar een tweede host, bij `ghcr.io` bijvoorbeeld `pkg-containers.githubusercontent.com`. Mislukt een download, dan noemt de foutmelding van `helm` de host die hij niet bereikt.
 
 De container-images van je chart haalt het cluster op, niet de sandbox. Daarvoor hoeft niets in `ALLOWED_DOMAINS`. De firewall zoekt de adressen van de domeinen alleen bij de start van de container op: weigert een verbinding die eerst werkte, herstart dan de container.
+
+### Een API-server buiten het netwerk van de sandbox
+
+Staat het cluster niet op het netwerk van de sandbox en luistert de API-server niet op poort 443, dan weigert de firewall de verbinding. `kubectl` meldt dat als:
+
+```
+Unable to connect to the server: dial tcp 172.19.0.1:6443: connect: no route to host
+```
+
+Dat is geen routeringsprobleem: de firewall sluit af met een `REJECT`, en de kernel vertaalt dat naar "no route to host".
+
+Zet in `.env` het adres uit de regel `server:` van je kubeconfig, als `host:poort` zonder schema, en recreate de container:
+
+```
+ALLOWED_K8S_API=172.19.0.1:6443
+```
+
+Een hostnaam mag ook (`k8s-api.intern:6443`). Die wordt bij de start opgezocht; de uitzondering geldt dan voor elk IP-adres dat hij oplevert, en staat de host niet in DNS, dan start de container niet. De variabele houdt één bestemming en werkt onafhankelijk van `OPEN_HTTPS`.
+
+Dit opent een poort buiten 443 naar het adres dat je opgeeft. Weeg het af tegen de twee alternatieven: k3d op het netwerk van de sandbox heeft deze uitzondering niet nodig, en `OPEN_HTTPS=true` opent juist veel meer.
+
+Past de variabele niet bij de gemounte kubeconfig, dan meldt de container dat bij de start met een waarschuwing in `docker compose logs`. Voor een API-server op poort 443 waarschuwt hij niet: die hoort in `ALLOWED_DOMAINS`.
 
 ### Pod Security
 

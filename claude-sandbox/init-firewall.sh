@@ -322,6 +322,66 @@ if [ "$OPEN_HTTPS" != "true" ]; then
     iptables -A OUTPUT -p tcp --dport 443 -m set --match-set allowed-domains dst -j ACCEPT
 fi
 
+# De API-server van een Kubernetes-cluster dat niet op het netwerk van de sandbox
+# staat. Een eigen variabele, want ALLOWED_DOMAINS opent alleen poort 443 en de
+# ipset erachter wordt uit DNS gevuld: een API-server op een IP-adres, op poort
+# 6443, past in geen van beide. Buiten de OPEN_HTTPS-tak, want ook met
+# OPEN_HTTPS=true laat de firewall uitsluitend 443 door, en een rechtstreekse
+# regel in plaats van een ipset-match, want die set bestaat alleen bij
+# OPEN_HTTPS=false.
+if [ -n "${ALLOWED_K8S_API:-}" ]; then
+    k8s_api_fout() {
+        echo "ERROR: ALLOWED_K8S_API='${ALLOWED_K8S_API}' $1. Verwacht host:poort, bijvoorbeeld" \
+             "172.19.0.1:6443 of k8s-api.intern:6443 — zonder schema, zonder pad, één bestemming." >&2
+        exit 1
+    }
+    case "$ALLOWED_K8S_API" in
+        *://*)        k8s_api_fout "bevat een schema" ;;
+        */*)          k8s_api_fout "bevat een schuine streep; een pad of een CIDR-bereik hoort er niet in" ;;
+        *,*)          k8s_api_fout "bevat een komma; deze variabele houdt één bestemming" ;;
+        # Meer dan één dubbele punt of vierkante haken: een IPv6-adres. De
+        # firewall zet alle IPv6 dicht, dus zo'n regel zou nooit verkeer dragen.
+        *:*:*|*\[*|*\]*) k8s_api_fout "lijkt een IPv6-adres; de firewall blokkeert IPv6 volledig" ;;
+        *:*)          ;;
+        *)            k8s_api_fout "heeft geen poortnummer" ;;
+    esac
+    k8s_api_host="${ALLOWED_K8S_API%:*}"
+    k8s_api_port="${ALLOWED_K8S_API##*:}"
+    if [[ ! "$k8s_api_port" =~ ^[0-9]{1,5}$ ]]; then
+        k8s_api_fout "heeft geen numeriek poortnummer"
+    fi
+    # 10#: `06443` is bij een URL gewoon 6443, en octaal zou hier een andere
+    # poort opleveren dan die waarop de API-server luistert.
+    k8s_api_port=$((10#$k8s_api_port))
+    if [ "$k8s_api_port" -lt 1 ] || [ "$k8s_api_port" -gt 65535 ]; then
+        k8s_api_fout "heeft een poortnummer buiten 1-65535"
+    fi
+    if [[ "$k8s_api_host" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        k8s_api_ips="$k8s_api_host"
+    elif [[ "$k8s_api_host" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]]; then
+        # Een hostnaam die niet opgelost wordt, is net zo fataal als een domein
+        # uit DOMAINS: anders draait de container door zonder de toegang waarvoor
+        # hij gestart is, en blijkt dat pas uit "no route to host" bij kubectl.
+        k8s_api_dig=$(dig +noall +answer +timeout=5 +tries=1 A "$k8s_api_host" 2>&1)
+        k8s_api_ips=$(echo "$k8s_api_dig" | awk '$4 == "A" {print $5}')
+        if [ -z "$k8s_api_ips" ]; then
+            echo "ERROR: ALLOWED_K8S_API: host $k8s_api_host is niet op te lossen" >&2
+            echo "dig output: $k8s_api_dig" >&2
+            exit 1
+        fi
+    else
+        k8s_api_fout "heeft geen geldig IPv4-adres of hostnaam vóór de dubbele punt"
+    fi
+    while read -r k8s_api_ip; do
+        if [[ ! "$k8s_api_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "ERROR: ALLOWED_K8S_API: ongeldig IP voor $k8s_api_host: $k8s_api_ip" >&2
+            exit 1
+        fi
+        iptables -A OUTPUT -p tcp -d "$k8s_api_ip" --dport "$k8s_api_port" -j ACCEPT
+        echo "K8s API-server opengezet: $k8s_api_ip:$k8s_api_port (uit ALLOWED_K8S_API=$ALLOWED_K8S_API)"
+    done < <(echo "$k8s_api_ips")
+fi
+
 # Explicitly REJECT all other outbound traffic for immediate feedback
 iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
