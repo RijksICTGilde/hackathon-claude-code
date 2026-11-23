@@ -453,8 +453,8 @@ RUN case "$INSTALL_FUNDAMENT" in \
               arm64) GO_SHA=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92 ;; \
               *) echo "FOUT: Go niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
             esac && \
-            FUNCTL_VERSION=v0.0.0-20261116122217-bdc42fada781 && \
-            FUNCTL_H1=h1:JnZQXfxzMAlK6zlOexztOpvK5XzCz+lL2ZCjzJHT2xI= && \
+            FUNCTL_VERSION=v0.0.0-20261123122106-1b47c5581eb9 && \
+            FUNCTL_H1=h1:8sxGceFiWm8ItyiPrRoTLHizg+cE1DXqFvDxv+Rg+no= && \
             curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
             echo "$GO_SHA  /tmp/go.tar.gz" | sha256sum -c - && \
             tar -xzf /tmp/go.tar.gz -C /usr/local && \
