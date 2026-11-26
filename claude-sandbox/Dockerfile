@@ -101,11 +101,11 @@ RUN NPM_VERSION=11.21.2 && \
 # (opent automatisch een PR zodra er een nieuwere release op dandavison/delta is).
 # Dit pakket komt met `dpkg -i` binnen, niet uit apt: de wekelijkse verversing
 # van de apt-laag kan het dus niet bewegen en laat het buiten de weging.
-RUN DELTA_VERSION=0.20.1 && \
+RUN DELTA_VERSION=0.22.0 && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) SHA=0683067a4cbbcc19b9fd2841253131d1b37ccfa724725098d811d4d0d9fcc25b ;; \
-      arm64) SHA=6e08b734d611037eb9eb5db883cab7ac0a089216a9efdc1d2caac44319029c28 ;; \
+      amd64) SHA=109eac8927a80a7801e025901dcee8d56aa50a8de1805a111d98b5d6dbe5d647 ;; \
+      arm64) SHA=968964e9eb8a2e0b83b3aa27e29ce2ce61ace9ab51d4c37726f73d5559153fa2 ;; \
       *) echo "FOUT: git-delta niet beschikbaar voor architectuur '$ARCH'" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
