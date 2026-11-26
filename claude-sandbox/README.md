@@ -244,7 +244,7 @@ De build is robuust tegen onverwachte upstream-wijzigingen via twee mechanismen:
 
 `functl` wordt vanaf de bron gebouwd, omdat upstream alleen een rolling release publiceert. De pin is een Go pseudo-versie (`FUNCTL_VERSION`, die de commit vastlegt) plus de h1-hash van de module (`FUNCTL_H1`).
 
-`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.2.0) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
+`rtk` valt onder allebei: het install-script wordt per release-tag gevendord (`rtk` v1.2.1) en de binary is via `RTK_VERSION` in de `Dockerfile` gepind. Een losse SHA-pin is daar niet nodig, omdat het script de binary zelf verifieert tegen de `checksums.txt` van dezelfde release.
 
 `kubectl` en `helm` (achter `INSTALL_FUNDAMENT`) staan ook op versie plus SHA-256 per architectuur. `kubectl` ligt bewust vast op één minor-versie, die de clusterversies van Fundament volgt (zie [docs/kubernetes.md](docs/kubernetes.md)); `helm` op één major-versie.
 
