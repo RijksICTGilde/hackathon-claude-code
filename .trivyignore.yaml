@@ -99,6 +99,12 @@ vulnerabilities:
     expired_at: 2026-12-31
     statement: Go-stdlib 1.26.10 in kubectl — een HTTP/1-server met MaxBytesReader kan crashen door een race op de response-headers. kubectl is een client; alleen `kubectl proxy` draait een HTTP-server, lokaal in de sandbox. Fix in Go 1.26.11, nog in geen kubectl 1.36-release.
 
+  - id: CVE-2026-39821
+    paths:
+      - "usr/local/bin/kubectl"
+    expired_at: 2026-12-31
+    statement: golang.org/x/net 0.56.0 in kubectl — ToASCII en ToUnicode van x/net/idna accepteren Punycode-labels die naar pure ASCII decoderen; misbruik vraagt een programma dat een rechtencheck op de ASCII-naam doet en de naam daarna naar Unicode omzet. kubectl linkt alleen ToASCII (via de Host-header van de HTTP/2-transport), niet ToUnicode, en autoriseert niet op hostnaam. Fix in 0.57.0, nog in geen kubectl 1.36-release.
+
   # functl wordt vanaf de bron gebouwd, met de go.mod van upstream (alleen bij
   # INSTALL_FUNDAMENT=true), en gescand door build-variants. Zelf modules bumpen zou de
   # build laten afwijken van de gepinde, op hash gecontroleerde upstream-module.
