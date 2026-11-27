@@ -58,6 +58,7 @@ De image bevat de volgende tools:
 | Fundament           | functl (vanaf de bron op een vaste commit), kubectl 1.36, just 1.42, helm 4.3 (officiële release-binaries, SHA-pinned); alleen bij `INSTALL_FUNDAMENT=true`, zie [docs/fundament.md](docs/fundament.md) |
 | ZAD                 | zadctl (officiële release-binary, SHA-pinned); alleen bij `INSTALL_OVERHEID_ZAD_ACTIONS=true`. Een eigen `~/.local/bin/zadctl` in het `claude-home`-volume staat eerder op het `PATH` en gaat voor; verwijder die, anders volgt zadctl de gepinde versie niet |
 | SDK-manager         | SDKman (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten))                 |
+| Language server     | jdtls (Eclipse JDT.LS, officiële release-tarball, SHA-pinned) voor de `jdtls-lsp`-plugin; bij `INSTALL_JVM=true` en `INSTALL_ANTHROPIC_PLUGINS=true`. Start pas met Java 25+, zie [SDKman](docs/opstarten-en-afsluiten.md#sdkman-java-kotlin-maven-gradle) |
 | Token-optimalisatie | rtk (reduce token use) (standaard aan, optioneel — zie [Optionele componenten](docs/opstarten-en-afsluiten.md#optionele-componenten)) |
 | Firewall            | iptables, ipset, iproute2, dnsutils, aggregate                                                                                        |
 
@@ -82,8 +83,8 @@ De volgende plugins zijn voorgeinstalleerd in de image:
 | security-guidance    | Beveiligingsadvies                              |
 | claude-code-setup    | Automatiseringsaanbevelingen voor Claude Code   |
 | ralph-loop           | Herhaalt prompt in loop tot taak klaar is       |
-| jdtls-lsp            | Java Language Server                            |
-| kotlin-lsp           | Kotlin Language Server                          |
+| jdtls-lsp            | Java Language Server (`jdtls` zit in de image)  |
+| kotlin-lsp           | Kotlin Language Server (`kotlin-lsp` zit niet in de image) |
 
 ### Developer Overheid NL plugins
 

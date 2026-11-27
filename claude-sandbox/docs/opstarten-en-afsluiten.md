@@ -13,7 +13,7 @@ De image kent build-time toggles waarmee je componenten aan- of uitschakelt. Ied
 
 | Argument                       | Default | Wat het installeert                                                                          |
 |--------------------------------|---------|----------------------------------------------------------------------------------------------|
-| `INSTALL_JVM`                  | `true`  | SDKman + LSP-plugins (jdtls, kotlin)                                                         |
+| `INSTALL_JVM`                  | `true`  | SDKman + jdtls + LSP-plugins (jdtls, kotlin)                                                 |
 | `INSTALL_RTK`                  | `true`  | rtk + auto-patch                                                                             |
 | `INSTALL_OVERHEID_PLUGINS`     | `true`  | DON-plugins (standaarden, developer-overheid, nerds, internet)                               |
 | `INSTALL_OVERHEID_GEO`         | `false` | Losse `geo`-plugin (Geonovum geo-standaarden); default uit om context-budget te sparen       |
@@ -133,6 +133,10 @@ Standaard geïnstalleerd (tenzij `INSTALL_JVM=false`). Installeer een JDK of and
 sdk install java
 sdk install maven
 ```
+
+De Java language server `jdtls` zit in de image, maar start pas als er een JDK van versie 25 of hoger is; zonder JDK kan Claude Code hem niet starten. `sdk install java` installeert de actuele LTS (Java 25) en is voldoende. Een oudere JDK, zoals 21, is niet genoeg: de launcher accepteert hem, maar jdtls start dan niet.
+
+De `kotlin-lsp`-plugin start het programma `kotlin-lsp`. Dat zit niet in de image; zonder dat programma blijft de Kotlin-language-server uit. Heb je hem niet nodig, zet de plugin dan uit met `claude plugin disable kotlin-lsp`.
 
 ### Node.js
 `node` en `npm` zijn direct beschikbaar:

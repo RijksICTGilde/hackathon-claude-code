@@ -888,6 +888,128 @@ jobs:
             Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
             heropen hem om de checks alsnog te laten draaien.
 
+  # Job 2f: jdtls — Eclipse publiceert milestones alleen op download.eclipse.org,
+  # niet als GitHub-release. Een tag zonder milestone-map is nog niet te
+  # installeren; daarom is de map-index de bron en niet de tags.
+  # Bumpt versie, build-stempel en SHA in één keer: de tarballnaam bevat alle
+  # drie.
+  jdtls-version:
+    name: jdtls-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine latest jdtls milestone and compare
+        id: compare
+        run: |
+          set -euo pipefail
+          basis="https://download.eclipse.org/jdtls/milestones"
+          index=$(curl -fsSL "${basis}/" || true)
+          # Alleen mapnamen van de vorm X.Y.Z tellen: de index bevat ook
+          # `repository` en navigatielinks. Het patroon is tegelijk de
+          # validatie, want de versie belandt hieronder in curl- en
+          # sed-argumenten.
+          latest=$(grep -oE "href='/jdtls/milestones/[0-9]+\.[0-9]+\.[0-9]+'" <<<"$index" \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
+          if [ -z "$latest" ]; then
+            echo "FOUT: kon laatste jdtls-milestone niet bepalen uit ${basis}/" >&2
+            exit 1
+          fi
+          for pin in JDTLS_VERSION JDTLS_BUILD JDTLS_SHA256; do
+            if [ "$(grep -oE "${pin}=" Dockerfile | wc -l)" -ne 1 ]; then
+              echo "FOUT: verwacht precies één ${pin}-pin in de Dockerfile" >&2
+              exit 1
+            fi
+          done
+          current=$(grep -oE 'JDTLS_VERSION=[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | cut -d= -f2 || true)
+          current_build=$(grep -oE 'JDTLS_BUILD=[0-9]{12}' Dockerfile | cut -d= -f2 || true)
+          current_sha=$(grep -oE 'JDTLS_SHA256=[a-f0-9]{64}' Dockerfile | cut -d= -f2 || true)
+          if [ -z "$current" ] || [ -z "$current_build" ] || [ -z "$current_sha" ]; then
+            echo "FOUT: kon de huidige jdtls-pins niet uit de Dockerfile lezen" >&2
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # latest.txt noemt de tarball van deze milestone; de build-stempel
+          # erin is niet uit de versie af te leiden.
+          naam=$(curl -fsSL "${basis}/${latest}/latest.txt" | tr -d '\r\n' || true)
+          if ! [[ "$naam" =~ ^jdt-language-server-${latest//./\\.}-([0-9]{12})\.tar\.gz$ ]]; then
+            echo "FOUT: onverwachte tarballnaam '$naam' in ${basis}/${latest}/latest.txt" >&2
+            exit 1
+          fi
+          build="${BASH_REMATCH[1]}"
+          tmpdir=$(mktemp -d)
+          curl -fsSL -o "$tmpdir/jdtls.tar.gz" "${basis}/${latest}/${naam}"
+          # `curl -f` weert alleen HTTP-fouten; een 200 met een andere body
+          # levert een keurige SHA over de verkeerde inhoud.
+          if [ "$(head -c 2 "$tmpdir/jdtls.tar.gz" | od -An -tx1 | tr -d ' \n')" != "1f8b" ]; then
+            echo "FOUT: de jdtls-download is geen gzip-archief" >&2
+            exit 1
+          fi
+          # Geen `tar -t | grep -q`: grep stopt bij de eerste treffer, tar
+          # krijgt SIGPIPE en onder pipefail faalt dan juist de goede tarball.
+          if ! tar -tzf "$tmpdir/jdtls.tar.gz" bin/jdtls >/dev/null 2>&1; then
+            echo "FOUT: de jdtls-tarball bevat geen bin/jdtls" >&2
+            exit 1
+          fi
+          sha=$(sha256sum "$tmpdir/jdtls.tar.gz" | awk '{print $1}')
+          # Dezelfde server, dus geen herkomstbewijs; wel een vangnet voor een
+          # afgebroken of vervangen download.
+          upstream_sha=$(curl -fsSL "${basis}/${latest}/${naam}.sha256" | awk '{print $1}' || true)
+          rm -rf "$tmpdir"
+          if [ "$upstream_sha" != "$sha" ]; then
+            echo "FOUT: SHA van de download ($sha) wijkt af van ${naam}.sha256 ('$upstream_sha')" >&2
+            exit 1
+          fi
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "JDTLS_VERSION=$current" "JDTLS_VERSION=$latest" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "JDTLS_BUILD=$current_build" "JDTLS_BUILD=$build" 1
+          "${GITHUB_WORKSPACE}/.github/scripts/vervang-pin.sh" Dockerfile "JDTLS_SHA256=$current_sha" "JDTLS_SHA256=$sha" 1
+          {
+            echo "changed=true"
+            echo "build=$build"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open auto-PR if jdtls changed
+        if: steps.compare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          branch: deps/jdtls
+          delete-branch: true
+          commit-message: "chore(deps): bump jdtls naar ${{ steps.compare.outputs.latest }}"
+          title: "chore(deps): bump jdtls naar ${{ steps.compare.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Nieuwe jdtls-milestone gedetecteerd op download.eclipse.org.
+
+            - **Oude versie:** `${{ steps.compare.outputs.current }}`
+            - **Nieuwe versie:** `${{ steps.compare.outputs.latest }}` (build `${{ steps.compare.outputs.build }}`)
+            - **SHA-256:** `${{ steps.compare.outputs.sha }}`
+            - **Wijzigingen:** https://github.com/eclipse-jdtls/eclipse.jdt.ls/compare/v${{ steps.compare.outputs.current }}...v${{ steps.compare.outputs.latest }}
+
+            jdtls bundelt zijn eigen jars. Loop bij het reviewen `.trivyignore.yaml` na: staat er
+            een suppressie op een jar onder `opt/jdtls/` die deze milestone bumpt, haal die dan weg.
+            `build-variants` faalt zolang de suppressie blijft staan.
+
+            Een milestone kan een hogere Java-versie eisen dan de docs noemen (SDKman-sectie in
+            `claude-sandbox/docs/opstarten-en-afsluiten.md`). Start jdtls daarom in de image met
+            de JDK van `sdk install java` voor je merget.
+
+            Verifieer lokaal met `docker compose build --no-cache` voor je merget.
+            Deze PR is door `GITHUB_TOKEN` geopend en start daardoor geen workflow-runs; sluit en
+            heropen hem om de checks alsnog te laten draaien.
+
   # Job 3: Debian-security-updates in de gepubliceerde image. Waarom de
   # `apt-get upgrade`-laag een epoch nodig heeft staat bij de ARG in de
   # Dockerfile.
